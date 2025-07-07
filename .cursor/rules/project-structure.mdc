@@ -1,0 +1,174 @@
+# Project Structure and Important Files
+
+This document outlines the directory structure and key files in the svelte-video-shaders project.
+
+## Root Directory Structure
+
+```
+svelte-video-shaders/
+├── .cursor/                    # Cursor IDE configuration
+│   └── rules/                  # Cursor rules and guidelines
+│       ├── cursor-rules.mdc    # How to manage cursor rules
+│       ├── project-structure.mdc # This file
+│       ├── self-improve.mdc    # Self-improvement guidelines
+│       └── svelte-5-syntax.mdc # Svelte 5 migration guide
+├── .storybook/                 # Storybook configuration
+│   ├── main.js                 # Storybook main configuration
+│   └── preview.js              # Storybook preview settings
+├── .svelte-kit/                # SvelteKit build output (auto-generated)
+├── docs/                       # Project documentation
+│   ├── changes.md              # Change log (empty)
+│   ├── create-rules-project.md # Rules project creation guide
+│   ├── GEMINI.md               # Gemini-related documentation
+│   └── PLAN.md                 # Project planning document
+├── node_modules/               # Dependencies (auto-generated)
+├── src/                        # Main source code
+│   ├── app.css                 # Global CSS styles
+│   ├── app.html                # HTML template
+│   ├── demo.spec.js            # Demo test specification
+│   ├── lib/                    # Reusable components and utilities
+│   ├── routes/                 # SvelteKit routes
+│   └── stories/                # Storybook stories and components
+├── static/                     # Static assets
+├── .DS_Store                   # macOS system file
+├── .gitignore                  # Git ignore patterns
+├── .prettierignore             # Prettier ignore patterns
+├── .prettierrc                 # Prettier configuration
+├── eslint.config.js            # ESLint configuration
+├── jsconfig.json               # JavaScript configuration
+├── package.json                # Project dependencies and scripts
+├── pnpm-lock.yaml              # PNPM lock file
+├── README.md                   # Project readme
+├── svelte.config.js            # Svelte configuration
+├── vite.config.js              # Vite build configuration
+└── vitest-setup-client.js      # Vitest client setup
+```
+
+## Source Code Structure (`src/`)
+
+### Main Application Files
+- **[app.html](mdc:src/app.html)** - HTML template for the application
+- **[app.css](mdc:src/app.css)** - Global CSS styles
+- **[demo.spec.js](mdc:src/demo.spec.js)** - Demo test specification
+
+### Library Components (`src/lib/`)
+- **[index.js](mdc:src/lib/index.js)** - Library exports
+- **[ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte)** - Main shader player component
+- **[stores.js](mdc:src/lib/stores.js)** - Svelte stores for state management
+
+### Routes (`src/routes/`)
+- **[+layout.js](mdc:src/routes/+layout.js)** - Layout load function
+- **[+layout.svelte](mdc:src/routes/+layout.svelte)** - Root layout component
+- **[+page.svelte](mdc:src/routes/+page.svelte)** - Main page component
+- **[page.svelte.test.js](mdc:src/routes/page.svelte.test.js)** - Page component tests
+
+### Storybook Stories (`src/stories/`)
+- **[Button.svelte](mdc:src/stories/Button.svelte)** - Button component
+- **[Button.stories.svelte](mdc:src/stories/Button.stories.svelte)** - Button stories
+- **[Header.svelte](mdc:src/stories/Header.svelte)** - Header component
+- **[Header.stories.svelte](mdc:src/stories/Header.stories.svelte)** - Header stories
+- **[Page.svelte](mdc:src/stories/Page.svelte)** - Page component
+- **[Page.stories.svelte](mdc:src/stories/Page.stories.svelte)** - Page stories
+- **[Configure.mdx](mdc:src/stories/Configure.mdx)** - Storybook configuration documentation
+- **button.css** - Button component styles
+- **header.css** - Header component styles
+- **page.css** - Page component styles
+
+### Story Assets (`src/stories/assets/`)
+Contains various image and SVG assets for Storybook stories:
+- PNG images for documentation screenshots
+- SVG icons for social media and UI elements
+- AVIF test image for format testing
+
+## Configuration Files
+
+### Build and Development
+- **[package.json](mdc:package.json)** - Project dependencies, scripts, and metadata
+- **[vite.config.js](mdc:vite.config.js)** - Vite build configuration
+- **[svelte.config.js](mdc:svelte.config.js)** - SvelteKit configuration
+- **[jsconfig.json](mdc:jsconfig.json)** - JavaScript/TypeScript configuration
+
+### Code Quality
+- **[eslint.config.js](mdc:eslint.config.js)** - ESLint rules and configuration
+- **[.prettierrc](mdc:.prettierrc)** - Prettier formatting rules
+- **[.prettierignore](mdc:.prettierignore)** - Files to ignore in Prettier
+- **[vitest-setup-client.js](mdc:vitest-setup-client.js)** - Vitest testing setup
+
+### Version Control
+- **[.gitignore](mdc:.gitignore)** - Git ignore patterns
+- **pnpm-lock.yaml** - PNPM dependency lock file
+
+## Documentation
+
+### Project Documentation (`docs/`)
+- **[README.md](mdc:README.md)** - Main project documentation
+- **[docs/PLAN.md](mdc:docs/PLAN.md)** - Project planning and roadmap
+- **[docs/GEMINI.md](mdc:docs/GEMINI.md)** - Gemini AI integration documentation
+- **[docs/create-rules-project.md](mdc:docs/create-rules-project.md)** - Rules project creation guide
+
+### Cursor Rules (`.cursor/rules/`)
+- **[cursor-rules.mdc](mdc:.cursor/rules/cursor-rules.mdc)** - How to manage cursor rules
+- **[svelte-5-syntax.mdc](mdc:.cursor/rules/svelte-5-syntax.mdc)** - Svelte 5 migration guide
+- **[self-improve.mdc](mdc:.cursor/rules/self-improve.mdc)** - Self-improvement guidelines
+
+## Static Assets
+
+### Public Assets (`static/`)
+- **favicon.svg** - Website favicon
+
+## Key Development Patterns
+
+### Component Organization
+- **Reusable components** go in `src/lib/`
+- **Page-specific components** go in `src/routes/`
+- **Storybook components** go in `src/stories/`
+
+### File Naming Conventions
+- **Svelte components**: PascalCase with `.svelte` extension
+- **Stories**: Component name + `.stories.svelte`
+- **CSS files**: kebab-case with `.css` extension
+- **Configuration files**: kebab-case with appropriate extensions
+
+### Import Patterns
+```javascript
+// ✅ Good: Import from lib
+import ShaderPlayer from '$lib/ShaderPlayer.svelte';
+
+// ✅ Good: Import from stores
+import { shaderStore } from '$lib/stores.js';
+
+// ✅ Good: Import from routes
+import Layout from '$routes/+layout.svelte';
+```
+
+## Development Workflow
+
+### Adding New Components
+1. **Reusable components**: Add to `src/lib/`
+2. **Page components**: Add to `src/routes/`
+3. **Story components**: Add to `src/stories/`
+4. **Update exports** in `src/lib/index.js` if needed
+
+### Adding New Stories
+1. Create component in `src/stories/`
+2. Create story file with `.stories.svelte` extension
+3. Add any assets to `src/stories/assets/`
+4. Update Storybook configuration if needed
+
+### Adding New Routes
+1. Create route file in `src/routes/`
+2. Follow SvelteKit naming conventions (`+page.svelte`, `+layout.svelte`)
+3. Add any route-specific components in the same directory
+
+## Important Notes
+
+- **Svelte 5 syntax** is used throughout the project (see [svelte-5-syntax.mdc](mdc:.cursor/rules/svelte-5-syntax.mdc))
+- **Storybook** is configured for component development and documentation
+- **Vite** is used as the build tool with SvelteKit
+- **PNPM** is the package manager
+- **ESLint and Prettier** are configured for code quality
+- **Vitest** is used for testing
+description:
+globs:
+alwaysApply: false
+---

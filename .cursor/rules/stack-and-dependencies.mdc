@@ -1,0 +1,130 @@
+# Application Stack & Major Dependencies
+
+This rule documents the technology stack, major dependencies, their versions, and best practices for the `svelte-video-shaders` project. It is based on the current [PLAN.md](mdc:docs/PLAN.md), [research-changes.md](mdc:docs/research-changes.md), and [GEMINI.md](mdc:docs/GEMINI.md).
+
+## Core Stack Overview
+
+- **Framework:** SvelteKit (`@sveltejs/kit` ^2.16.0, Svelte ^5.0.0)
+- **Build Tool:** Vite (^6.2.6)
+- **Component Library:** Storybook (^9.0.15) for UI development
+- **Shader/3D Engine:** three.js (^0.178.0)
+- **Video Decoding:** **WebCodecs API (browser-native)** - **PRIMARY VIDEO PLAYBACK TECHNOLOGY**
+- **Video Demuxing:** mp4box (^1.2.0) - **REQUIRED FOR WebCodecs**
+- **Video Processing:** ffmpeg.wasm (via @ffmpeg/ffmpeg ^0.12.15, @ffmpeg/util ^0.12.2) - **FALLBACK/COMPLEX TASKS ONLY**
+- **Audio Analysis:** Web Audio API (custom, see AudioTimeline.svelte)
+- **UI Controls:** svelte-tweakpane-ui (^1.5.9), tweakpane (^4.0.5)
+- **Testing:** Vitest (^3.2.3), vitest-browser-svelte (^0.1.0)
+- **Linting/Formatting:** ESLint (^9.18.0), Prettier (^3.4.2), prettier-plugin-svelte (^3.3.3), prettier-plugin-tailwindcss (^0.6.11)
+- **CSS:** TailwindCSS (^4.0.0), @tailwindcss/typography (^0.5.15)
+- **Other:** wavesurfer.js (^7.9.5) for waveform display
+
+## Dependency Versions (from [package.json](mdc:package.json))
+
+### Key Dependencies
+```json
+{
+  "@sveltejs/kit": "^2.16.0",
+  "svelte": "^5.0.0",
+  "three": "^0.178.0",
+  "mp4box": "^1.2.0",
+  "@ffmpeg/ffmpeg": "^0.12.15",
+  "@ffmpeg/util": "^0.12.2",
+  "svelte-tweakpane-ui": "^1.5.9",
+  "tweakpane": "^4.0.5",
+  "wavesurfer.js": "^7.9.5"
+}
+```
+
+### DevDependencies (selected)
+```json
+{
+  "vite": "^6.2.6",
+  "@storybook/sveltekit": "^9.0.15",
+  "vitest": "^3.2.3",
+  "eslint": "^9.18.0",
+  "prettier": "^3.4.2",
+  "tailwindcss": "^4.0.0"
+}
+```
+
+## Best Practices & Remarks
+
+### SvelteKit & Svelte 5
+- Use Svelte 5 runes syntax and new event handling (see [svelte-5-syntax.mdc](mdc:.cursor/rules/svelte-5-syntax.mdc)).
+- Prefer native event attributes (e.g., `onclick`) and runes for state/props.
+- SvelteKit 2.x is stable, but breaking changes may occur on major upgrades—test thoroughly after upgrades.
+
+### three.js
+- Use direct three.js integration for video textures and shaders ("bare metal" approach is preferred over wrappers like Threlte for stability and control).
+- Use `OrthographicCamera` for 2D video planes (see [GEMINI.md](mdc:docs/GEMINI.md)).
+- Always dispose of Three.js resources and close VideoFrames to avoid memory leaks.
+
+### WebCodecs & mp4box
+- **WebCodecs is the PRIMARY video playback technology** - all new video features should use WebCodecs first.
+- Use WebCodecs API for video decoding; fallback to HTML5 `<video>` if unsupported.
+- Use mp4box for MP4 demuxing and feeding encoded chunks to WebCodecs.
+- Always call `frame.close()` after using a VideoFrame.
+- Test in Chrome 94+, Edge 94+, Safari 16.4+ for compatibility.
+- **Transition Goal:** Replace all HTML5 `<video>` usage with WebCodecs + three.js for shader effects.
+
+### ffmpeg.wasm
+- **Use only for complex video processing** (e.g., export, transcoding, thumbnails if WebCodecs is unavailable).
+- **NOT for primary video playback** - WebCodecs handles all real-time video decoding.
+- Run ffmpeg.wasm in a Web Worker to avoid blocking the UI (see [research-changes.md](mdc:docs/research-changes.md)).
+- Use CDN for ffmpeg-core WASM assets for best performance.
+- **Transition Goal:** Minimize ffmpeg.wasm usage to only complex processing tasks.
+
+### svelte-tweakpane-ui & tweakpane
+- Use for real-time shader/UI parameter tweaking.
+- Keep filter parameters in `$state` and update shader uniforms reactively.
+
+### TailwindCSS
+- Use for utility-first styling; keep custom CSS minimal.
+- Use @tailwindcss/typography for rich text content.
+
+### Storybook
+- Use for component-driven development and visual testing.
+- Keep stories in `src/stories/` and assets in `src/stories/assets/`.
+
+### Vitest
+- Use for unit and browser-based testing.
+- Use `vitest-browser-svelte` for Svelte component tests.
+
+### Linting & Formatting
+- Use ESLint and Prettier with Svelte and Tailwind plugins for consistent code style.
+- Run `pnpm run lint` and `pnpm run format` before commits.
+
+### General
+- **WebCodecs First:** Always implement new video features using WebCodecs + three.js first.
+- Always test fallback paths (e.g., HTML5 video, FFmpeg fallback for thumbnails).
+- Use COEP/COOP headers in Vite dev server for SharedArrayBuffer/WebCodecs support.
+- Keep dependencies up to date, but pin versions to avoid breaking changes.
+- **Transition Strategy:** Gradually replace HTML5 `<video>` with WebCodecs implementations.
+
+## Example: Good Import Patterns
+```typescript
+// ✅ Good: Direct three.js import
+import * as THREE from 'three';
+
+// ✅ Good: SvelteKit $lib import
+import ShaderPlayer from '$lib/ShaderPlayer.svelte';
+
+// ✅ Good: WebCodecs usage (PRIMARY video technology)
+const decoder = new VideoDecoder({ ... });
+
+// ✅ Good: mp4box demuxing (REQUIRED for WebCodecs)
+import * as MP4Box from 'mp4box';
+
+// ✅ Good: Vite-compatible mp4box import
+import { default as MP4BoxModule } from 'mp4box';
+```
+
+## References
+- [PLAN.md](mdc:docs/PLAN.md)
+- [research-changes.md](mdc:docs/research-changes.md)
+- [GEMINI.md](mdc:docs/GEMINI.md)
+- [svelte-5-syntax.mdc](mdc:.cursor/rules/svelte-5-syntax.mdc)
+description:
+globs:
+alwaysApply: false
+---

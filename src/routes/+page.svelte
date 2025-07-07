@@ -13,15 +13,15 @@
 
 	let fragmentShader = $state('');
 	let customShaderSrc = $state('');
-	let videoSrc = $state(
-		'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
-	);
+	let videoQueue = $state([]);
+	let currentVideoIndex = $state(0);
 	let uploadInput;
 	let uniforms = $state({
 		u_strength: { value: 1.0 },
 		u_vignette_color: { value: { r: 0, g: 0, b: 0 } },
 		u_vignette_center: { value: { x: 0.5, y: 0.5 } }
 	});
+	let player;
 
 	const shaders = {
 		Passthrough: `
@@ -61,7 +61,6 @@
       uniform float u_time;
       uniform float u_strength;
 
-      // 2D Random function
       float random(vec2 st) {
         return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
       }
@@ -100,33 +99,78 @@
 		fragmentShader = customShaderSrc;
 	}
 
-	function handleFileUpload(event) {
-		const file = event.target.files[0];
-		if (file) {
-			if (videoSrc) {
-				URL.revokeObjectURL(videoSrc);
-			}
-			videoSrc = URL.createObjectURL(file);
+	async function handleFileUpload(event) {
+		const files = Array.from(event.target.files);
+		const newVideos = [];
+		for (const file of files) {
+			const src = URL.createObjectURL(file);
+			const thumb = await createThumbnail(src);
+			newVideos.push({ src, thumb, name: file.name });
 		}
+		videoQueue = newVideos;
+		currentVideoIndex = 0;
+	}
+
+	function createThumbnail(src) {
+		return new Promise((resolve) => {
+			const video = document.createElement('video');
+			video.src = src;
+			video.muted = true;
+			video.onloadeddata = () => {
+				const canvas = document.createElement('canvas');
+				canvas.width = 160;
+				canvas.height = 90;
+				const ctx = canvas.getContext('2d');
+				ctx.drawImage(video, 0, 0, 160, 90);
+				resolve(canvas.toDataURL());
+				URL.revokeObjectURL(video.src);
+			};
+		});
+	}
+
+	function playNextVideo() {
+		currentVideoIndex = (currentVideoIndex + 1) % videoQueue.length;
 	}
 </script>
 
 <div class="app-container">
-	<div class="player-section">
-		{#if videoSrc}
-			<ShaderPlayer src={videoSrc} {fragmentShader} {uniforms} />
-		{/if}
+	<div class="main-content">
+		<div class="player-section">
+			{#if videoQueue.length > 0}
+				<ShaderPlayer
+					src={videoQueue[currentVideoIndex].src}
+					{fragmentShader}
+					{uniforms}
+					bind:this={player}
+					on:ended={playNextVideo}
+				/>
+			{/if}
+		</div>
+		<div class="thumbnail-bar">
+			{#each videoQueue as video, i}
+				<div class="thumbnail" class:active={i === currentVideoIndex}>
+					<img src={video.thumb} alt={video.name} />
+					<span>{video.name}</span>
+				</div>
+			{/each}
+		</div>
 	</div>
 	<aside class="controls-section">
 		<Pane title="Controls" position="fixed">
-			<Button title="Upload Video" on:click={() => uploadInput.click()} />
+			<Button title="Upload Videos" on:click={() => uploadInput.click()} />
 			<input
 				bind:this={uploadInput}
 				type="file"
 				onchange={handleFileUpload}
 				accept="video/*"
+				multiple
 				hidden
 			/>
+			<div class="playback-controls">
+				<Button title="Play" on:click={() => player?.play()} />
+				<Button title="Pause" on:click={() => player?.pause()} />
+				<Button title="Reset" on:click={() => player?.reset()} />
+			</div>
 			<Slider
 				bind:value={uniforms.u_strength.value}
 				label="Strength"
@@ -162,14 +206,52 @@
 		height: 100vh;
 		background-color: #1a1a1a;
 	}
-	.player-section {
+	.main-content {
 		flex-grow: 1;
 		display: flex;
-		justify-content: center;
-		align-items: center;
+		flex-direction: column;
+	}
+	.player-section {
+		flex-grow: 1;
+	}
+	.thumbnail-bar {
+		flex-shrink: 0;
+		display: flex;
+		gap: 1rem;
+		padding: 1rem;
+		background: #222;
+		overflow-x: auto;
+	}
+	.thumbnail {
+		border: 2px solid transparent;
+		border-radius: 4px;
+		cursor: pointer;
+	}
+	.thumbnail.active {
+		border-color: #00aaff;
+	}
+	.thumbnail img {
+		width: 160px;
+		height: 90px;
+		object-fit: cover;
+		display: block;
+	}
+	.thumbnail span {
+		display: block;
+		font-size: 0.8rem;
+		text-align: center;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.controls-section {
 		width: 350px;
 		flex-shrink: 0;
+	}
+	.playback-controls {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.5rem;
+		margin-bottom: 1rem;
 	}
 </style>

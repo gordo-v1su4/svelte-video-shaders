@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      mp4box:
+        specifier: ^1.2.0
+        version: 1.2.0
       svelte-tweakpane-ui:
         specifier: ^1.5.9
         version: 1.5.9(svelte@5.35.2)
@@ -1569,6 +1572,10 @@ packages:
     resolution: {integrity: sha512-+NsyUUAZDmo6YVHzL/stxSu3t9YS1iljliy3BSDrXJ/dkn1KYdmtZODGGjLcc9XLgVVpH4KshHB8XmZgMhaBXg==}
     engines: {node: '>=10'}
     hasBin: true
+
+  mp4box@1.2.0:
+    resolution: {integrity: sha512-E9UIFjvPrUSG7VL+a/xxIcytHRguoZL5FHh6Sj7Wq3ZXZpJXiKvvT2ILdn/iYLqKiIsbIcWPIFHx2CS45Nk8zQ==}
+    engines: {node: '>=20.8.1'}
 
   mri@1.2.0:
     resolution: {integrity: sha512-tzzskb3bG8LvYGFF/mDTpq3jpI6Q9wc3LEmBaghu+DdCssd1FakN7Bc0hVNmEyGq1bq3RgfkCb3cmQLpNPOroA==}
@@ -3497,6 +3504,8 @@ snapshots:
       minipass: 7.1.2
 
   mkdirp@3.0.1: {}
+
+  mp4box@1.2.0: {}
 
   mri@1.2.0: {}
 

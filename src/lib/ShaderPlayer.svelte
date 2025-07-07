@@ -1,15 +1,20 @@
 <script>
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
 	import * as THREE from 'three';
+	// The 'mp4box' library has a non-standard module format.
+	// We must import it this way to make it compatible with Vite.
+	import { default as MP4BoxModule } from 'mp4box';
 
-	let { src, fragmentShader, uniforms } = $props();
+	let { src, fragmentShader, uniforms, bind: player } = $props();
+
+	const dispatch = createEventDispatcher();
 
 	let canvas;
-	let video;
 	let renderer, scene, camera, mesh;
 	let animationFrameId;
-	let hasInteracted = $state(false);
-	const clock = new THREE.Clock();
+	let videoDecoder;
+	let mp4boxfile;
+	let isPlaying = false;
 
 	const vertexShader = `
     varying vec2 vUv;
@@ -19,73 +24,105 @@
     }
   `;
 
-	function onVideoReady(event) {
-		console.log('[ShaderPlayer] Video metadata loaded.');
-		const videoEl = event.target;
-		const texture = new THREE.VideoTexture(videoEl);
-		mesh.material.uniforms.u_texture.value = texture;
-		handleResize();
-	}
-
-	function handlePlay() {
-		console.log('[ShaderPlayer] Video is playing.');
-	}
-
-	function handleError(e) {
-		console.error('[ShaderPlayer] Video playback error:', e);
-	}
-
-	function startPlayback() {
-		if (video) {
-			video.play().catch(handleError);
-			hasInteracted = true;
+	function onVideoFrame(frame) {
+		if (mesh && mesh.material.uniforms.u_texture.value) {
+			mesh.material.uniforms.u_texture.value.image = frame;
+			mesh.material.uniforms.u_texture.value.needsUpdate = true;
 		}
+		frame.close();
 	}
 
 	function animate() {
 		animationFrameId = requestAnimationFrame(animate);
-		if (mesh) {
-			mesh.material.uniforms.u_time.value = clock.getElapsedTime();
-		}
 		renderer.render(scene, camera);
 	}
 
-	/**
-	 * Handles resizing of the canvas and camera.
-	 *
-	 * --- DOCUMENTATION ---
-	 * This is the definitive and correct way to handle sizing for this component.
-	 *
-	 * 1.  We use an OrthographicCamera because we want a 2D projection with no perspective distortion.
-	 * 2.  The camera's frustum (left, right, top, bottom) is set to match the pixel dimensions of the canvas.
-	 *     This makes one unit in our scene correspond to one pixel on the canvas.
-	 * 3.  The PlaneGeometry is created with a size of 1x1.
-	 * 4.  When the video is ready, we set the mesh's scale to the video's actual width and height.
-	 * 5.  To control the final on-screen size, we apply a scale factor (e.g., 0.5 for half size) to the mesh scale.
-	 */
 	function handleResize() {
 		if (!renderer || !camera || !canvas) return;
-
 		const width = canvas.clientWidth;
 		const height = canvas.clientHeight;
 		renderer.setSize(width, height);
-
 		camera.left = -width / 2;
 		camera.right = width / 2;
 		camera.top = height / 2;
 		camera.bottom = -height / 2;
 		camera.updateProjectionMatrix();
+	}
 
-		if (video && video.videoWidth > 0) {
-			const scaleFactor = 0.5;
-			const videoWidth = video.videoWidth * scaleFactor;
-			const videoHeight = video.videoHeight * scaleFactor;
-			mesh.scale.set(videoWidth, videoHeight, 1);
+	async function start() {
+		try {
+			console.log('[Player] Starting WebCodecs pipeline...');
+			mp4boxfile = MP4BoxModule.createFile();
+
+			mp4boxfile.onSamples = (track_id, ref, samples) => {
+				for (const sample of samples) {
+					const type = sample.is_sync ? 'key' : 'delta';
+					const chunk = new EncodedVideoChunk({
+						type,
+						timestamp: sample.cts,
+						duration: sample.duration,
+						data: sample.data
+					});
+					if (videoDecoder.state === 'configured') {
+						videoDecoder.decode(chunk);
+					}
+				}
+			};
+
+			mp4boxfile.onReady = (info) => {
+				console.log('[MP4Box] Ready:', info);
+				const track = info.videoTracks[0];
+				if (VideoDecoder.isConfigSupported(track.codec)) {
+					videoDecoder.configure({
+						codec: track.codec,
+						codedWidth: track.track_width,
+						codedHeight: track.track_height
+					});
+					mp4boxfile.setExtractionOptions(track.id, null, { nbSamples: 100 });
+					mp4boxfile.start();
+				} else {
+					console.error('Codec not supported:', track.codec);
+				}
+			};
+
+			videoDecoder = new VideoDecoder({
+				output: onVideoFrame,
+				error: (e) => console.error('[Decoder]', e)
+			});
+
+			console.log('[Player] Fetching video...');
+			const response = await fetch(src);
+			if (!response.ok) {
+				throw new Error(`Failed to fetch video: ${response.statusText}`);
+			}
+			const reader = response.body.getReader();
+			let offset = 0;
+
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) {
+					console.log('[Player] Fetch complete.');
+					mp4boxfile.flush();
+					break;
+				}
+				const buffer = value.buffer;
+				buffer.fileStart = offset;
+				offset += buffer.byteLength;
+				mp4boxfile.appendBuffer(buffer);
+			}
+		} catch (e) {
+			console.error('[Player] FATAL: Failed to start WebCodecs pipeline:', e);
 		}
 	}
 
+	player = {
+		play: () => {},
+		pause: () => {},
+		reset: () => {}
+	};
+
 	onMount(() => {
-		console.log('[ShaderPlayer] Component mounted. Initializing three.js...');
+		console.log('[Player] Component mounted.');
 		scene = new THREE.Scene();
 		camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
 		renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
@@ -96,8 +133,7 @@
 			fragmentShader,
 			uniforms: {
 				...uniforms,
-				u_texture: { value: null },
-				u_time: { value: 0.0 }
+				u_texture: { value: new THREE.Texture() }
 			},
 			transparent: true
 		});
@@ -108,12 +144,12 @@
 		window.addEventListener('resize', handleResize);
 		handleResize();
 		animate();
-		console.log('[ShaderPlayer] three.js initialized.');
+		start();
+		console.log('[Player] three.js initialized.');
 	});
 
 	$effect(() => {
 		if (mesh && fragmentShader) {
-			console.log('[ShaderPlayer] Updating fragment shader.');
 			mesh.material.fragmentShader = fragmentShader;
 			mesh.material.needsUpdate = true;
 		}
@@ -130,72 +166,13 @@
 	});
 
 	onDestroy(() => {
-		console.log('[ShaderPlayer] Component destroyed.');
+		console.log('[Player] Component destroyed.');
 		window.removeEventListener('resize', handleResize);
 		cancelAnimationFrame(animationFrameId);
-		if (renderer) {
-			renderer.dispose();
-		}
+		if (renderer) renderer.dispose();
+		if (videoDecoder) videoDecoder.close();
+		if (mp4boxfile) mp4boxfile.stop();
 	});
 </script>
 
-<div
-	class="player-wrapper"
-	onclick={startPlayback}
-	onkeydown={(e) => {
-		if (e.key === 'Enter' || e.key === ' ') {
-			e.preventDefault();
-			startPlayback();
-		}
-	}}
-	role="button"
-	tabindex="0"
->
-	<video
-		bind:this={video}
-		{src}
-		autoplay
-		loop
-		muted
-		playsinline
-		crossOrigin="anonymous"
-		style="display:none;"
-		onloadedmetadata={onVideoReady}
-		onplay={handlePlay}
-		onerror={handleError}
-	></video>
-	<canvas bind:this={canvas}></canvas>
-	{#if !hasInteracted}
-		<div class="play-overlay">
-			<span>Click to Play</span>
-		</div>
-	{/if}
-</div>
-
-<style>
-	.player-wrapper {
-		width: 100%;
-		height: 100%;
-		position: relative;
-	}
-	canvas {
-		display: block;
-		width: 100%;
-		height: 100%;
-	}
-	.play-overlay {
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		display: flex;
-		justify-content: center;
-		align-items: center;
-		background: rgba(0, 0, 0, 0.5);
-		color: white;
-		font-size: 1.5rem;
-		font-family: sans-serif;
-		cursor: pointer;
-	}
-</style>
+<canvas bind:this={canvas}></canvas>

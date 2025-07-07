@@ -1,0 +1,315 @@
+# Video Playback Best Practices
+
+This rule covers video playback implementation using WebCodecs, mp4box, and three.js integration. Based on the current [ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte) implementation and [research-changes.md](mdc:docs/research-changes.md).
+
+## Core Video Playback Architecture
+
+### Technology Stack
+- **WebCodecs API**: Native browser video decoding (Chrome 94+, Edge 94+, Safari 16.4+)
+- **mp4box.js**: MP4 container demuxing and sample extraction
+- **three.js**: WebGL2 rendering with shader materials
+- **HTML5 `<video>`**: Fallback for unsupported browsers
+
+### Import Pattern
+```javascript
+// ✅ Correct: mp4box import for Vite compatibility
+import { default as MP4BoxModule } from 'mp4box';
+
+// ✅ Alternative: namespace import
+import * as MP4Box from 'mp4box';
+```
+
+## WebCodecs + mp4box Pipeline
+
+### 1. MP4Box Setup
+```javascript
+// ✅ Good: Create MP4Box file instance
+mp4boxfile = MP4BoxModule.createFile();
+
+// ✅ Good: Handle ready event for decoder configuration
+mp4boxfile.onReady = (info) => {
+  const track = info.videoTracks[0];
+  if (VideoDecoder.isConfigSupported(track.codec)) {
+    videoDecoder.configure({
+      codec: track.codec,
+      codedWidth: track.track_width,
+      codedHeight: track.track_height
+    });
+    mp4boxfile.setExtractionOptions(track.id, null, { nbSamples: 100 });
+    mp4boxfile.start();
+  }
+};
+
+// ✅ Good: Handle samples for decoder feeding
+mp4boxfile.onSamples = (track_id, ref, samples) => {
+  for (const sample of samples) {
+    const type = sample.is_sync ? 'key' : 'delta';
+    const chunk = new EncodedVideoChunk({
+      type,
+      timestamp: sample.cts,
+      duration: sample.duration,
+      data: sample.data
+    });
+    if (videoDecoder.state === 'configured') {
+      videoDecoder.decode(chunk);
+    }
+  }
+};
+```
+
+### 2. VideoDecoder Configuration
+```javascript
+// ✅ Good: Create decoder with proper error handling
+videoDecoder = new VideoDecoder({
+  output: (frame) => {
+    // Handle decoded frame
+    onVideoFrame(frame);
+  },
+  error: (e) => console.error('[Decoder]', e)
+});
+
+// ✅ Good: Check codec support before configuring
+if (VideoDecoder.isConfigSupported(track.codec)) {
+  videoDecoder.configure({
+    codec: track.codec,
+    codedWidth: track.track_width,
+    codedHeight: track.track_height
+  });
+}
+```
+
+### 3. Frame Processing
+```javascript
+// ✅ Good: Update three.js texture with VideoFrame
+function onVideoFrame(frame) {
+  if (mesh && mesh.material.uniforms.u_texture.value) {
+    mesh.material.uniforms.u_texture.value.image = frame;
+    mesh.material.uniforms.u_texture.value.needsUpdate = true;
+  }
+  // ✅ CRITICAL: Always close VideoFrame to prevent memory leaks
+  frame.close();
+}
+```
+
+## Three.js Integration
+
+### 1. Camera Setup
+```javascript
+// ✅ Good: Use OrthographicCamera for 2D video planes
+camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+
+// ✅ Good: Responsive camera sizing
+function handleResize() {
+  if (!renderer || !camera || !canvas) return;
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  renderer.setSize(width, height);
+  camera.left = -width / 2;
+  camera.right = width / 2;
+  camera.top = height / 2;
+  camera.bottom = -height / 2;
+  camera.updateProjectionMatrix();
+}
+```
+
+### 2. Shader Material
+```javascript
+// ✅ Good: Shader material with texture uniform
+const material = new THREE.ShaderMaterial({
+  vertexShader,
+  fragmentShader,
+  uniforms: {
+    ...uniforms,
+    u_texture: { value: new THREE.Texture() }
+  },
+  transparent: true
+});
+```
+
+### 3. Render Loop
+```javascript
+// ✅ Good: Separate render loop from decoding
+function animate() {
+  animationFrameId = requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+```
+
+## Video Loading & Streaming
+
+### 1. Fetch with Streaming
+```javascript
+// ✅ Good: Stream video data to MP4Box
+const response = await fetch(src);
+if (!response.ok) {
+  throw new Error(`Failed to fetch video: ${response.statusText}`);
+}
+
+const reader = response.body.getReader();
+let offset = 0;
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) {
+    mp4boxfile.flush();
+    break;
+  }
+  const buffer = value.buffer;
+  buffer.fileStart = offset;
+  offset += buffer.byteLength;
+  mp4boxfile.appendBuffer(buffer);
+}
+```
+
+### 2. Error Handling
+```javascript
+// ✅ Good: Comprehensive error handling
+try {
+  // Video loading logic
+} catch (e) {
+  console.error('[Player] FATAL: Failed to start WebCodecs pipeline:', e);
+  // Fallback to HTML5 video or show error
+}
+```
+
+## Fallback Strategy
+
+### 1. Browser Support Detection
+```javascript
+// ✅ Good: Check WebCodecs support
+if (!window.VideoDecoder || !window.MP4Box) {
+  console.warn('⚠️ WebCodecs not supported, using fallback');
+  useFallback = true;
+  return;
+}
+```
+
+### 2. HTML5 Video Fallback
+```svelte
+<!-- ✅ Good: Conditional rendering -->
+{#if useFallback}
+  <video
+    bind:this={fallbackVideo}
+    src={src}
+    class="fallback-video"
+    muted
+    loop
+    preload="auto"
+    crossorigin="anonymous"
+  ></video>
+{:else}
+  <canvas bind:this={canvas} class="webgl-canvas"></canvas>
+{/if}
+```
+
+## Memory Management
+
+### 1. Resource Cleanup
+```javascript
+// ✅ Good: Proper cleanup in onDestroy
+onDestroy(() => {
+  window.removeEventListener('resize', handleResize);
+  cancelAnimationFrame(animationFrameId);
+  if (renderer) renderer.dispose();
+  if (videoDecoder) videoDecoder.close();
+  if (mp4boxfile) mp4boxfile.stop();
+});
+```
+
+### 2. VideoFrame Management
+```javascript
+// ✅ Good: Always close VideoFrames
+function onVideoFrame(frame) {
+  // Use frame
+  mesh.material.uniforms.u_texture.value.image = frame;
+  mesh.material.uniforms.u_texture.value.needsUpdate = true;
+  // ✅ CRITICAL: Close frame
+  frame.close();
+}
+```
+
+## Performance Optimizations
+
+### 1. Sample Buffering
+```javascript
+// ✅ Good: Buffer samples for smooth playback
+mp4boxfile.setExtractionOptions(track.id, null, { nbSamples: 100 });
+```
+
+### 2. Render Loop Optimization
+```javascript
+// ✅ Good: Separate render loop from decoding
+// Decoding happens in onSamples callback
+// Rendering happens in requestAnimationFrame
+```
+
+### 3. Texture Updates
+```javascript
+// ✅ Good: Only update texture when needed
+if (mesh && mesh.material.uniforms.u_texture.value) {
+  mesh.material.uniforms.u_texture.value.image = frame;
+  mesh.material.uniforms.u_texture.value.needsUpdate = true;
+}
+```
+
+## Browser Compatibility
+
+### Supported Browsers
+- **Chrome 94+**: Full WebCodecs support
+- **Edge 94+**: Full WebCodecs support  
+- **Safari 16.4+**: Full WebCodecs support
+- **Firefox**: No WebCodecs support (use fallback)
+
+### Testing Checklist
+- [ ] Test WebCodecs pipeline in Chrome/Edge/Safari
+- [ ] Test HTML5 video fallback in Firefox
+- [ ] Verify memory usage doesn't grow over time
+- [ ] Check performance with different video sizes
+- [ ] Test error handling for corrupted videos
+
+## Common Issues & Solutions
+
+### 1. MP4Box Import Issues
+```javascript
+// ❌ Bad: Direct import may fail in Vite
+import MP4Box from 'mp4box';
+
+// ✅ Good: Use default import for Vite compatibility
+import { default as MP4BoxModule } from 'mp4box';
+```
+
+### 2. VideoFrame Memory Leaks
+```javascript
+// ❌ Bad: Forgetting to close VideoFrame
+function onVideoFrame(frame) {
+  texture.image = frame;
+  texture.needsUpdate = true;
+  // Missing: frame.close()
+}
+
+// ✅ Good: Always close VideoFrame
+function onVideoFrame(frame) {
+  texture.image = frame;
+  texture.needsUpdate = true;
+  frame.close(); // ✅ Required
+}
+```
+
+### 3. Camera Sizing Issues
+```javascript
+// ❌ Bad: Using PerspectiveCamera for 2D video
+camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+
+// ✅ Good: Use OrthographicCamera for 2D
+camera = new THREE.OrthographicCamera(-width/2, width/2, height/2, -height/2, 0.1, 10);
+```
+
+## References
+- [ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte)
+- [research-changes.md](mdc:docs/research-changes.md)
+- [PLAN.md](mdc:docs/PLAN.md)
+- [stack-and-dependencies.mdc](mdc:.cursor/rules/stack-and-dependencies.mdc)
+description:
+globs:
+alwaysApply: false
+---
