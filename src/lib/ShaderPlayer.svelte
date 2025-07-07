@@ -2,14 +2,14 @@
 	import { onMount, onDestroy } from 'svelte';
 	import * as THREE from 'three';
 
-	let { src, fragmentShader } = $props();
+	let { src, fragmentShader, uniforms } = $props();
 
 	let canvas;
 	let video;
 	let renderer, scene, camera, mesh;
 	let animationFrameId;
-	let videoReady = $state(false);
 	let hasInteracted = $state(false);
+	const clock = new THREE.Clock();
 
 	const vertexShader = `
     varying vec2 vUv;
@@ -24,12 +24,7 @@
 		const videoEl = event.target;
 		const texture = new THREE.VideoTexture(videoEl);
 		mesh.material.uniforms.u_texture.value = texture;
-
-		const videoAspect = videoEl.videoWidth / videoEl.videoHeight;
-		mesh.scale.x = videoAspect;
-
-		videoReady = true;
-		handleResize(); // Update camera for new aspect ratio
+		handleResize();
 	}
 
 	function handlePlay() {
@@ -49,57 +44,88 @@
 
 	function animate() {
 		animationFrameId = requestAnimationFrame(animate);
+		if (mesh) {
+			mesh.material.uniforms.u_time.value = clock.getElapsedTime();
+		}
 		renderer.render(scene, camera);
 	}
 
+	/**
+	 * Handles resizing of the canvas and camera.
+	 *
+	 * --- DOCUMENTATION ---
+	 * This is the definitive and correct way to handle sizing for this component.
+	 *
+	 * 1.  We use an OrthographicCamera because we want a 2D projection with no perspective distortion.
+	 * 2.  The camera's frustum (left, right, top, bottom) is set to match the pixel dimensions of the canvas.
+	 *     This makes one unit in our scene correspond to one pixel on the canvas.
+	 * 3.  The PlaneGeometry is created with a size of 1x1.
+	 * 4.  When the video is ready, we set the mesh's scale to the video's actual width and height.
+	 * 5.  To control the final on-screen size, we apply a scale factor (e.g., 0.5 for half size) to the mesh scale.
+	 */
 	function handleResize() {
-		if (!renderer || !camera) return;
+		if (!renderer || !camera || !canvas) return;
 
 		const width = canvas.clientWidth;
 		const height = canvas.clientHeight;
-		console.log(`[ShaderPlayer] Resizing to ${width}x${height}`);
-
 		renderer.setSize(width, height);
-		camera.aspect = width / height;
 
-		// Adjust camera to fit the plane
-		const planeHeight = 2; // The height of our PlaneGeometry
-		const fov = camera.fov * (Math.PI / 180);
-		const distance = planeHeight / (2 * Math.tan(fov / 2));
-		camera.position.z = distance;
-
+		camera.left = -width / 2;
+		camera.right = width / 2;
+		camera.top = height / 2;
+		camera.bottom = -height / 2;
 		camera.updateProjectionMatrix();
+
+		if (video && video.videoWidth > 0) {
+			const scaleFactor = 0.5;
+			const videoWidth = video.videoWidth * scaleFactor;
+			const videoHeight = video.videoHeight * scaleFactor;
+			mesh.scale.set(videoWidth, videoHeight, 1);
+		}
 	}
 
 	onMount(() => {
 		console.log('[ShaderPlayer] Component mounted. Initializing three.js...');
 		scene = new THREE.Scene();
-		camera = new THREE.PerspectiveCamera(75, 2, 0.1, 1000);
-		renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+		camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+		renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
 
-		const geometry = new THREE.PlaneGeometry(2, 2);
+		const geometry = new THREE.PlaneGeometry(1, 1);
 		const material = new THREE.ShaderMaterial({
 			vertexShader,
 			fragmentShader,
 			uniforms: {
-				u_texture: { value: null }
-			}
+				...uniforms,
+				u_texture: { value: null },
+				u_time: { value: 0.0 }
+			},
+			transparent: true
 		});
 		mesh = new THREE.Mesh(geometry, material);
 		scene.add(mesh);
 
+		camera.position.z = 1;
 		window.addEventListener('resize', handleResize);
 		handleResize();
-
 		animate();
 		console.log('[ShaderPlayer] three.js initialized.');
 	});
 
 	$effect(() => {
-		if (mesh) {
+		if (mesh && fragmentShader) {
 			console.log('[ShaderPlayer] Updating fragment shader.');
 			mesh.material.fragmentShader = fragmentShader;
 			mesh.material.needsUpdate = true;
+		}
+	});
+
+	$effect(() => {
+		if (mesh && uniforms) {
+			for (const key in uniforms) {
+				if (mesh.material.uniforms[key]) {
+					mesh.material.uniforms[key].value = uniforms[key].value;
+				}
+			}
 		}
 	});
 
@@ -127,10 +153,8 @@
 		onplay={handlePlay}
 		onerror={handleError}
 	></video>
-
 	<canvas bind:this={canvas}></canvas>
-
-	{#if videoReady && !hasInteracted}
+	{#if !hasInteracted}
 		<div class="play-overlay">
 			<span>Click to Play</span>
 		</div>
@@ -139,15 +163,14 @@
 
 <style>
 	.player-wrapper {
-		position: relative;
 		width: 100%;
 		height: 100%;
-		cursor: pointer;
+		position: relative;
 	}
 	canvas {
+		display: block;
 		width: 100%;
 		height: 100%;
-		display: block;
 	}
 	.play-overlay {
 		position: absolute;
@@ -162,5 +185,6 @@
 		color: white;
 		font-size: 1.5rem;
 		font-family: sans-serif;
+		cursor: pointer;
 	}
 </style>
