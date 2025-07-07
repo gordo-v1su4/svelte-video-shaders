@@ -1,0 +1,312 @@
+---
+description: Svelte 5 syntax changes, event directives, and migration best practices
+globs: **/*.svelte
+alwaysApply: true
+---
+# Svelte 5 Syntax and Migration Guide
+
+## Overview
+
+Svelte 5 introduces significant syntax changes, particularly around event handling and accessibility. This guide covers the migration from Svelte 4 to Svelte 5 syntax patterns.
+
+## Event Directive Changes
+
+### Deprecated: `on:event` Syntax
+Svelte 5 deprecates the `on:event` directive syntax in favor of native event attributes.
+
+```svelte
+<!-- ❌ Deprecated in Svelte 5 -->
+<button on:click={handleClick}>Click me</button>
+<input on:change={handleChange} />
+<div on:keydown={handleKeydown}>Content</div>
+
+<!-- ✅ New Svelte 5 syntax -->
+<button onclick={handleClick}>Click me</button>
+<input onchange={handleChange} />
+<div onkeydown={handleKeydown}>Content</div>
+```
+
+### Event Modifiers
+Event modifiers are now handled differently in Svelte 5:
+
+```svelte
+<!-- ❌ Old syntax with modifiers -->
+<button on:click|preventDefault|stopPropagation={handleClick}>
+  Click me
+</button>
+
+<!-- ✅ New Svelte 5 syntax -->
+<button onclick={(e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  handleClick(e);
+}}>
+  Click me
+</button>
+```
+
+## Common Event Migrations
+
+### Click Events
+```svelte
+<!-- ❌ Old -->
+<div on:click={handleClick}>Clickable div</div>
+<button on:click={() => toggleState()}>Toggle</button>
+
+<!-- ✅ New -->
+<div onclick={handleClick}>Clickable div</div>
+<button onclick={() => toggleState()}>Toggle</button>
+```
+
+### Form Events
+```svelte
+<!-- ❌ Old -->
+<input on:change={handleChange} />
+<input on:input={handleInput} />
+<form on:submit={handleSubmit}>
+
+<!-- ✅ New -->
+<input onchange={handleChange} />
+<input oninput={handleInput} />
+<form onsubmit={handleSubmit}>
+```
+
+### Keyboard Events
+```svelte
+<!-- ❌ Old -->
+<div on:keydown={handleKeydown} on:keyup={handleKeyup}>
+
+<!-- ✅ New -->
+<div onkeydown={handleKeydown} onkeyup={handleKeyup}>
+```
+
+### Drag and Drop Events
+```svelte
+<!-- ❌ Old -->
+<div on:dragstart={handleDragStart} on:drop={handleDrop}>
+
+<!-- ✅ New -->
+<div ondragstart={handleDragStart} ondrop={handleDrop}>
+```
+
+### Focus Events
+```svelte
+<!-- ❌ Old -->
+<input on:focus={handleFocus} on:blur={handleBlur} />
+
+<!-- ✅ New -->
+<input onfocus={handleFocus} onblur={handleBlur} />
+```
+
+## Accessibility Changes
+
+### Deprecated Accessibility Rules
+Svelte 5 has updated accessibility rule names:
+
+```svelte
+<!-- ❌ Old accessibility ignore comments -->
+<!-- svelte-ignore a11y-click-events-have-key-events -->
+<!-- svelte-ignore a11y-no-static-element-interactions -->
+<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+
+<!-- ✅ New accessibility ignore comments -->
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+```
+
+### Interactive Elements
+Elements with click or keydown handlers must have proper ARIA roles:
+
+```svelte
+<!-- ❌ Missing ARIA role -->
+<div onclick={handleClick}>Clickable content</div>
+
+<!-- ✅ With proper ARIA role -->
+<div onclick={handleClick} role="button" tabindex="0">Clickable content</div>
+```
+
+### Dialog Elements
+Dialog elements must have proper tabindex:
+
+```svelte
+<!-- ❌ Missing tabindex -->
+<div role="dialog" aria-modal="true">
+
+<!-- ✅ With tabindex -->
+<div role="dialog" aria-modal="true" tabindex="0">
+```
+
+## Runes System (Svelte 5)
+
+### State Management
+```javascript
+// ✅ Use runes for reactive state
+let count = $state(0);
+let doubled = $derived(count * 2);
+$effect(() => console.log('Count changed:', count));
+```
+
+### Props
+```javascript
+// ✅ Props with runes
+let { name = 'Default' } = $props();
+let { count = 0 } = $props();
+```
+
+### Bindable Props
+```javascript
+// ✅ Bindable props
+let { value = '' } = $bindable();
+```
+
+## Migration Checklist
+
+### Event Directives
+- [ ] Replace `on:click` with `onclick`
+- [ ] Replace `on:change` with `onchange`
+- [ ] Replace `on:input` with `oninput`
+- [ ] Replace `on:keydown` with `onkeydown`
+- [ ] Replace `on:keyup` with `onkeyup`
+- [ ] Replace `on:focus` with `onfocus`
+- [ ] Replace `on:blur` with `onblur`
+- [ ] Replace `on:submit` with `onsubmit`
+- [ ] Replace `on:dragstart` with `ondragstart`
+- [ ] Replace `on:dragover` with `ondragover`
+- [ ] Replace `on:drop` with `ondrop`
+- [ ] Replace `on:load` with `onload`
+- [ ] Replace `on:error` with `onerror`
+
+### Event Modifiers
+- [ ] Convert `|preventDefault` to `e.preventDefault()`
+- [ ] Convert `|stopPropagation` to `e.stopPropagation()`
+- [ ] Convert `|once` to manual event removal
+- [ ] Convert `|capture` to `addEventListener` with capture option
+
+### Accessibility
+- [ ] Update `a11y-click-events-have-key-events` to `a11y_click_events_have_key_events`
+- [ ] Update `a11y-no-static-element-interactions` to `a11y_no_static_element_interactions`
+- [ ] Update `a11y-no-noninteractive-tabindex` to `a11y_no_noninteractive_tabindex`
+- [ ] Add ARIA roles to interactive elements
+- [ ] Add tabindex to dialog elements
+
+## Best Practices
+
+### Event Handler Functions
+```javascript
+// ✅ Good: Clean event handlers
+function handleClick(event) {
+  // Handle click logic
+}
+
+function handleKeydown(event) {
+  if (event.key === 'Enter') {
+    // Handle enter key
+  }
+}
+
+// ✅ Good: Inline handlers for simple cases
+<button onclick={() => count++}>Increment</button>
+```
+
+### Accessibility Patterns
+```svelte
+<!-- ✅ Good: Proper interactive element -->
+<div 
+  onclick={handleClick}
+  onkeydown={(e) => e.key === 'Enter' && handleClick(e)}
+  role="button"
+  tabindex="0"
+  aria-label="Clickable element"
+>
+  Clickable content
+</div>
+
+<!-- ✅ Good: Proper dialog -->
+<div 
+  role="dialog"
+  aria-modal="true"
+  tabindex="0"
+  onkeydown={(e) => e.key === 'Escape' && closeDialog()}
+>
+  Dialog content
+</div>
+```
+
+### Event Modifier Patterns
+```javascript
+// ✅ Good: Manual event handling
+function handleClickWithModifiers(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  // Your click logic here
+}
+
+// ✅ Good: Conditional event handling
+function handleKeydown(event) {
+  if (event.key === 'Escape') {
+    closeModal();
+  } else if (event.key === 'Enter') {
+    submitForm();
+  }
+}
+```
+
+## Common Migration Patterns
+
+### File Upload
+```svelte
+<!-- ❌ Old -->
+<input type="file" on:change={handleFileUpload} />
+
+<!-- ✅ New -->
+<input type="file" onchange={handleFileUpload} />
+```
+
+### Form Submission
+```svelte
+<!-- ❌ Old -->
+<form on:submit|preventDefault={handleSubmit}>
+
+<!-- ✅ New -->
+<form onsubmit={(e) => {
+  e.preventDefault();
+  handleSubmit(e);
+}}>
+```
+
+### Modal/Dialog
+```svelte
+<!-- ❌ Old -->
+<div class="modal" on:click|stopPropagation on:keydown={handleKeydown}>
+
+<!-- ✅ New -->
+<div 
+  class="modal" 
+  onclick={(e) => e.stopPropagation()}
+  onkeydown={handleKeydown}
+>
+```
+
+## Testing Migration
+
+### Before Migration
+```bash
+# Check for deprecated syntax
+pnpm run build
+```
+
+### After Migration
+```bash
+# Verify no deprecation warnings
+pnpm run build
+
+# Test functionality
+pnpm run dev
+```
+
+## Resources
+
+- [Svelte 5 Migration Guide](https://svelte.dev/docs/v5-migration)
+- [Svelte 5 Event Handling](https://svelte.dev/docs/element-directives#event-attributes)
+- [Svelte 5 Runes Documentation](https://svelte.dev/docs/runes)

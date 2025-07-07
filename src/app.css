@@ -1,2 +1,12 @@
-@import 'tailwindcss';
-@plugin '@tailwindcss/typography';
+/* Reset */
+body, h1, p {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+    Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  background-color: #121212;
+  color: #e0e0e0;
+}
