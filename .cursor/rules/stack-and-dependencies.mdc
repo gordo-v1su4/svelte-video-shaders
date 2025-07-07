@@ -1,3 +1,8 @@
+---
+description: Stack, major dependencies, versions, and best practices for svelte-video-shaders
+globs:
+alwaysApply: true
+---
 # Application Stack & Major Dependencies
 
 This rule documents the technology stack, major dependencies, their versions, and best practices for the `svelte-video-shaders` project. It is based on the current [PLAN.md](mdc:docs/PLAN.md), [research-changes.md](mdc:docs/research-changes.md), and [GEMINI.md](mdc:docs/GEMINI.md).
@@ -124,7 +129,3 @@ import { default as MP4BoxModule } from 'mp4box';
 - [research-changes.md](mdc:docs/research-changes.md)
 - [GEMINI.md](mdc:docs/GEMINI.md)
 - [svelte-5-syntax.mdc](mdc:.cursor/rules/svelte-5-syntax.mdc)
-description:
-globs:
-alwaysApply: false
----

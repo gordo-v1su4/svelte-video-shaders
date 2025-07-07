@@ -1,3 +1,8 @@
+---
+description: Video playback best practices using WebCodecs, mp4box, and three.js for svelte-video-shaders
+globs:
+alwaysApply: true
+---
 # Video Playback Best Practices
 
 This rule covers video playback implementation using WebCodecs, mp4box, and three.js integration. Based on the current [ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte) implementation and [research-changes.md](mdc:docs/research-changes.md).
@@ -309,7 +314,3 @@ camera = new THREE.OrthographicCamera(-width/2, width/2, height/2, -height/2, 0.
 - [research-changes.md](mdc:docs/research-changes.md)
 - [PLAN.md](mdc:docs/PLAN.md)
 - [stack-and-dependencies.mdc](mdc:.cursor/rules/stack-and-dependencies.mdc)
-description:
-globs:
-alwaysApply: false
----

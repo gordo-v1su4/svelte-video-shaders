@@ -1,3 +1,8 @@
+---
+description: Project directory structure and important files for svelte-video-shaders
+globs:
+alwaysApply: false
+---
 # Project Structure and Important Files
 
 This document outlines the directory structure and key files in the svelte-video-shaders project.
@@ -168,7 +173,3 @@ import Layout from '$routes/+layout.svelte';
 - **PNPM** is the package manager
 - **ESLint and Prettier** are configured for code quality
 - **Vitest** is used for testing
-description:
-globs:
-alwaysApply: false
----
