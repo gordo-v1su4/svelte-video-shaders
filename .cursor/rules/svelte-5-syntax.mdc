@@ -160,6 +160,25 @@ let { count = 0 } = $props();
 let { value = '' } = $bindable();
 ```
 
+### Debugging Reactive State
+Directly logging a `$state` variable to the console will trigger a warning because it logs the reactive proxy, not the plain value. Use `$state.snapshot()` to get a plain JavaScript object for logging, or use the dedicated `$inspect()` rune.
+
+**❌ Incorrect:**
+```javascript
+let myState = $state({ a: 1, b: 2 });
+// This will log a Proxy object and trigger a warning.
+console.log('Current state:', myState);
+```
+
+**✅ Correct:**
+```javascript
+// Option 1: Use $state.snapshot() for clean logging
+console.log('Current state snapshot:', $state.snapshot(myState));
+
+// Option 2: Use $inspect() for interactive debugging in the console
+$inspect(myState);
+```
+
 ## Migration Checklist
 
 ### Event Directives

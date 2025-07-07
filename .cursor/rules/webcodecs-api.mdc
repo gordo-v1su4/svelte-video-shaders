@@ -1,0 +1,126 @@
+---
+description: Best practices and guidelines for using the WebCodecs API in this project.
+globs: ["**/*.svelte", "**/*.js"]
+alwaysApply: true
+---
+
+# WebCodecs API Best Practices
+
+This document outlines the core principles and patterns to follow when using the WebCodecs API to ensure performance, stability, and maintainability.
+
+## 1. The Golden Rule: Close Your Frames
+
+The most critical rule when working with WebCodecs is to **explicitly release resources** as soon as they are no longer needed.
+
+- **Always call `frame.close()`:** After a `VideoFrame` or `AudioData` object has been used (e.g., rendered to a canvas, processed), you **must** call its `close()` method.
+- **Why:** These objects hold references to large, limited system resources (like hardware decoder memory). Waiting for the garbage collector is not sufficient and will lead to performance degradation, stuttering, and eventual crashes as the system runs out of memory.
+
+```javascript
+// ✅ Correct: Close the frame after use.
+const videoDecoder = new VideoDecoder({
+  output: (frame) => {
+    // Do something with the frame, e.g., draw it to a canvas.
+    ctx.drawImage(frame, 0, 0);
+    // Immediately close the frame to release its memory.
+    frame.close();
+  },
+  error: (e) => console.error(e),
+});
+
+// ❌ Incorrect: Forgetting to close the frame will cause memory leaks.
+const videoDecoder = new VideoDecoder({
+  output: (frame) => {
+    ctx.drawImage(frame, 0, 0);
+    // Forgetting frame.close() here is a critical bug.
+  },
+  // ...
+});
+```
+
+## 2. State Management and Lifecycle
+
+Every codec instance (`VideoDecoder`, `VideoEncoder`, etc.) follows a strict lifecycle. Respecting this state model is essential for preventing errors.
+
+- **States:** `unconfigured`, `configured`, `closed`.
+- **Lifecycle:**
+    1.  **Construct:** Create the codec with `output` and `error` callbacks.
+    2.  **Configure:** Call `codec.configure({...})` with the specific codec parameters. Always check for support first with `VideoDecoder.isConfigSupported({...})`.
+    3.  **Process:** Call `codec.decode()` or `codec.encode()` only when the state is `configured`.
+    4.  **Close:** When the component is destroyed or the codec is no longer needed, call `codec.close()` to release all underlying system resources.
+
+```javascript
+// ✅ Correct: Full lifecycle management.
+let decoder;
+
+// In component initialization:
+async function setup() {
+  const config = { codec: 'vp09.00.10.08', /* ... */ };
+  if (!(await VideoDecoder.isConfigSupported(config))) {
+    console.error('Configuration not supported.');
+    return;
+  }
+  decoder = new VideoDecoder({ output: handleFrame, error: handleError });
+  decoder.configure(config);
+}
+
+// In component destruction:
+function cleanup() {
+  if (decoder && decoder.state !== 'closed') {
+    decoder.close();
+  }
+}
+```
+
+## 3. Asynchronous Operations and Error Handling
+
+WebCodecs is highly asynchronous. Handle errors using both promise rejections and the required `error` callback.
+
+- **Promise Rejections:** `configure()` and `flush()` return Promises. Always use `.catch()` to handle configuration or flushing errors.
+- **Error Callback:** The `error` callback passed during construction is for *unrecoverable* errors. When this is called, the codec is automatically moved to the `closed` state. Your application should handle this gracefully.
+
+```javascript
+// ✅ Correct: Handle both promise rejections and the error callback.
+try {
+  await decoder.configure(config);
+} catch (e) {
+  console.error('Failed to configure decoder:', e);
+  return;
+}
+
+const decoder = new VideoDecoder({
+  // ...
+  error: (e) => {
+    // This is a fatal error. The decoder is now closed.
+    // Update UI or application state accordingly.
+    console.error('Unrecoverable decoder error:', e);
+  },
+});
+```
+
+## 4. Data Flow with `mp4box.js`
+
+When demuxing with a library like `mp4box.js`, ensure the data flows correctly into the decoder.
+
+- **`onReady`:** Use the `onReady` callback from `mp4box.js` to get the codec configuration info and configure the `VideoDecoder`.
+- **`onSamples`:** Use the `onSamples` callback to receive the encoded chunks. Create a new `EncodedVideoChunk` for each sample and pass it to `decoder.decode()`.
+
+```javascript
+// In mp4boxfile.onReady:
+const track = info.tracks.find(t => t.type === 'video');
+decoder.configure({ codec: track.codec, ... });
+mp4boxfile.setExtractionOptions(track.id);
+mp4boxfile.start();
+
+// In mp4boxfile.onSamples:
+for (const sample of samples) {
+  const chunk = new EncodedVideoChunk({
+    type: sample.is_sync ? 'key' : 'delta',
+    timestamp: sample.cts,
+    duration: sample.duration,
+    data: sample.data,
+  });
+  if (decoder.state === 'configured') {
+    decoder.decode(chunk);
+  }
+}
+```
