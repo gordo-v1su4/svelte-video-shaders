@@ -139,7 +139,18 @@
 	});
 </script>
 
-<div class="player-wrapper" onclick={startPlayback} role="button" tabindex="0">
+<div
+	class="player-wrapper"
+	onclick={startPlayback}
+	onkeydown={(e) => {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			startPlayback();
+		}
+	}}
+	role="button"
+	tabindex="0"
+>
 	<video
 		bind:this={video}
 		{src}
