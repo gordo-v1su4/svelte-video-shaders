@@ -142,7 +142,14 @@
 					return;
 				}
 				console.log('[Tracer] mp4box.onReady: Video track found. Inspecting in next log.');
-				console.log(videoTrack);
+				console.log('[Tracer] mp4box.onReady: Full videoTrack structure:', videoTrack);
+				console.log('[Tracer] mp4box.onReady: Track mdia structure:', videoTrack.mdia);
+				console.log('[Tracer] mp4box.onReady: Track samples structure:', videoTrack.samples);
+				console.log('[Tracer] mp4box.onReady: Track codec_private structure:', videoTrack.codec_private);
+				console.log('[Tracer] mp4box.onReady: MP4Box info structure:', info);
+				if (videoTrack.mdia?.minf?.stbl?.stsd) {
+					console.log('[Tracer] mp4box.onReady: stsd structure:', videoTrack.mdia.minf.stbl.stsd);
+				}
 
 				videoDecoder = new VideoDecoder({
 					output: (frame) => {
@@ -169,11 +176,70 @@
 					optimizeForLatency: true
 				};
 
-				// For H.264/AVC, the description is required. This is a safe way to access it.
-				const avcC = videoTrack.description?.entries?.find(entry => entry.type === 'avc1')?.boxes?.find(box => box.type === 'avcC');
-				if (avcC) {
-					console.log('[Tracer] mp4box.onReady: Found avcC box, providing it as the description.');
-					config.description = avcC.data;
+				// For H.264/AVC, the description is required. Extract it from the track.
+				if (videoTrack.codec.startsWith('avc1')) {
+					console.log('[Tracer] mp4box.onReady: H.264 codec detected, searching for avcC description.');
+					
+					// The correct way to get avcC description from MP4Box
+					try {
+						// First try the new MP4Box method
+						if (mp4boxfile.getTrackById) {
+							const track = mp4boxfile.getTrackById(videoTrack.id);
+							console.log('[Tracer] mp4box.onReady: Full track from getTrackById:', track);
+							
+							// Check if track has sample descriptions
+							if (track && track.mdia && track.mdia.minf && track.mdia.minf.stbl && track.mdia.minf.stbl.stsd) {
+								const stsd = track.mdia.minf.stbl.stsd;
+								console.log('[Tracer] mp4box.onReady: Found stsd:', stsd);
+								
+								if (stsd.entries && stsd.entries.length > 0) {
+									const entry = stsd.entries[0];
+									console.log('[Tracer] mp4box.onReady: First stsd entry:', entry);
+									
+									if (entry.avcC && entry.avcC.data) {
+										console.log('[Tracer] mp4box.onReady: Found avcC data in stsd entry.');
+										config.description = entry.avcC.data;
+									}
+								}
+							}
+						}
+						
+						// Fallback: Try direct access to info structure
+						if (!config.description && info.tracks) {
+							const infoTrack = info.tracks.find(t => t.id === videoTrack.id);
+							if (infoTrack) {
+								console.log('[Tracer] mp4box.onReady: Found track in info.tracks:', infoTrack);
+								
+								// Check for codec private data
+								if (infoTrack.codec_private) {
+									console.log('[Tracer] mp4box.onReady: Using codec_private from info track.');
+									config.description = infoTrack.codec_private;
+								}
+								// Check for avcC in track
+								else if (infoTrack.avcC) {
+									console.log('[Tracer] mp4box.onReady: Using avcC from info track.');
+									config.description = infoTrack.avcC;
+								}
+							}
+						}
+						
+						// Last resort: Try to extract from samples
+						if (!config.description) {
+							console.log('[Tracer] mp4box.onReady: Trying to extract avcC from file structure...');
+							
+							// Log the full info structure to debug
+							console.log('[Tracer] mp4box.onReady: Full info structure for debugging:', JSON.stringify(info, null, 2));
+						}
+						
+					} catch (e) {
+						console.log('[Tracer] mp4box.onReady: Error while extracting avcC:', e);
+					}
+					
+					if (!config.description) {
+						console.log('[Tracer] mp4box.onReady: WARNING - No avcC description found. This will likely cause decode failures.');
+					} else {
+						console.log('[Tracer] mp4box.onReady: Successfully found avcC description, length:', config.description.byteLength || config.description.length);
+					}
 				}
 
 				console.log('[Tracer] mp4box.onReady: Configuring decoder with:', config);
@@ -247,7 +313,14 @@
 <div class="player-container">
 	<canvas bind:this={canvas}></canvas>
 	{#if showOverlay}
-		<div class="play-overlay" onclick={start}>
+		<div 
+			class="play-overlay" 
+			onclick={start}
+			onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && start()}
+			role="button"
+			tabindex="0"
+			aria-label="Click to play video"
+		>
 			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
 				><path
 					d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"

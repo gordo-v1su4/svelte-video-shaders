@@ -1,5 +1,6 @@
 <script>
 	import ShaderPlayer from '$lib/ShaderPlayer.svelte';
+	import FileInput from '$lib/FileInput.svelte';
 	import {
 		Pane,
 		TabGroup,
@@ -8,8 +9,11 @@
 		Textarea,
 		Slider,
 		Color,
-		Point
+		Point,
+		List,
+		ThemeUtils
 	} from 'svelte-tweakpane-ui';
+	import * as EssentialsPlugin from '@tweakpane/plugin-essentials';
 
 	let fragmentShader = $state('');
 	let customShaderSrc = $state('');
@@ -20,7 +24,12 @@
 		u_vignette_color: { value: { r: 0, g: 0, b: 0 } },
 		u_vignette_center: { value: { x: 0.5, y: 0.5 } }
 	});
-	let player; // This will be bound to the ShaderPlayer component instance
+	let player = $state(); // This will be bound to the ShaderPlayer component instance
+	
+	// Theme and animation controls
+	let themeKey = $state('standard');
+	let animationCurve = $state({ x1: 0.25, y1: 0.1, x2: 0.25, y2: 1 });
+	let uploadedFiles = $state(null);
 
 	const shaders = {
 		Passthrough: `
@@ -96,25 +105,12 @@
 		fragmentShader = customShaderSrc;
 	}
 
-	function triggerFileUpload() {
-		console.log('[DEBUG] triggerFileUpload: Function called.');
-		try {
-			const input = document.createElement('input');
-			input.type = 'file';
-			input.accept = 'video/*';
-			input.multiple = true;
-			input.style.display = 'none';
-			input.onchange = handleFileUpload;
-			document.body.appendChild(input);
-			console.log('[DEBUG] triggerFileUpload: Input element created and appended to body.');
-			input.click();
-			console.log('[DEBUG] triggerFileUpload: input.click() called.');
-			document.body.removeChild(input);
-			console.log('[DEBUG] triggerFileUpload: Input element removed from body.');
-		} catch (e) {
-			console.error('[DEBUG] triggerFileUpload: An error occurred.', e);
+	// Handle file upload from Tweakpane FileInput
+	$effect(() => {
+		if (uploadedFiles) {
+			handleFileUpload({ target: { files: uploadedFiles } });
 		}
-	}
+	});
 
 	async function handleFileUpload(event) {
 		console.log('[DEBUG] handleFileUpload: Function called.', event);
@@ -164,9 +160,6 @@
 
 <div class="app-container">
 	<div class="main-content">
-		<div class="upload-bar">
-			<button class="upload-button" onclick={triggerFileUpload}>Upload Videos</button>
-		</div>
 		<div class="player-section">
 			{#if videoQueue.length > 0}
 				<ShaderPlayer
@@ -183,8 +176,15 @@
 		</div>
 		<div class="thumbnail-bar">
 			{#each videoQueue as video, i}
-				<!-- svelte-ignore a11y_click_events_have_key_events -->
-				<div class="thumbnail" class:active={i === currentVideoIndex} onclick={() => selectVideo(i)}>
+				<div 
+					class="thumbnail" 
+					class:active={i === currentVideoIndex} 
+					onclick={() => selectVideo(i)}
+					onkeydown={(e) => e.key === 'Enter' && selectVideo(i)}
+					role="button"
+					tabindex="0"
+					aria-label="Select video {video.name}"
+				>
 					<img src={video.thumb} alt={video.name} />
 					<span>{video.name}</span>
 				</div>
@@ -192,11 +192,24 @@
 		</div>
 	</div>
 	<aside class="controls-section">
-		<Pane title="Controls" position="fixed">
+		<Pane title="Video Shader Controls" position="fixed" theme={ThemeUtils.presets[themeKey]}>
+			<!-- File Upload Section -->
+			<FileInput bind:value={uploadedFiles} title="Upload Videos" />
+			
+			<!-- Theme Picker -->
+			<List
+				bind:value={themeKey}
+				label="Theme"
+				options={Object.keys(ThemeUtils.presets)}
+			/>
+			
+			<!-- Playback Controls -->
 			<div class="playback-controls">
 				<Button title="Play" onclick={() => player?.play()} />
 				<Button title="Pause" onclick={() => player?.pause()} />
 			</div>
+			
+			<!-- Shader Parameters -->
 			<Slider
 				bind:value={uniforms.u_strength.value}
 				label="Strength"
@@ -211,6 +224,13 @@
 				x={{ min: -1, max: 1 }}
 				y={{ min: -1, max: 1 }}
 			/>
+			
+			<!-- Animation Curve Control -->
+			<div class="cubic-bezier-control">
+				<!-- Note: CubicBezier component will be added when available in svelte-tweakpane-ui -->
+			</div>
+			
+			<!-- Shader Selection -->
 			<TabGroup>
 				<TabPage title="Presets">
 					{#each Object.keys(shaders) as name}
@@ -238,22 +258,12 @@
 		display: flex;
 		flex-direction: column;
 	}
-	.upload-bar {
-		padding: 0.5rem 1rem;
-		background-color: #2a2a2a;
-		flex-shrink: 0;
-	}
-	.upload-button {
-		background-color: #007acc;
-		color: white;
-		border: none;
-		padding: 0.5rem 1rem;
+	.cubic-bezier-control {
+		margin: 0.5rem 0;
+		padding: 0.5rem;
+		border: 1px solid #333;
 		border-radius: 4px;
-		cursor: pointer;
-		font-size: 1rem;
-	}
-	.upload-button:hover {
-		background-color: #008cdd;
+		background-color: #2a2a2a;
 	}
 	.player-section {
 		flex-grow: 1;

@@ -57,6 +57,7 @@
 		]
 	},
 	"dependencies": {
+		"@tweakpane/plugin-essentials": "^0.2.1",
 		"mp4box": "^1.2.0",
 		"svelte-tweakpane-ui": "^1.5.9",
 		"three": "^0.178.0",
