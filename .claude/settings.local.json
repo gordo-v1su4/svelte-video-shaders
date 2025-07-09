@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(find:*)",
+      "Bash(pnpm run:*)",
+      "Bash(pnpm install:*)",
+      "Bash(pkill:*)",
+      "Bash(true)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(lsof:*)"
+    ],
+    "deny": []
+  }
+}
