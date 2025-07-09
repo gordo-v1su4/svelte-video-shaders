@@ -19,6 +19,15 @@ export default defineConfig({
 			}
 		}
 	],
+	server: {
+		proxy: {
+			'/proxy': {
+				target: 'https://ia600207.us.archive.org',
+				changeOrigin: true,
+				rewrite: (path) => path.replace(/^\/proxy/, '')
+			}
+		}
+	},
 	test: {
 		projects: [
 			{
