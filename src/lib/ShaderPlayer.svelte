@@ -85,6 +85,10 @@
 			console.log('[Tracer] onDestroy: Component unmounting.');
 			window.removeEventListener('resize', handleResize);
 			if (animationFrameId) cancelAnimationFrame(animationFrameId);
+			// Clean up any remaining VideoFrame in texture
+			if (texture && texture.image && texture.image.close) {
+				texture.image.close();
+			}
 			if (videoDecoder) videoDecoder.close();
 			if(mp4boxfile) mp4boxfile.stop();
 			if(renderer) renderer.dispose();
@@ -136,32 +140,83 @@
 
 			mp4boxfile.onReady = (info) => {
 				console.log('[Tracer] mp4box.onReady: MP4Box is ready.', info);
+				
+				// Validate MP4 file structure
+				if (!info || !info.tracks || info.tracks.length === 0) {
+					console.error('[Tracer] mp4box.onReady: Invalid MP4 file - no tracks found.');
+					return;
+				}
+				
+				console.log('[Tracer] mp4box.onReady: MP4 file validation:');
+				console.log('  - Duration:', info.duration, 'ms');
+				console.log('  - Timescale:', info.timescale);
+				console.log('  - Fragmented:', info.isFragmented);
+				console.log('  - Tracks:', info.tracks.length);
+				
 				const videoTrack = info.tracks.find((t) => t.type === 'video');
 				if (!videoTrack) {
 					console.error('[Tracer] mp4box.onReady: FATAL - No video track found in the file.');
+					console.log('[Tracer] mp4box.onReady: Available tracks:', info.tracks.map(t => ({ id: t.id, type: t.type, codec: t.codec })));
 					return;
 				}
-				console.log('[Tracer] mp4box.onReady: Video track found. Inspecting in next log.');
-				console.log('[Tracer] mp4box.onReady: Full videoTrack structure:', videoTrack);
-				console.log('[Tracer] mp4box.onReady: Track mdia structure:', videoTrack.mdia);
-				console.log('[Tracer] mp4box.onReady: Track samples structure:', videoTrack.samples);
-				console.log('[Tracer] mp4box.onReady: Track codec_private structure:', videoTrack.codec_private);
-				console.log('[Tracer] mp4box.onReady: MP4Box info structure:', info);
-				if (videoTrack.mdia?.minf?.stbl?.stsd) {
-					console.log('[Tracer] mp4box.onReady: stsd structure:', videoTrack.mdia.minf.stbl.stsd);
+				
+				console.log('[Tracer] mp4box.onReady: Video track validation:');
+				console.log('  - Track ID:', videoTrack.id);
+				console.log('  - Codec:', videoTrack.codec);
+				console.log('  - Resolution:', videoTrack.track_width, 'x', videoTrack.track_height);
+				console.log('  - Bitrate:', videoTrack.bitrate);
+				console.log('  - Duration:', videoTrack.duration, 'samples');
+				console.log('  - Timescale:', videoTrack.timescale);
+				
+				// Check for H.264 specific requirements
+				if (videoTrack.codec.startsWith('avc1')) {
+					console.log('[Tracer] mp4box.onReady: H.264 codec detected - avcC description required for WebCodecs.');
 				}
 
 				videoDecoder = new VideoDecoder({
 					output: (frame) => {
+						console.log('[Tracer] videoDecoder.output: Frame received, updating texture. Timestamp:', frame.timestamp, 'Dimensions:', frame.codedWidth, 'x', frame.codedHeight);
+						
 						if (texture) {
-							// console.log('[Tracer] videoDecoder.output: Frame received, updating texture.', frame.timestamp);
+							// Close the previous frame if it exists
+							if (texture.image && texture.image.close) {
+								texture.image.close();
+							}
+							
+							// Update texture with new frame
 							texture.image = frame;
 							texture.needsUpdate = true;
-							if (frame.codedWidth) { // First frame will have dimensions
+							
+							// For VideoFrame textures, we need to use VideoTexture instead of CanvasTexture
+							if (frame.codedWidth && frame.codedHeight) {
+								// Create a new VideoTexture if this is the first frame or dimensions changed
+								if (!texture.isVideoTexture || 
+									texture.image.codedWidth !== frame.codedWidth || 
+									texture.image.codedHeight !== frame.codedHeight) {
+									
+									console.log('[Tracer] videoDecoder.output: Creating VideoTexture for frame dimensions:', frame.codedWidth, 'x', frame.codedHeight);
+									
+									// Create a new VideoTexture optimized for VideoFrame
+									const newTexture = new THREE.VideoTexture(frame);
+									newTexture.needsUpdate = true;
+									
+									// Update the material uniform
+									material.uniforms.u_texture.value = newTexture;
+									
+									// Clean up old texture
+									if (texture.image && texture.image.close) {
+										texture.image.close();
+									}
+									texture.dispose();
+									texture = newTexture;
+								}
+								
 								handleResize();
 							}
+						} else {
+							// If no texture, close the frame immediately
+							frame.close();
 						}
-						frame.close();
 					},
 					error: (e) => {
 						console.error('[Tracer] videoDecoder.error: Decoder error.', e);
@@ -176,82 +231,201 @@
 					optimizeForLatency: true
 				};
 
-				// For H.264/AVC, the description is required. Extract it from the track.
+				// For H.264/AVC, the description is required. Extract avcC from MP4Box.
 				if (videoTrack.codec.startsWith('avc1')) {
-					console.log('[Tracer] mp4box.onReady: H.264 codec detected, searching for avcC description.');
+					console.log('[Tracer] mp4box.onReady: H.264 codec detected, extracting avcC description.');
 					
-					// The correct way to get avcC description from MP4Box
 					try {
-						// First try the new MP4Box method
-						if (mp4boxfile.getTrackById) {
-							const track = mp4boxfile.getTrackById(videoTrack.id);
-							console.log('[Tracer] mp4box.onReady: Full track from getTrackById:', track);
+						// Method 1: Use MP4Box's getTrackById to access the full track structure
+						const fullTrack = mp4boxfile.getTrackById(videoTrack.id);
+						console.log('[Tracer] mp4box.onReady: Full track structure:', fullTrack);
+						
+						// Navigate to the avcC box in the track's sample description
+						if (fullTrack?.mdia?.minf?.stbl?.stsd?.entries?.[0]) {
+							const sampleEntry = fullTrack.mdia.minf.stbl.stsd.entries[0];
+							console.log('[Tracer] mp4box.onReady: Sample entry:', sampleEntry);
 							
-							// Check if track has sample descriptions
-							if (track && track.mdia && track.mdia.minf && track.mdia.minf.stbl && track.mdia.minf.stbl.stsd) {
-								const stsd = track.mdia.minf.stbl.stsd;
-								console.log('[Tracer] mp4box.onReady: Found stsd:', stsd);
+							// Look for avcC box in the sample entry
+							if (sampleEntry.avcC) {
+								console.log('[Tracer] mp4box.onReady: Found avcC box:', sampleEntry.avcC);
+								console.log('[Tracer] mp4box.onReady: avcC box properties:', Object.keys(sampleEntry.avcC));
 								
-								if (stsd.entries && stsd.entries.length > 0) {
-									const entry = stsd.entries[0];
-									console.log('[Tracer] mp4box.onReady: First stsd entry:', entry);
+								// Try different ways to extract the avcC data
+								// Method 1: Direct data property
+								if (sampleEntry.avcC.data) {
+									config.description = sampleEntry.avcC.data;
+									console.log('[Tracer] mp4box.onReady: Using avcC.data, length:', config.description.byteLength);
+								}
+								// Method 2: Check if it's an ArrayBuffer directly
+								else if (sampleEntry.avcC instanceof ArrayBuffer) {
+									config.description = sampleEntry.avcC;
+									console.log('[Tracer] mp4box.onReady: Using avcC as ArrayBuffer, length:', config.description.byteLength);
+								}
+								// Method 3: Check if it's a Uint8Array
+								else if (sampleEntry.avcC instanceof Uint8Array) {
+									config.description = sampleEntry.avcC.buffer;
+									console.log('[Tracer] mp4box.onReady: Using avcC as Uint8Array buffer, length:', config.description.byteLength);
+								}
+								// Method 4: Try to serialize the avcC box using MP4Box methods
+								else if (sampleEntry.avcC.write) {
+									try {
+										// Create a stream to write the avcC box data
+										const stream = new MP4Box.DataStream();
+										stream.endianness = MP4Box.DataStream.BIG_ENDIAN;
+										sampleEntry.avcC.write(stream);
+										
+										// The avcC data starts after the box header (8 bytes: 4 bytes size + 4 bytes type)
+										// But we need only the configuration data, not the box wrapper
+										const fullBoxData = new Uint8Array(stream.buffer);
+										console.log('[Tracer] mp4box.onReady: Full avcC box data length:', fullBoxData.length);
+										console.log('[Tracer] mp4box.onReady: First 16 bytes of avcC box:', Array.from(fullBoxData.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+										
+										// Skip the box header (8 bytes) to get the raw avcC configuration
+										const avcCConfig = fullBoxData.slice(8);
+										config.description = avcCConfig.buffer;
+										console.log('[Tracer] mp4box.onReady: Extracted avcC config data, length:', config.description.byteLength);
+										console.log('[Tracer] mp4box.onReady: avcC config start:', Array.from(avcCConfig.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+									} catch (e) {
+										console.log('[Tracer] mp4box.onReady: avcC write method failed:', e);
+									}
+								}
+								// Method 5: Try to access configuration data directly
+								else if (sampleEntry.avcC.config) {
+									config.description = sampleEntry.avcC.config;
+									console.log('[Tracer] mp4box.onReady: Using avcC.config, length:', config.description.byteLength || config.description.length);
+								}
+								// Method 6: Build avcC manually from available properties
+								else {
+									console.log('[Tracer] mp4box.onReady: Attempting to build avcC from properties...');
+									console.log('[Tracer] mp4box.onReady: avcC properties:', {
+										configurationVersion: sampleEntry.avcC.configurationVersion,
+										profile: sampleEntry.avcC.AVCProfileIndication,
+										compatibility: sampleEntry.avcC.profile_compatibility,
+										level: sampleEntry.avcC.AVCLevelIndication,
+										lengthSizeMinusOne: sampleEntry.avcC.lengthSizeMinusOne,
+										nb_SPS: sampleEntry.avcC.nb_SPS,
+										nb_PPS: sampleEntry.avcC.nb_PPS
+									});
 									
-									if (entry.avcC && entry.avcC.data) {
-										console.log('[Tracer] mp4box.onReady: Found avcC data in stsd entry.');
-										config.description = entry.avcC.data;
+									// If we have SPS/PPS data, we can build the avcC
+									if (sampleEntry.avcC.SPS && sampleEntry.avcC.PPS) {
+										console.log('[Tracer] mp4box.onReady: Building avcC from SPS/PPS data');
+										// This would require manual avcC construction - complex but possible
 									}
 								}
 							}
-						}
-						
-						// Fallback: Try direct access to info structure
-						if (!config.description && info.tracks) {
-							const infoTrack = info.tracks.find(t => t.id === videoTrack.id);
-							if (infoTrack) {
-								console.log('[Tracer] mp4box.onReady: Found track in info.tracks:', infoTrack);
-								
-								// Check for codec private data
-								if (infoTrack.codec_private) {
-									console.log('[Tracer] mp4box.onReady: Using codec_private from info track.');
-									config.description = infoTrack.codec_private;
-								}
-								// Check for avcC in track
-								else if (infoTrack.avcC) {
-									console.log('[Tracer] mp4box.onReady: Using avcC from info track.');
-									config.description = infoTrack.avcC;
+							
+							// Alternative: Look for 'boxes' array containing avcC
+							if (!config.description && sampleEntry.boxes) {
+								const avcCBox = sampleEntry.boxes.find(box => box.type === 'avcC');
+								if (avcCBox && avcCBox.data) {
+									config.description = avcCBox.data;
+									console.log('[Tracer] mp4box.onReady: Found avcC in boxes array, length:', config.description.byteLength);
 								}
 							}
 						}
 						
-						// Last resort: Try to extract from samples
+						// Method 2: Try MP4Box file methods if available
 						if (!config.description) {
-							console.log('[Tracer] mp4box.onReady: Trying to extract avcC from file structure...');
+							console.log('[Tracer] mp4box.onReady: Trying MP4Box file methods...');
 							
-							// Log the full info structure to debug
-							console.log('[Tracer] mp4box.onReady: Full info structure for debugging:', JSON.stringify(info, null, 2));
+							// Try the moov.trak.mdia.minf.stbl.stsd path directly
+							if (mp4boxfile.moov && mp4boxfile.moov.traks) {
+								const trak = mp4boxfile.moov.traks.find(t => t.tkhd && t.tkhd.track_id === videoTrack.id);
+								if (trak && trak.mdia && trak.mdia.minf && trak.mdia.minf.stbl && trak.mdia.minf.stbl.stsd) {
+									const stsd = trak.mdia.minf.stbl.stsd;
+									if (stsd.entries && stsd.entries.length > 0) {
+										const entry = stsd.entries[0];
+										console.log('[Tracer] mp4box.onReady: Direct moov access - entry:', entry);
+										
+										if (entry.avcC && entry.avcC.write) {
+											try {
+												const stream = new MP4Box.DataStream();
+												stream.endianness = MP4Box.DataStream.BIG_ENDIAN;
+												entry.avcC.write(stream);
+												
+												const fullData = new Uint8Array(stream.buffer);
+												const configData = fullData.slice(8); // Skip box header
+												config.description = configData.buffer;
+												console.log('[Tracer] mp4box.onReady: Direct moov avcC extracted, length:', config.description.byteLength);
+											} catch (e) {
+												console.log('[Tracer] mp4box.onReady: Direct moov avcC write failed:', e);
+											}
+										}
+									}
+								}
+							}
+							
+							// Try getSampleDescription if available
+							if (!config.description && typeof mp4boxfile.getSampleDescription === 'function') {
+								try {
+									const sampleDesc = mp4boxfile.getSampleDescription(videoTrack.id, 0);
+									console.log('[Tracer] mp4box.onReady: Sample description:', sampleDesc);
+									
+									if (sampleDesc?.avcC) {
+										config.description = sampleDesc.avcC.data || sampleDesc.avcC;
+										console.log('[Tracer] mp4box.onReady: Got avcC from getSampleDescription');
+									}
+								} catch (e) {
+									console.log('[Tracer] mp4box.onReady: getSampleDescription failed:', e);
+								}
+							}
+							
+							// Try getCodecDescription if available
+							if (!config.description && typeof mp4boxfile.getCodecDescription === 'function') {
+								try {
+									const codecDesc = mp4boxfile.getCodecDescription(videoTrack.id);
+									if (codecDesc) {
+										config.description = codecDesc;
+										console.log('[Tracer] mp4box.onReady: Got description from getCodecDescription');
+									}
+								} catch (e) {
+									console.log('[Tracer] mp4box.onReady: getCodecDescription failed:', e);
+								}
+							}
+						}
+						
+						// Method 3: Check if info.tracks has the codec description
+						if (!config.description && info.tracks) {
+							const infoTrack = info.tracks.find(t => t.id === videoTrack.id);
+							if (infoTrack) {
+								console.log('[Tracer] mp4box.onReady: Checking info track:', infoTrack);
+								
+								if (infoTrack.codec_private) {
+									config.description = infoTrack.codec_private;
+									console.log('[Tracer] mp4box.onReady: Using codec_private from info track');
+								}
+							}
 						}
 						
 					} catch (e) {
-						console.log('[Tracer] mp4box.onReady: Error while extracting avcC:', e);
+						console.log('[Tracer] mp4box.onReady: Error extracting avcC:', e);
 					}
 					
+					// Final validation
 					if (!config.description) {
-						console.log('[Tracer] mp4box.onReady: WARNING - No avcC description found. This will likely cause decode failures.');
+						console.error('[Tracer] mp4box.onReady: CRITICAL - No avcC description found for H.264 codec. Video decoding will fail.');
+						console.log('[Tracer] mp4box.onReady: Available MP4Box methods:', Object.getOwnPropertyNames(mp4boxfile));
+						
+						// Log the full info structure for debugging
+						console.log('[Tracer] mp4box.onReady: Full MP4Box info for debugging:', info);
 					} else {
-						console.log('[Tracer] mp4box.onReady: Successfully found avcC description, length:', config.description.byteLength || config.description.length);
+						console.log('[Tracer] mp4box.onReady: ✓ Successfully extracted avcC description, length:', config.description.byteLength || config.description.length);
+						console.log('[Tracer] mp4box.onReady: avcC type:', typeof config.description);
+						console.log('[Tracer] mp4box.onReady: avcC constructor:', config.description.constructor.name);
 					}
 				}
 
 				console.log('[Tracer] mp4box.onReady: Configuring decoder with:', config);
 				videoDecoder.configure(config);
 
-				mp4boxfile.setExtractionOptions(videoTrack.id);
+				mp4boxfile.setExtractionOptions(videoTrack.id, null, { nbSamples: 1000 });
 				mp4boxfile.start();
 				console.log('[Tracer] mp4box.onReady: Extraction started.');
 			};
 
 			mp4boxfile.onSamples = (track_id, user, samples) => {
-				console.log(`[Tracer] mp4box.onSamples: Received ${samples.length} samples.`);
+				console.log(`[Tracer] mp4box.onSamples: Received ${samples.length} samples for track ${track_id}.`);
 				for (const sample of samples) {
 					const chunk = new EncodedVideoChunk({
 						type: sample.is_sync ? 'key' : 'delta',
@@ -259,8 +433,11 @@
 						duration: sample.duration,
 						data: sample.data
 					});
+					console.log(`[Tracer] mp4box.onSamples: Processing sample - type: ${chunk.type}, timestamp: ${chunk.timestamp}, data size: ${sample.data.byteLength}`);
 					if (videoDecoder.state === 'configured') {
 						videoDecoder.decode(chunk);
+					} else {
+						console.warn(`[Tracer] mp4box.onSamples: Decoder not configured, state: ${videoDecoder.state}`);
 					}
 				}
 			};

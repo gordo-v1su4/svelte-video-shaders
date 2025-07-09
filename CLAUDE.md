@@ -82,9 +82,34 @@ src/
 - **Proper event handling** avoiding DOM conflicts
 - **Reactive file handling** with Svelte 5 $effect
 
-## Technical Debt & Known Issues
-- MP4Box import syntax needs verification (see PLAN.md)
-- Frame-by-frame pipeline implementation incomplete
+## Current Status & Debug Session (2025-01-07)
+
+### ✅ Recent Fixes Applied
+1. **VideoFrame Lifecycle Management**: Fixed `frame.close()` timing to prevent "can't texture a closed VideoFrame" errors
+2. **VideoTexture Creation**: Implemented proper VideoTexture creation for VideoFrame objects with correct dimensions
+3. **MP4Box Sample Extraction**: Added `{ nbSamples: 1000 }` to extract more samples for continuous playback
+4. **Enhanced Debug Logging**: Added detailed logging for sample processing and frame output
+
+### 🔍 Current Issue: Video Stuck on Single Frame
+**Problem**: Video loads and shows first frame but doesn't play/advance
+**Status**: Under investigation with enhanced logging
+
+**Debug Changes Made**:
+- Added detailed logging in `mp4boxfile.onSamples` callback
+- Added frame processing logs in `videoDecoder.output`  
+- Logging sample count, timestamps, data sizes, and decoder state
+
+**Next Steps for Resume**:
+1. Check console logs to see if multiple samples are being extracted
+2. Verify if VideoDecoder is receiving and processing multiple chunks
+3. Check if frame output callback is being called continuously
+4. Investigate timing/playback control mechanism
+
+### 🚧 Technical Debt & Known Issues
+- ~~MP4Box import syntax needs verification~~ ✅ RESOLVED: Using `import * as MP4Box`
+- ~~VideoFrame memory management~~ ✅ RESOLVED: Proper lifecycle implemented
+- ~~Texture dimension mismatches~~ ✅ RESOLVED: VideoTexture creation
+- **CURRENT**: Frame-by-frame continuous playback mechanism needs investigation
 - Audio-reactive features not yet implemented
 - Error handling could be more robust
 
