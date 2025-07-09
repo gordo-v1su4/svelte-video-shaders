@@ -11,6 +11,8 @@
 		Color,
 		Point,
 		List,
+		Monitor,
+		Checkbox,
 		ThemeUtils
 	} from 'svelte-tweakpane-ui';
 	import * as EssentialsPlugin from '@tweakpane/plugin-essentials';
@@ -30,6 +32,7 @@
 	let themeKey = $state('standard');
 	let animationCurve = $state({ x1: 0.25, y1: 0.1, x2: 0.25, y2: 1 });
 	let uploadedFiles = $state(null);
+	let shouldLoop = $state(true); // Default to loop enabled
 
 	const shaders = {
 		Passthrough: `
@@ -156,6 +159,8 @@
 	function selectVideo(index) {
 		currentVideoIndex = index;
 	}
+
+
 </script>
 
 <div class="app-container">
@@ -167,6 +172,7 @@
 					file={videoQueue[currentVideoIndex].file}
 					{fragmentShader}
 					{uniforms}
+					{shouldLoop}
 				/>
 			{:else}
 				<div class="placeholder">
@@ -193,30 +199,55 @@
 	</div>
 	<aside class="controls-section">
 		<Pane title="Video Shader Controls" position="fixed" theme={ThemeUtils.presets[themeKey]}>
-			<!-- File Upload Section -->
-			<FileInput bind:value={uploadedFiles} title="Upload Videos" />
-			
-			<!-- Theme Picker -->
-			<List
-				bind:value={themeKey}
-				label="Theme"
-				options={Object.keys(ThemeUtils.presets)}
-			/>
+			<!-- Video Performance Monitoring -->
+			{#if player}
+				<Monitor
+					value={player.targetFrameRate || 0}
+					format={(v) => v.toFixed(1) + ' fps'}
+					label="Video FPS"
+				/>
+				<Monitor
+					value={player.actualFrameRate || 0}
+					format={(v) => v + ' fps'}
+					label="Playing FPS"
+				/>
+			{/if}
 			
 			<!-- Playback Controls -->
 			<div class="playback-controls">
-				<Button title="Play" onclick={() => player?.play()} />
-				<Button title="Pause" onclick={() => player?.pause()} />
-				<Button title="Step Frame" onclick={() => player?.stepFrame?.()} />
-				<Button title="Restart" onclick={() => player?.seekToStart?.()} />
+				<Button 
+					title={player?.isPlaying ? "Pause" : "Play"} 
+					on:click={() => player?.togglePlayPause?.()} 
+				/>
+				<div class="step-button-split">
+					<button 
+						class="step-button-left" 
+						onclick={() => player?.stepFrameBackward?.()}
+						title="Step Back"
+					>
+						◀
+					</button>
+					<button 
+						class="step-button-right" 
+						onclick={() => player?.stepFrameForward?.()}
+						title="Step Forward"
+					>
+						▶
+					</button>
+				</div>
+				<Button title="Restart" on:click={() => player?.restart?.()} />
 			</div>
+			
+			<!-- Loop Control -->
+			<Checkbox bind:value={shouldLoop} label="Loop" />
 			
 			<!-- Video Time Info -->
 			{#if player}
 				<div class="time-info">
 					<div>Time: {(player.currentTime || 0).toFixed(2)}s</div>
 					<div>Duration: {(player.duration || 0).toFixed(2)}s</div>
-					<div>FPS: {(player.targetFrameRate || 0).toFixed(1)}</div>
+					<div>Video FPS: {(player.targetFrameRate || 0).toFixed(1)}</div>
+					<div>Playing FPS: {player.actualFrameRate || 0}</div>
 				</div>
 			{/if}
 			
@@ -240,6 +271,15 @@
 				max={1}
 				step={0.01}
 			/>
+			
+			<!-- UI Theme Picker -->
+			<List
+				bind:value={themeKey}
+				label="UI Theme"
+				options={Object.keys(ThemeUtils.presets)}
+			/>
+			
+			<!-- Color Controls -->
 			<Color bind:value={uniforms.u_vignette_color.value} label="Vignette Color" />
 			<Point
 				bind:value={uniforms.u_vignette_center.value}
@@ -257,14 +297,17 @@
 			<TabGroup>
 				<TabPage title="Presets">
 					{#each Object.keys(shaders) as name}
-						<Button title={name} onclick={() => selectShader(name)} />
+						<Button title={name} on:click={() => selectShader(name)} />
 					{/each}
 				</TabPage>
 				<TabPage title="Custom">
 					<Textarea bind:value={customShaderSrc} title="GLSL Code" rows={15} />
-					<Button title="Apply Custom Shader" onclick={applyCustomShader} />
+					<Button title="Apply Custom Shader" on:click={applyCustomShader} />
 				</TabPage>
 			</TabGroup>
+			
+			<!-- File Upload Section - At Bottom -->
+			<FileInput bind:value={uploadedFiles} title="Upload Videos" />
 		</Pane>
 	</aside>
 </div>
@@ -340,6 +383,39 @@
 		grid-template-columns: repeat(2, 1fr);
 		gap: 0.5rem;
 		margin: 1rem 0;
+	}
+	
+	.step-button-split {
+		display: flex;
+		border-radius: 4px;
+		overflow: hidden;
+		border: 1px solid #666;
+	}
+	
+	.step-button-left,
+	.step-button-right {
+		flex: 1;
+		padding: 8px 12px;
+		background: #2a2a2a;
+		color: white;
+		border: none;
+		cursor: pointer;
+		font-size: 14px;
+		transition: background-color 0.2s;
+	}
+	
+	.step-button-left {
+		border-right: 1px solid #666;
+	}
+	
+	.step-button-left:hover,
+	.step-button-right:hover {
+		background: #3a3a3a;
+	}
+	
+	.step-button-left:active,
+	.step-button-right:active {
+		background: #1a1a1a;
 	}
 	.time-info {
 		margin-top: 1rem;

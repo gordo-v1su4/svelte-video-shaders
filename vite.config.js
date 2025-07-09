@@ -1,13 +1,9 @@
-import devtoolsJson from 'vite-plugin-devtools-json';
-
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [
-		// tailwindcss(),
 		sveltekit(),
-		devtoolsJson(),
 		{
 			name: 'configure-response-headers',
 			configureServer: (server) => {
@@ -20,13 +16,8 @@ export default defineConfig({
 		}
 	],
 	server: {
-		// proxy: {
-		// 	'/proxy': {
-		// 		target: 'https://ia600207.us.archive.org',
-		// 		changeOrigin: true,
-		// 		rewrite: (path) => path.replace(/^\/proxy/, '')
-		// 	}
-		// }
+		port: 5173,
+		strictPort: true // Exit if port is already in use instead of trying another port
 	},
 	test: {
 		projects: [
@@ -56,4 +47,4 @@ export default defineConfig({
 			}
 		]
 	}
-});
+}); 

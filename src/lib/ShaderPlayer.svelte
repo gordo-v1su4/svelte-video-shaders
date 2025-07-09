@@ -1,18 +1,25 @@
 <script>
-	import { onMount, onDestroy } from 'svelte';
-	import * as THREE from 'three';
+	import { onDestroy, onMount } from 'svelte';
 	import * as MP4Box from 'mp4box';
+	import * as THREE from 'three';
 
 	let {
-		file,
-		fragmentShader,
-		uniforms = {}
+		file = null,
+		fragmentShader = '',
+		uniforms = {},
+		shouldLoop = true
 	} = $props();
 
 	// Internal state
 	let canvas;
 	let showOverlay = $state(true);
+	// Video playback timing control
 	let isPlaying = $state(false);
+	let playbackStartTime = 0;
+	let videoStartTime = 0;
+	let frameQueue = [];
+	let maxQueueSize = 10; // Reduced buffer size to prevent bottlenecks
+	let playbackTimer = null;
 
 	// three.js state
 	let renderer, scene, camera, material, texture, mesh;
@@ -27,18 +34,19 @@
 	let isProcessingSamples = false;
 	let videoTrack = null; // Store video track info for aspect ratio
 	
-	// Frame rate control
-	let targetFrameRate = 24; // Default, will be updated from video
+	// Simplified frame control
+	let targetFrameRate = $state(24);
+	let currentFrame = $state(null);
+	let currentTime = $state(0);
+	let duration = $state(0);
 	let lastFrameTime = 0;
-	let frameInterval = 1000 / targetFrameRate; // milliseconds between frames
-	let currentFrame = null; // Current frame to display
-	let frameQueue = []; // Queue of decoded frames waiting to be displayed
-	
-	// Video controls
-	let currentTime = 0; // Current playback time in seconds
-	let duration = 0; // Total video duration in seconds
-	let playbackStartTime = 0; // When playback started (performance.now())
-	let pausedAt = 0; // Time when video was paused
+	let frameInterval = 1000 / 24; // Default 24fps interval
+
+	// Frame rate tracking
+	let actualFrameRate = $state(0);
+	let lastFpsUpdate = 0;
+	let lastVideoTime = 0;
+	let videoFrameCount = 0;
 
 	let fileInput;
 
@@ -379,62 +387,38 @@
 	onDestroy(() => {
 		window.removeEventListener('resize', handleResize);
 		cancelAnimationFrame(animationFrameId);
-
-		// Clean up Three.js resources
-		if (renderer) {
-			renderer.dispose();
+		
+		// Clean up playback timer
+		if (playbackTimer) {
+			clearTimeout(playbackTimer);
 		}
 		
-		// Close current VideoFrame if present
-		if (mesh && mesh.material.uniforms.u_texture.value && mesh.material.uniforms.u_texture.value.image) {
-			const currentFrame = mesh.material.uniforms.u_texture.value.image;
-			if (currentFrame && typeof currentFrame.close === 'function') {
-				try {
-					currentFrame.close();
-					console.log('[Player] Closed current frame on destroy');
-				} catch (e) {
-					console.warn('[Player] Error closing current frame on destroy:', e);
-				}
-			}
-		}
-		
-		// Close any frames in the display queue
-		frameQueue.forEach(({ frame }) => {
-			if (frame && typeof frame.close === 'function') {
-				try {
-					frame.close();
-				} catch (e) {
-					console.warn('[Player] Error closing queued frame on destroy:', e);
-				}
+		// Clean up frame queue
+		frameQueue.forEach(item => {
+			if (item.frame && typeof item.frame.close === 'function') {
+				item.frame.close();
 			}
 		});
 		frameQueue = [];
 		
-		// Close current frame if separate from texture
+		// Clean up video resources
 		if (currentFrame && typeof currentFrame.close === 'function') {
-			try {
-				currentFrame.close();
-				console.log('[Player] Closed current display frame on destroy');
-			} catch (e) {
-				console.warn('[Player] Error closing current display frame on destroy:', e);
-			}
+			currentFrame.close();
 		}
-
-		// Clean up VideoDecoder
+		
+		if (renderer) renderer.dispose();
 		if (videoDecoder) {
 			try {
 				videoDecoder.close();
 			} catch (e) {
-				console.warn('[Player] Error closing VideoDecoder:', e);
+				console.error('[Player] Error closing decoder:', e);
 			}
 		}
-
-		// Clean up MP4Box
 		if (mp4boxfile) {
 			try {
 				mp4boxfile.stop();
 			} catch (e) {
-				console.warn('[Player] Error stopping MP4Box:', e);
+				console.error('[Player] Error stopping MP4Box:', e);
 			}
 		}
 	});
@@ -459,17 +443,17 @@
 		
 		console.log('[Player] Canvas aspect ratio:', canvasAspect, `(${width}x${height})`);
 		
-		// Set video display size to 1/4 scale (320x180 for 1280x720 video)
-		const scale = 0.25;
+		// Set video display size to 3/4 scale (960x540 for 1280x720 video)
+		const scale = 0.75;
 		let videoDisplayWidth, videoDisplayHeight;
 		
 		if (videoTrack) {
 			videoDisplayWidth = videoTrack.track_width * scale;
 			videoDisplayHeight = videoTrack.track_height * scale;
 		} else {
-			// Default to 320x180 (1/4 of 1280x720)
-			videoDisplayWidth = 320;
-			videoDisplayHeight = 180;
+			// Default to 960x540 (3/4 of 1280x720)
+			videoDisplayWidth = 960;
+			videoDisplayHeight = 540;
 		}
 		
 		console.log('[Player] Video display size:', `${videoDisplayWidth}x${videoDisplayHeight}`);
@@ -507,88 +491,85 @@
 
 
 
-	/**
-	 * Display frames at the correct frame rate
-	 */
-	function displayNextFrame() {
-		const now = performance.now();
-		
-		// Only advance frames if playing
-		if (isPlaying) {
-			// Update current time based on playback
-			currentTime = (now - playbackStartTime) / 1000; // Convert to seconds
-		}
-		
-		// Check if enough time has passed for the next frame (only when playing)
-		if (isPlaying && now - lastFrameTime >= frameInterval && frameQueue.length > 0) {
-			const frameData = frameQueue.shift();
-			const { frame } = frameData;
-			
-			console.log('[Player] Displaying frame at', now.toFixed(2), 'ms, timestamp:', frame.timestamp, 'currentTime:', currentTime.toFixed(3));
-			
-			// Close previous frame if exists
-			if (currentFrame && typeof currentFrame.close === 'function') {
-				try {
-					currentFrame.close();
-				} catch (e) {
-					console.warn('[Player] Error closing previous frame:', e);
-				}
-			}
-			
-			// Update current frame and display it
-			currentFrame = frame;
-			onVideoFrame(frame);
-			lastFrameTime = now;
-			
-			// Resume sample processing if queue has space
-			if (pendingSamples.length > 0 && videoDecoder && videoDecoder.decodeQueueSize <= MAX_QUEUE_SIZE && !isProcessingSamples) {
-				console.log('[Player] Resuming sample processing after frame display');
-				processPendingSamples();
-			}
-		}
-		
-		// Schedule next frame check (continue even when paused to allow manual stepping)
-		if (frameQueue.length > 0 || pendingSamples.length > 0) {
-			requestAnimationFrame(displayNextFrame);
-		} else {
-			console.log('[Player] Frame display loop ended - no more frames or samples');
-		}
-	}
+
 
 	/**
 	 * Handle decoded video frame and update texture
 	 */
 	function onVideoFrame(frame) {
-		if (!frame) {
-			console.error('[Player] onVideoFrame: frame is null or undefined');
-			return;
+		if (!mesh || !mesh.material.uniforms.u_texture.value) return;
+		
+		// Update frame rate counter based on actual frame display timing
+		const now = performance.now();
+		
+		if (lastFpsUpdate === 0) {
+			lastFpsUpdate = now;
+			videoFrameCount = 0;
+		} else if (now - lastFpsUpdate >= 1000) { // Update every second
+			actualFrameRate = videoFrameCount;
+			videoFrameCount = 0;
+			lastFpsUpdate = now;
 		}
+		
+		videoFrameCount++;
+		
+		// Update texture
+		mesh.material.uniforms.u_texture.value.image = frame;
+		mesh.material.uniforms.u_texture.value.needsUpdate = true;
+	}
 
-		try {
-			console.log('[Player] Processing frame', { 
-				timestamp: frame.timestamp,
-				codedWidth: frame.codedWidth,
-				codedHeight: frame.codedHeight,
-				format: frame.format
-			});
-
-			// Update Three.js texture with the VideoFrame
-			if (mesh && mesh.material.uniforms.u_texture.value) {
-				const texture = mesh.material.uniforms.u_texture.value;
-				
-				// Set new frame as texture source
-				texture.image = frame;
-				texture.needsUpdate = true;
-				
-				console.log('[Player] Updated texture with new frame');
-				
-				// Note: Frame will be closed by the frame rate controller, not here
-			} else {
-				console.warn('[Player] No mesh or texture available');
+	/**
+	 * Start timed frame playback
+	 */
+	function startFramePlayback() {
+		if (playbackTimer || frameQueue.length === 0) return;
+		
+		playbackStartTime = performance.now();
+		videoStartTime = frameQueue[0].timestamp;
+		
+		console.log('[Player] Starting frame playback, first frame at:', videoStartTime);
+		console.log('[Player] Target frame rate:', targetFrameRate, 'fps');
+		console.log('[Player] Frame interval:', frameInterval, 'ms');
+		
+		function playNextFrame() {
+			if (frameQueue.length === 0) {
+				// Check if we've reached the end and should loop
+				if (shouldLoop && currentTime >= duration - 0.1) { // Small buffer for end detection
+					console.log('[Player] Video ended, looping...');
+					restart();
+					return;
+				}
+				playbackTimer = null;
+				return;
 			}
-		} catch (e) {
-			console.error('[Player] Error processing video frame:', e);
+			
+			// Get the next frame from the queue
+			const frameData = frameQueue.shift();
+			
+			if (frameData) {
+				// Close previous frame
+				if (currentFrame && typeof currentFrame.close === 'function') {
+					currentFrame.close();
+				}
+				
+				// Display the frame
+				currentFrame = frameData.frame;
+				currentTime = frameData.timestamp;
+				onVideoFrame(frameData.frame);
+				
+				console.log('[Player] Displaying frame at time:', frameData.timestamp.toFixed(3), 's');
+			}
+			
+			// Schedule next frame based on target frame rate
+			if (frameQueue.length > 0) {
+				playbackTimer = setTimeout(playNextFrame, frameInterval);
+			} else {
+				playbackTimer = null;
+			}
 		}
+		
+		// Start with the first frame immediately
+		playNextFrame();
 	}
 
 	async function start() {
@@ -647,13 +628,12 @@
 				// Store track info for aspect ratio calculations
 				videoTrack = track;
 				
-				// Calculate frame rate from track info
-				if (track.nb_samples && track.movie_duration && track.movie_timescale) {
-					targetFrameRate = (track.nb_samples * track.movie_timescale) / track.movie_duration;
-					frameInterval = 1000 / targetFrameRate;
-					console.log('[Player] Calculated frame rate:', targetFrameRate.toFixed(2), 'fps');
-					console.log('[Player] Frame interval:', frameInterval.toFixed(2), 'ms');
-				}
+				// Calculate frame rate
+				const frameRate = track.nb_samples / (track.movie_duration / track.movie_timescale);
+				targetFrameRate = frameRate;
+				frameInterval = 1000 / frameRate; // Update frame interval
+				console.log('[Player] Calculated frame rate:', frameRate.toFixed(2), 'fps');
+				console.log('[Player] Frame interval:', frameInterval.toFixed(2), 'ms');
 				
 				// Calculate duration in seconds
 				if (track.movie_duration && track.movie_timescale) {
@@ -739,18 +719,6 @@
 						const sample = pendingSamples.shift();
 						const type = sample.is_sync ? 'key' : 'delta';
 						
-						console.log('[Player] Processing sample:', {
-							type,
-							dts: sample.dts,
-							cts: sample.cts,
-							timestamp: sample.dts,
-							duration: sample.duration,
-							size: sample.data.byteLength,
-							is_sync: sample.is_sync,
-							queueSize: videoDecoder?.decodeQueueSize || 0,
-							pendingCount: pendingSamples.length
-						});
-						
 						const chunk = new EncodedVideoChunk({
 							type,
 							timestamp: sample.dts, // Use DTS for WebCodecs decode order
@@ -764,16 +732,9 @@
 								queueSize++;
 							} catch (e) {
 								console.error('[Player] Error decoding chunk:', e);
-								console.error('[Player] Chunk details:', { 
-									type, 
-									dts: sample.dts, 
-									cts: sample.cts, 
-									size: sample.data.byteLength 
-								});
 								// Continue with other samples
 							}
 						} else {
-							console.warn('[Player] Decoder not configured, skipping chunk. State:', videoDecoder?.state || 'no decoder');
 							// Re-add sample to front of queue to retry later
 							pendingSamples.unshift(sample);
 							break;
@@ -787,6 +748,17 @@
 						setTimeout(processNextBatch, 50); // 50ms delay
 					} else if (pendingSamples.length === 0) {
 						console.log('[Player] Finished processing all pending samples');
+						
+						// Check if we should loop when all samples are processed
+						if (shouldLoop && pendingSamples.length === 0) {
+							// Wait a bit for remaining frames to play, then restart
+							setTimeout(() => {
+								if (frameQueue.length === 0 && shouldLoop) {
+									console.log('[Player] All samples processed, looping...');
+									restart();
+								}
+							}, frameInterval * 3); // Wait 3 frame intervals
+						}
 						isProcessingSamples = false;
 					} else {
 						// Continue processing immediately
@@ -803,49 +775,38 @@
 				// Create VideoDecoder
 				videoDecoder = new VideoDecoder({
 					output: (frame) => {
-						if (!frame) {
-							console.error('[Player] VideoDecoder output: frame is undefined');
-							return;
-						}
+						if (!frame) return;
 						
 						try {
-							queueSize = Math.max(0, queueSize - 1); // Decrement queue counter
+							queueSize = Math.max(0, queueSize - 1);
 							
-							console.log('[Player] Frame output', { 
-								timestamp: frame.timestamp,
-								codedWidth: frame.codedWidth,
-								codedHeight: frame.codedHeight,
-								format: frame.format,
-								queueSize: queueSize,
-								decoderQueueSize: videoDecoder?.decodeQueueSize || 0,
-								pendingCount: pendingSamples.length
-							});
+							// Add frame to playback queue instead of displaying immediately
+							if (frameQueue.length < maxQueueSize) {
+								frameQueue.push({
+									frame: frame,
+									timestamp: frame.timestamp / 1000000 // Convert to seconds
+								});
+								
+								console.log('[Player] Frame queued, queue size:', frameQueue.length);
+								
+								// Start playback if we have enough frames buffered
+								if (frameQueue.length >= 3 && !playbackTimer) {
+									startFramePlayback();
+								}
+							} else {
+								// Queue is full, drop the frame
+								console.log('[Player] Queue full, dropping frame');
+								frame.close();
+							}
 							
-							// Add frame to display queue instead of immediately displaying
-							frameQueue.push({
-								frame,
-								timestamp: frame.timestamp,
-								receivedAt: performance.now()
-							});
-							
-							// Sort frame queue by timestamp to ensure proper order
-							frameQueue.sort((a, b) => a.timestamp - b.timestamp);
-							
-							console.log('[Player] Added frame to queue. Queue size:', frameQueue.length);
-							
-							// Start frame display loop if not already running
-							if (frameQueue.length === 1) {
-								displayNextFrame();
+							// Resume sample processing if needed
+							if (pendingSamples.length > 0 && videoDecoder.decodeQueueSize <= MAX_QUEUE_SIZE && !isProcessingSamples) {
+								processPendingSamples();
 							}
 						} catch (e) {
-							console.error('[Player] Error in VideoDecoder output callback:', e);
-							// Still try to close the frame to prevent memory leaks
+							console.error('[Player] Error in VideoDecoder output:', e);
 							if (frame && typeof frame.close === 'function') {
-								try {
-									frame.close();
-								} catch (closeError) {
-									console.error('[Player] Error closing frame after output error:', closeError);
-								}
+								frame.close();
 							}
 						}
 					},
@@ -928,80 +889,155 @@
 		}
 	}
 
+	function handlePlay() {
+		play();
+	}
+
 	export function play() {
 		if (!isPlaying) {
 			isPlaying = true;
-			playbackStartTime = performance.now() - (currentTime * 1000);
-			console.log('[Player] Play started at time:', currentTime);
-			
+			showOverlay = false;
 			// Start the video pipeline if not already started
 			if (!videoDecoder && !mp4boxfile) {
 				start();
-			}
-			
-			// Resume frame display if stopped
-			if (frameQueue.length > 0 || pendingSamples.length > 0) {
-				displayNextFrame();
+			} else if (frameQueue.length > 0 && !playbackTimer) {
+				startFramePlayback();
 			}
 		}
 	}
 
 	export function pause() {
 		isPlaying = false;
-	}
-
-
-	
-	// Export video control methods and properties
-	export function stepFrame() {
-		if (frameQueue.length > 0) {
-			const frameData = frameQueue.shift();
-			const { frame } = frameData;
-			
-			// Close previous frame
-			if (currentFrame && typeof currentFrame.close === 'function') {
-				try {
-					currentFrame.close();
-				} catch (e) {
-					console.warn('[Player] Error closing previous frame in stepFrame:', e);
-				}
-			}
-			
-			currentFrame = frame;
-			onVideoFrame(frame);
-			
-			// Update current time based on frame timestamp
-			currentTime = frame.timestamp / 1000000; // Convert microseconds to seconds
-			console.log('[Player] Stepped to frame at time:', currentTime);
+		if (playbackTimer) {
+			clearTimeout(playbackTimer);
+			playbackTimer = null;
 		}
 	}
-	
-	export function seekToStart() {
-		currentTime = 0;
-		playbackStartTime = performance.now();
-		console.log('[Player] Seeked to start');
+
+	export function togglePlayPause() {
+		if (isPlaying) {
+			pause();
+		} else {
+			play();
+		}
+	}
+
+	export function restart() {
+		console.log('[Player] Restarting video');
+		pause();
 		
-		// Clear frame queue for restart
-		frameQueue.forEach(({ frame }) => {
-			if (frame && typeof frame.close === 'function') {
-				try {
-					frame.close();
-				} catch (e) {
-					console.warn('[Player] Error closing frame during seekToStart:', e);
-				}
+		// Clear frame queue
+		frameQueue.forEach(item => {
+			if (item.frame && typeof item.frame.close === 'function') {
+				item.frame.close();
 			}
 		});
 		frameQueue = [];
+		
+		// Reset timing
+		currentTime = 0;
+		playbackStartTime = 0;
+		videoStartTime = 0;
+		
+		// Close current frame
+		if (currentFrame && typeof currentFrame.close === 'function') {
+			currentFrame.close();
+			currentFrame = null;
+		}
+		
+		// Restart the video pipeline
+		if (videoDecoder) {
+			try {
+				videoDecoder.close();
+			} catch (e) {
+				console.error('[Player] Error closing decoder for restart:', e);
+			}
+		}
+		if (mp4boxfile) {
+			try {
+				mp4boxfile.stop();
+			} catch (e) {
+				console.error('[Player] Error stopping MP4Box for restart:', e);
+			}
+		}
+		
+		// Reset state
+		videoDecoder = null;
+		mp4boxfile = null;
+		pendingSamples = [];
+		isProcessingSamples = false;
+		
+		// Restart from beginning
+		start();
 	}
-	
+
+	export function stepFrameForward() {
+		console.log('[Player] Step frame forward');
+		if (frameQueue.length > 0) {
+			// If playing, pause first
+			if (isPlaying) {
+				pause();
+			}
+			
+			// Display next frame
+			const frameData = frameQueue.shift();
+			if (frameData) {
+				// Close previous frame
+				if (currentFrame && typeof currentFrame.close === 'function') {
+					currentFrame.close();
+				}
+				
+				// Display the frame
+				currentFrame = frameData.frame;
+				currentTime = frameData.timestamp;
+				onVideoFrame(frameData.frame);
+				
+				console.log('[Player] Stepped to frame at time:', frameData.timestamp.toFixed(3), 's');
+			}
+		} else {
+			console.log('[Player] No frames available for stepping');
+		}
+	}
+
+	export function stepFrameBackward() {
+		console.log('[Player] Step frame backward');
+		// For backward stepping, we need to restart from beginning and play to the previous frame
+		// This is a simplified implementation - a full implementation would require frame caching
+		const targetTime = Math.max(0, currentTime - (1 / targetFrameRate));
+		seekToTime(targetTime);
+	}
+
 	export function seekToTime(timeInSeconds) {
-		currentTime = Math.max(0, Math.min(timeInSeconds, duration));
-		playbackStartTime = performance.now() - (currentTime * 1000);
-		console.log('[Player] Seeked to time:', currentTime);
+		console.log('[Player] Seeking to time:', timeInSeconds);
+		const wasPlaying = isPlaying;
+		
+		// For now, implement seeking by restarting and fast-forwarding
+		// A full implementation would require keyframe seeking in MP4Box
+		pause();
+		
+		// Clear frame queue
+		frameQueue.forEach(item => {
+			if (item.frame && typeof item.frame.close === 'function') {
+				item.frame.close();
+			}
+		});
+		frameQueue = [];
+		
+		// Set target time for seeking
+		const targetSeekTime = Math.max(0, Math.min(timeInSeconds, duration));
+		currentTime = targetSeekTime;
+		
+		// For now, just update the current time
+		// TODO: Implement proper keyframe seeking with MP4Box
+		console.log('[Player] Seek to', targetSeekTime, 's (simplified implementation)');
+		
+		if (wasPlaying) {
+			play();
+		}
 	}
 	
-	// Export properties for parent component access
-	export { currentTime, duration, targetFrameRate };
+	// Export video control methods and properties
+	export { currentTime, duration, targetFrameRate, actualFrameRate };
 
 	$effect(() => {
 		if (material) {
@@ -1095,22 +1131,62 @@
 		console.error('[Player] Could not parse raw avcC box data');
 		return null;
 	}
+
+	// Keyboard shortcuts
+	function handleKeydown(event) {
+		switch (event.key) {
+			case ' ':
+			case 'k':
+				event.preventDefault();
+				togglePlayPause();
+				break;
+			case 'ArrowLeft':
+				event.preventDefault();
+				stepFrameBackward();
+				break;
+			case 'ArrowRight':
+				event.preventDefault();
+				stepFrameForward();
+				break;
+			case 'Home':
+			case '0':
+				event.preventDefault();
+				restart();
+				break;
+			case 'p':
+				event.preventDefault();
+				play();
+				break;
+			case 'Escape':
+				event.preventDefault();
+				pause();
+				break;
+		}
+	}
+
+	// Add keyboard event listener
+	onMount(() => {
+		window.addEventListener('keydown', handleKeydown);
+		return () => {
+			window.removeEventListener('keydown', handleKeydown);
+		};
+	});
 </script>
 
 <div 
 	class="player-container" 
-	onclick={start}
-	onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && start()}
+	onclick={handlePlay}
+	onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && handlePlay()}
 	role="button"
 	tabindex="0"
 	aria-label="Video player - click to play"
 >
 	<canvas bind:this={canvas} class="webgl-canvas"></canvas>
-	{#if showOverlay}
+	{#if showOverlay || !isPlaying}
 		<div 
 			class="play-overlay" 
-			onclick={start}
-			onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && start()}
+			onclick={handlePlay}
+			onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && handlePlay()}
 			role="button"
 			tabindex="0"
 			aria-label="Click to play video"
@@ -1123,6 +1199,21 @@
 			<span>Click to Play</span>
 		</div>
 	{/if}
+	
+	<!-- Frame rate display -->
+	<div class="absolute top-2 left-2 bg-black bg-opacity-70 text-white text-sm px-2 py-1 rounded z-20">
+		Video: {targetFrameRate.toFixed(1)} fps | Playing: {actualFrameRate} fps
+	</div>
+	
+	<!-- Playback status -->
+	<div class="absolute top-2 right-2 bg-black bg-opacity-70 text-white text-sm px-2 py-1 rounded z-20">
+		{isPlaying ? '▶ Playing' : '⏸ Paused'} | {currentTime.toFixed(2)}s / {duration.toFixed(2)}s
+	</div>
+	
+	<!-- Control hints -->
+	<div class="absolute bottom-2 left-2 bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded z-20">
+		Space: Play/Pause | ←→: Step | Home: Restart | Esc: Pause
+	</div>
 </div>
 
 <style>
