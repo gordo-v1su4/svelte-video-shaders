@@ -207,7 +207,30 @@
 			<div class="playback-controls">
 				<Button title="Play" onclick={() => player?.play()} />
 				<Button title="Pause" onclick={() => player?.pause()} />
+				<Button title="Step Frame" onclick={() => player?.stepFrame?.()} />
+				<Button title="Restart" onclick={() => player?.seekToStart?.()} />
 			</div>
+			
+			<!-- Video Time Info -->
+			{#if player}
+				<div class="time-info">
+					<div>Time: {(player.currentTime || 0).toFixed(2)}s</div>
+					<div>Duration: {(player.duration || 0).toFixed(2)}s</div>
+					<div>FPS: {(player.targetFrameRate || 0).toFixed(1)}</div>
+				</div>
+			{/if}
+			
+			<!-- Seek Control -->
+			{#if player && player.duration > 0}
+				<Slider
+					bind:value={player.currentTime}
+					label="Seek"
+					min={0}
+					max={player.duration}
+					step={0.1}
+					onchange={() => player?.seekToTime?.(player.currentTime)}
+				/>
+			{/if}
 			
 			<!-- Shader Parameters -->
 			<Slider
@@ -317,5 +340,10 @@
 		grid-template-columns: repeat(2, 1fr);
 		gap: 0.5rem;
 		margin: 1rem 0;
+	}
+	.time-info {
+		margin-top: 1rem;
+		font-size: 0.9rem;
+		color: #aaa;
 	}
 </style>

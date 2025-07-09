@@ -33,6 +33,12 @@
 	let frameInterval = 1000 / targetFrameRate; // milliseconds between frames
 	let currentFrame = null; // Current frame to display
 	let frameQueue = []; // Queue of decoded frames waiting to be displayed
+	
+	// Video controls
+	let currentTime = 0; // Current playback time in seconds
+	let duration = 0; // Total video duration in seconds
+	let playbackStartTime = 0; // When playback started (performance.now())
+	let pausedAt = 0; // Time when video was paused
 
 	let fileInput;
 
@@ -443,9 +449,9 @@
 		
 		// Calculate aspect ratios
 		const canvasAspect = width / height;
-		let videoAspect = canvasAspect; // Default fallback
+		let videoAspect = 16/9; // Default to 16:9
 		
-		// Get video dimensions from track or current frame
+		// Get video dimensions from track
 		if (videoTrack) {
 			videoAspect = videoTrack.track_width / videoTrack.track_height;
 			console.log('[Player] Video aspect ratio:', videoAspect, `(${videoTrack.track_width}x${videoTrack.track_height})`);
@@ -453,29 +459,32 @@
 		
 		console.log('[Player] Canvas aspect ratio:', canvasAspect, `(${width}x${height})`);
 		
-		// Adjust camera to fit video properly
-		let cameraWidth, cameraHeight;
+		// Set video display size to 1/4 scale (320x180 for 1280x720 video)
+		const scale = 0.25;
+		let videoDisplayWidth, videoDisplayHeight;
 		
-		if (videoAspect > canvasAspect) {
-			// Video is wider than canvas - fit to width
-			cameraWidth = width;
-			cameraHeight = width / videoAspect;
+		if (videoTrack) {
+			videoDisplayWidth = videoTrack.track_width * scale;
+			videoDisplayHeight = videoTrack.track_height * scale;
 		} else {
-			// Video is taller than canvas - fit to height  
-			cameraHeight = height;
-			cameraWidth = height * videoAspect;
+			// Default to 320x180 (1/4 of 1280x720)
+			videoDisplayWidth = 320;
+			videoDisplayHeight = 180;
 		}
 		
-		camera.left = -cameraWidth / 2;
-		camera.right = cameraWidth / 2;
-		camera.top = cameraHeight / 2;
-		camera.bottom = -cameraHeight / 2;
+		console.log('[Player] Video display size:', `${videoDisplayWidth}x${videoDisplayHeight}`);
+		
+		// Center the video in the canvas
+		camera.left = -width / 2;
+		camera.right = width / 2;
+		camera.top = height / 2;
+		camera.bottom = -height / 2;
 		camera.updateProjectionMatrix();
 		
-		// Update geometry to match video aspect ratio
+		// Update geometry to match the 1/4 scale video size
 		if (mesh && mesh.geometry) {
 			mesh.geometry.dispose(); // Clean up old geometry
-			mesh.geometry = new THREE.PlaneGeometry(cameraWidth, cameraHeight);
+			mesh.geometry = new THREE.PlaneGeometry(videoDisplayWidth, videoDisplayHeight);
 		}
 		
 		console.log('[Player] Camera bounds:', { 
@@ -483,8 +492,9 @@
 			right: camera.right, 
 			top: camera.top, 
 			bottom: camera.bottom,
-			videoAspect,
-			canvasAspect
+			videoDisplayWidth,
+			videoDisplayHeight,
+			scale
 		});
 	}
 
@@ -495,18 +505,26 @@
 		}
 	}
 
+
+
 	/**
 	 * Display frames at the correct frame rate
 	 */
 	function displayNextFrame() {
 		const now = performance.now();
 		
-		// Check if enough time has passed for the next frame
-		if (now - lastFrameTime >= frameInterval && frameQueue.length > 0) {
+		// Only advance frames if playing
+		if (isPlaying) {
+			// Update current time based on playback
+			currentTime = (now - playbackStartTime) / 1000; // Convert to seconds
+		}
+		
+		// Check if enough time has passed for the next frame (only when playing)
+		if (isPlaying && now - lastFrameTime >= frameInterval && frameQueue.length > 0) {
 			const frameData = frameQueue.shift();
 			const { frame } = frameData;
 			
-			console.log('[Player] Displaying frame at', now.toFixed(2), 'ms, timestamp:', frame.timestamp);
+			console.log('[Player] Displaying frame at', now.toFixed(2), 'ms, timestamp:', frame.timestamp, 'currentTime:', currentTime.toFixed(3));
 			
 			// Close previous frame if exists
 			if (currentFrame && typeof currentFrame.close === 'function') {
@@ -529,7 +547,7 @@
 			}
 		}
 		
-		// Schedule next frame check
+		// Schedule next frame check (continue even when paused to allow manual stepping)
 		if (frameQueue.length > 0 || pendingSamples.length > 0) {
 			requestAnimationFrame(displayNextFrame);
 		} else {
@@ -635,6 +653,12 @@
 					frameInterval = 1000 / targetFrameRate;
 					console.log('[Player] Calculated frame rate:', targetFrameRate.toFixed(2), 'fps');
 					console.log('[Player] Frame interval:', frameInterval.toFixed(2), 'ms');
+				}
+				
+				// Calculate duration in seconds
+				if (track.movie_duration && track.movie_timescale) {
+					duration = track.movie_duration / track.movie_timescale;
+					console.log('[Player] Video duration:', duration.toFixed(2), 'seconds');
 				}
 				
 				console.log('[Player] Video track:', track);
@@ -905,12 +929,79 @@
 	}
 
 	export function play() {
-		if (!isPlaying) start();
+		if (!isPlaying) {
+			isPlaying = true;
+			playbackStartTime = performance.now() - (currentTime * 1000);
+			console.log('[Player] Play started at time:', currentTime);
+			
+			// Start the video pipeline if not already started
+			if (!videoDecoder && !mp4boxfile) {
+				start();
+			}
+			
+			// Resume frame display if stopped
+			if (frameQueue.length > 0 || pendingSamples.length > 0) {
+				displayNextFrame();
+			}
+		}
 	}
 
 	export function pause() {
 		isPlaying = false;
 	}
+
+
+	
+	// Export video control methods and properties
+	export function stepFrame() {
+		if (frameQueue.length > 0) {
+			const frameData = frameQueue.shift();
+			const { frame } = frameData;
+			
+			// Close previous frame
+			if (currentFrame && typeof currentFrame.close === 'function') {
+				try {
+					currentFrame.close();
+				} catch (e) {
+					console.warn('[Player] Error closing previous frame in stepFrame:', e);
+				}
+			}
+			
+			currentFrame = frame;
+			onVideoFrame(frame);
+			
+			// Update current time based on frame timestamp
+			currentTime = frame.timestamp / 1000000; // Convert microseconds to seconds
+			console.log('[Player] Stepped to frame at time:', currentTime);
+		}
+	}
+	
+	export function seekToStart() {
+		currentTime = 0;
+		playbackStartTime = performance.now();
+		console.log('[Player] Seeked to start');
+		
+		// Clear frame queue for restart
+		frameQueue.forEach(({ frame }) => {
+			if (frame && typeof frame.close === 'function') {
+				try {
+					frame.close();
+				} catch (e) {
+					console.warn('[Player] Error closing frame during seekToStart:', e);
+				}
+			}
+		});
+		frameQueue = [];
+	}
+	
+	export function seekToTime(timeInSeconds) {
+		currentTime = Math.max(0, Math.min(timeInSeconds, duration));
+		playbackStartTime = performance.now() - (currentTime * 1000);
+		console.log('[Player] Seeked to time:', currentTime);
+	}
+	
+	// Export properties for parent component access
+	export { currentTime, duration, targetFrameRate };
 
 	$effect(() => {
 		if (material) {
