@@ -1,9 +1,12 @@
 <script>
+	import { onMount } from 'svelte';
 	import * as Tweakpane from 'svelte-tweakpane-ui';
+	import Button from 'svelte-tweakpane-ui/Button.svelte';
 	import ShaderPlayer from '$lib/ShaderPlayer.svelte';
-	import VideoControls from '$lib/VideoControls.svelte';
-	import { activeVideo } from '$lib/stores.js';
+	import { videoAssets, activeVideo } from '$lib/stores.js';
+	import { generateThumbnail } from '$lib/video-utils.js';
 
+	// --- Shader State ---
 	const shaders = {
 		Grayscale: `
 			varying vec2 v_uv;
@@ -30,25 +33,92 @@
 			}
 		`
 	};
-
 	let selectedShaderName = $state('Grayscale');
 	let uniforms = $state({
 		u_strength: { value: 1.0 },
 		u_vignette_strength: { value: 0.4 },
 		u_vignette_falloff: { value: 0.2 }
 	});
-
 	let fragmentShader = $derived(shaders[selectedShaderName]);
-	let shaderPlayerRef = $state(); // Reference to ShaderPlayer for playback controls
+
+	// --- Component Refs ---
+	let shaderPlayerRef = $state();
+	let fileInput;
+
+	// --- File Handling Logic ---
+	function handleUploadClick() {
+		fileInput?.click();
+	}
+
+	async function onFileSelected(event) {
+		const file = event.currentTarget.files?.[0];
+		if (!file) return;
+
+		const newAsset = {
+			id: crypto.randomUUID(),
+			file: file,
+			name: file.name,
+			objectUrl: URL.createObjectURL(file),
+			thumbnailUrl: null
+		};
+
+		videoAssets.update((assets) => [...assets, newAsset]);
+        if ($videoAssets.length === 1) activeVideo.set(newAsset);
+
+		const thumbUrl = await generateThumbnail(file);
+		videoAssets.update((assets) =>
+			assets.map((asset) => (asset.id === newAsset.id ? { ...asset, thumbnailUrl: thumbUrl } : asset))
+		);
+	}
+
+	function handleVideoSelect(asset) {
+		activeVideo.set(asset);
+	}
 </script>
+
+<!-- Hidden file input for the entire page -->
+<input
+	type="file"
+	bind:this={fileInput}
+	onchange={onFileSelected}
+	accept="video/mp4,video/webm"
+	hidden
+/>
 
 <div class="app-container">
 	<aside class="sidebar">
 		<h2>Video Shaders</h2>
 		<div class="unified-controls">
 			<Tweakpane.Pane title="Video Shaders Controls">
-				<VideoControls {shaderPlayerRef} />
-				
+				<!-- All UI components are now direct children of the Pane -->
+				<Button title="Upload Video" on:click={handleUploadClick} />
+
+				<Tweakpane.Separator />
+
+				{#if $activeVideo}
+					<div class="playback-controls">
+						<Button title="Play" on:click={() => shaderPlayerRef?.play()} />
+						<Button title="Pause" on:click={() => shaderPlayerRef?.pause()} />
+					</div>
+					<Tweakpane.Separator />
+				{/if}
+
+				<div class="thumbnail-gallery">
+					{#each $videoAssets as asset (asset.id)}
+						<button
+							class="thumbnail-button"
+							class:active={asset.id === $activeVideo?.id}
+							onclick={() => handleVideoSelect(asset)}
+							style:background-image={asset.thumbnailUrl ? `url(${asset.thumbnailUrl})` : 'none'}
+						>
+							{#if !asset.thumbnailUrl}
+								<div class="thumbnail-placeholder">Loading...</div>
+							{/if}
+							<span class="thumbnail-label">{asset.name}</span>
+						</button>
+					{/each}
+				</div>
+
 				<Tweakpane.Separator />
 				
 				<Tweakpane.List
@@ -106,7 +176,6 @@
 		background-color: #1a1a1a;
 		color: #fff;
 	}
-
 	.sidebar {
 		width: 350px;
 		padding: 1rem;
@@ -116,16 +185,13 @@
 		gap: 1.5rem;
 		overflow-y: auto;
 	}
-
 	.sidebar h2 {
 		text-align: center;
 		margin-bottom: 0;
 	}
-
     .unified-controls {
         flex: 1;
     }
-
 	.main-content {
 		flex-grow: 1;
 		display: flex;
@@ -133,15 +199,66 @@
 		align-items: center;
 		padding: 1rem;
 	}
-
 	.placeholder {
+		text-align: center;
+	}
+	.playback-controls {
+		display: flex;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+	}
+	.thumbnail-gallery {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+		gap: 10px;
+		margin-bottom: 1rem;
+	}
+	.thumbnail-button {
+		background-color: #333;
+		border: 2px solid #444;
+		border-radius: 4px;
+		padding: 0;
+		cursor: pointer;
+		transition: all 0.2s ease;
+        font-family: inherit;
+        color: inherit;
+		width: 100%;
+		aspect-ratio: 16 / 9;
+		background-size: cover;
+		background-position: center;
+		position: relative;
+		display: flex;
+		align-items: flex-end;
+		justify-content: center;
+	}
+	.thumbnail-button:hover {
+		border-color: #666;
+	}
+	.thumbnail-button.active {
+		border-color: #00aaff;
+	}
+	.thumbnail-placeholder {
 		width: 100%;
 		height: 100%;
 		display: flex;
-		justify-content: center;
 		align-items: center;
-		border: 2px dashed #444;
-		border-radius: 8px;
+		justify-content: center;
+		background: #444;
 		color: #888;
+		position: absolute;
+		top: 0;
+		left: 0;
+	}
+	.thumbnail-label {
+		font-size: 0.8rem;
+		background-color: rgba(0,0,0,0.6);
+		padding: 2px 4px;
+		border-radius: 2px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		width: 100%;
+		text-align: center;
+		z-index: 1;
 	}
 </style>

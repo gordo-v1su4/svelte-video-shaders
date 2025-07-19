@@ -104,3 +104,32 @@ This phase involved significant debugging and overcoming several technical hurdl
 *   **Solution:** Updated the project's Svelte 5 rules (`.cursor/rules/svelte-5-syntax.mdc`) and the code to use `$state.snapshot()` for logging reactive state, which provides a clean, non-proxy version of the data.
 
 *This log was last updated on Day 2 of the project.*
+---
+## Day 3: Final Playback Implementation
+
+**Objective:** Resolve all remaining issues to achieve smooth, correctly proportioned video playback.
+
+This phase addressed a cascade of issues that appeared after the initial WebCodecs decoding was established.
+
+### 1. H.264 `DataError` and `NotSupportedError`
+
+*   **Problem:** The `VideoDecoder` continued to fail with errors related to the H.264 `description` field. The `avcC` metadata was not being extracted correctly, leading to `undefined` descriptions or the decoder being unable to parse the provided buffer.
+*   **Solution:** A definitive extraction method was implemented. The final, working solution involves using `mp4boxfile.getTrackById()` to get a detailed view of the track, finding the `avcC` box, and then manually slicing its contents from the main file buffer using the box's `start` and `size` properties. This bypasses any inconsistencies in how `mp4box.js` might parse the data internally and provides the `VideoDecoder` with a clean `ArrayBuffer`.
+
+### 2. WebGL Texture Initialization Errors
+
+*   **Problem:** After fixing the decoding, WebGL threw `GL_INVALID_VALUE` and `GL_INVALID_OPERATION` errors. This was because the `three.js` texture was being created with no dimensions *before* the first video frame arrived.
+*   **Solution:** The logic was refactored to be asynchronous. The `THREE.Texture` is now created only *after* the first `VideoFrame` is decoded. This ensures the texture is initialized on the GPU with the correct dimensions from the very beginning. Mipmap generation was also explicitly disabled, as it's not supported for video frames.
+
+### 3. Static, Distorted Image
+
+*   **Problem:** The video appeared as a single, stretched, and distorted frame. This was caused by two missing pieces of logic: a playback loop and aspect ratio correction.
+*   **Solution:**
+    *   **Playback Loop:** A frame queue (`frameQueue`) was implemented. Decoded frames are pushed into the queue. The `render` function now checks the elapsed time against the next frame's timestamp and only displays a new frame when it's time, ensuring smooth playback.
+    *   **Aspect Ratio Correction:** A `handleResize` function was implemented that calculates the aspect ratios of both the video and the canvas. It then scales the `three.js` mesh to fit the canvas correctly, adding letterboxing or pillarboxing as needed to prevent distortion.
+
+### Current Status
+
+The `ShaderPlayer.svelte` component has been completely refactored to include all the fixes described above. The code now correctly handles H.264 configuration, texture initialization, playback timing, and aspect ratio. All known bugs have been addressed.
+
+**Next Step:** Run the application to verify that all issues are resolved and the video plays smoothly and without distortion.

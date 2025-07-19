@@ -1,0 +1,496 @@
+# Tweakpane Integration for Svelte Projects
+
+This rule covers Tweakpane integration patterns, best practices, and common issues when working with Tweakpane in Svelte projects. Based on the latest documentation, GitHub issues, and current project usage.
+
+## Core Libraries & Versions
+
+### Primary Dependencies
+```json
+{
+  "svelte-tweakpane-ui": "^1.5.9",
+  "tweakpane": "^4.0.5"
+}
+```
+
+### Import Patterns
+```javascript
+// ✅ Good: Import svelte-tweakpane-ui components
+import { Pane, Button, Folder, Binding } from 'svelte-tweakpane-ui';
+
+// ✅ Good: Import raw Tweakpane for advanced usage
+import * as Tweakpane from 'tweakpane';
+
+// ✅ Good: Import specific components
+import { Button } from 'svelte-tweakpane-ui';
+import { AutoObject } from 'svelte-tweakpane-ui/AutoObject.svelte';
+```
+
+## Svelte 5 Integration Patterns
+
+### Basic Pane Setup
+```svelte
+<script>
+  import { Pane } from 'svelte-tweakpane-ui';
+  
+  let params = $state({
+    speed: 0.5,
+    color: '#ff0055',
+    enabled: true
+  });
+  
+  let pane;
+</script>
+
+<Pane bind:this={pane} title="Controls">
+  <!-- Controls will be added here -->
+</Pane>
+```
+
+### Reactive State Management
+```svelte
+<script>
+  import { Pane, Binding } from 'svelte-tweakpane-ui';
+  
+  // ✅ Good: Use $state for reactive parameters
+  let shaderParams = $state({
+    strength: 1.0,
+    vignette_strength: 0.4,
+    vignette_falloff: 0.2
+  });
+  
+  // ✅ Good: Use $derived for computed values
+  let computedValue = $derived(shaderParams.strength * 2);
+  
+  let pane;
+  
+  onMount(() => {
+    if (!pane) return;
+    
+    // Add bindings that automatically update the state
+    pane.addBinding(shaderParams, 'strength', {
+      min: 0,
+      max: 2,
+      step: 0.1
+    });
+    
+    pane.addBinding(shaderParams, 'vignette_strength', {
+      min: 0,
+      max: 1,
+      step: 0.05
+    });
+  });
+</script>
+
+<Pane bind:this={pane} title="Shader Controls" />
+```
+
+## Component-Based Approach
+
+### Using Svelte Components
+```svelte
+<script>
+  import { Pane, Button, Folder, Binding } from 'svelte-tweakpane-ui';
+  
+  let params = $state({
+    speed: 0.5,
+    color: '#ff0055'
+  });
+</script>
+
+<Pane title="Main Controls">
+  <Folder title="Basic Settings" expanded={true}>
+    <Binding 
+      bind:object={params} 
+      key="speed" 
+      label="Animation Speed"
+      min={0}
+      max={2}
+      step={0.1}
+    />
+    
+    <Binding 
+      bind:object={params} 
+      key="color" 
+      label="Primary Color"
+    />
+  </Folder>
+  
+  <Button title="Reset" onclick={() => {
+    params.speed = 0.5;
+    params.color = '#ff0055';
+  }} />
+</Pane>
+```
+
+### AutoObject for Complex Objects
+```svelte
+<script>
+  import { Pane, AutoObject } from 'svelte-tweakpane-ui';
+  
+  let complexParams = $state({
+    camera: {
+      position: { x: 0, y: 0, z: 10 },
+      rotation: { x: 0, y: 0, z: 0 }
+    },
+    lighting: {
+      intensity: 1.0,
+      color: '#ffffff'
+    }
+  });
+</script>
+
+<Pane title="Advanced Controls">
+  <AutoObject bind:object={complexParams} />
+</Pane>
+```
+
+## Advanced Patterns
+
+### Programmatic Control Creation
+```svelte
+<script>
+  import { Pane } from 'svelte-tweakpane-ui';
+  
+  let params = $state({
+    shader1: { strength: 1.0 },
+    shader2: { intensity: 0.5 }
+  });
+  
+  let pane;
+  
+  onMount(() => {
+    if (!pane) return;
+    
+    // ✅ Good: Create folders programmatically
+    const shaderFolder = pane.addFolder({
+      title: 'Shader Controls',
+      expanded: true
+    });
+    
+    // ✅ Good: Add bindings with event handlers
+    const strengthBinding = shaderFolder.addBinding(params.shader1, 'strength', {
+      min: 0,
+      max: 2,
+      step: 0.1
+    });
+    
+    strengthBinding.on('change', (ev) => {
+      console.log('Strength changed:', ev.value);
+      if (ev.last) {
+        console.log('Final value:', ev.value);
+      }
+    });
+    
+    // ✅ Good: Add buttons with custom styling
+    const resetBtn = shaderFolder.addButton({ title: 'Reset Shader 1' });
+    resetBtn.on('click', () => {
+      params.shader1.strength = 1.0;
+    });
+  });
+</script>
+
+<Pane bind:this={pane} title="Controls" />
+```
+
+### Dynamic Control Management
+```svelte
+<script>
+  import { Pane } from 'svelte-tweakpane-ui';
+  
+  let params = $state({
+    shaders: ['grayscale', 'vignette', 'blur']
+  });
+  
+  let activeShader = $state('grayscale');
+  let shaderControls = $state({});
+  
+  let pane;
+  let controlRefs = [];
+  
+  onMount(() => {
+    if (!pane) return;
+    
+    // ✅ Good: Create dynamic controls based on selection
+    function updateShaderControls() {
+      // Clean up existing controls
+      controlRefs.forEach(ref => ref.dispose());
+      controlRefs = [];
+      
+      const folder = pane.addFolder({ title: 'Shader Settings' });
+      
+      if (activeShader === 'grayscale') {
+        const binding = folder.addBinding(shaderControls, 'strength', {
+          min: 0,
+          max: 1,
+          step: 0.1
+        });
+        controlRefs.push(binding);
+      } else if (activeShader === 'vignette') {
+        const binding1 = folder.addBinding(shaderControls, 'strength', {
+          min: 0,
+          max: 1,
+          step: 0.1
+        });
+        const binding2 = folder.addBinding(shaderControls, 'falloff', {
+          min: 0,
+          max: 1,
+          step: 0.1
+        });
+        controlRefs.push(binding1, binding2);
+      }
+    }
+    
+    updateShaderControls();
+  });
+  
+  $effect(() => {
+    if (pane) {
+      updateShaderControls();
+    }
+  });
+</script>
+
+<Pane bind:this={pane} title="Shader Controls" />
+```
+
+## Common Issues & Solutions
+
+### Issue 1: Draggable Position Not Working
+**Problem**: `<Pane position='draggable'>` doesn't render in DOM
+**Solution**: Use `position='fixed'` instead, or implement custom dragging
+
+```svelte
+<!-- ❌ Bad: May not work in some Svelte 5 setups -->
+<Pane position="draggable" title="Controls" />
+
+<!-- ✅ Good: Use fixed positioning -->
+<Pane position="fixed" title="Controls" />
+
+<!-- ✅ Good: Custom draggable implementation -->
+<div class="draggable-container">
+  <Pane title="Controls" />
+</div>
+
+<style>
+  .draggable-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    cursor: move;
+  }
+</style>
+```
+
+### Issue 2: AutoObject Array Display
+**Problem**: AutoObject doesn't display arrays properly
+**Solution**: Use custom array handling or manual binding
+
+```svelte
+<script>
+  import { Pane, Binding, Folder } from 'svelte-tweakpane-ui';
+  
+  let params = $state({
+    colors: ['#ff0000', '#00ff00', '#0000ff'],
+    positions: [{ x: 0, y: 0 }, { x: 1, y: 1 }]
+  });
+</script>
+
+<Pane title="Array Controls">
+  <!-- ✅ Good: Manual array handling -->
+  <Folder title="Colors">
+    {#each params.colors as color, i}
+      <Binding 
+        bind:object={params.colors} 
+        key={i} 
+        label="Color {i + 1}"
+      />
+    {/each}
+  </Folder>
+  
+  <Folder title="Positions">
+    {#each params.positions as pos, i}
+      <Folder title="Position {i + 1}">
+        <Binding bind:object={pos} key="x" label="X" />
+        <Binding bind:object={pos} key="y" label="Y" />
+      </Folder>
+    {/each}
+  </Folder>
+</Pane>
+```
+
+### Issue 3: Event Handling in Svelte 5
+**Problem**: Event handlers not working with new Svelte 5 syntax
+**Solution**: Use proper event handling patterns
+
+```svelte
+<script>
+  import { Pane, Button } from 'svelte-tweakpane-ui';
+  
+  let pane;
+  
+  onMount(() => {
+    if (!pane) return;
+    
+    // ✅ Good: Use Tweakpane's event system
+    const btn = pane.addButton({ title: 'Upload Video' });
+    btn.on('click', () => {
+      // Handle click event
+      triggerFileUpload();
+    });
+  });
+  
+  function triggerFileUpload() {
+    // File upload logic
+  }
+</script>
+
+<Pane bind:this={pane} title="Controls" />
+```
+
+## Performance Best Practices
+
+### Efficient State Updates
+```svelte
+<script>
+  import { Pane } from 'svelte-tweakpane-ui';
+  
+  // ✅ Good: Batch state updates
+  let params = $state({
+    shader: {
+      strength: 1.0,
+      intensity: 0.5,
+      color: '#ff0055'
+    }
+  });
+  
+  let pane;
+  
+  onMount(() => {
+    if (!pane) return;
+    
+    // ✅ Good: Use debounced updates for performance
+    let updateTimeout;
+    
+    const binding = pane.addBinding(params.shader, 'strength');
+    binding.on('change', (ev) => {
+      clearTimeout(updateTimeout);
+      updateTimeout = setTimeout(() => {
+        // Batch update shader uniforms
+        updateShaderUniforms();
+      }, 16); // ~60fps
+    });
+  });
+</script>
+```
+
+### Memory Management
+```svelte
+<script>
+  import { onDestroy } from 'svelte';
+  import { Pane } from 'svelte-tweakpane-ui';
+  
+  let pane;
+  let controlRefs = [];
+  
+  onDestroy(() => {
+    // ✅ Good: Clean up Tweakpane resources
+    controlRefs.forEach(ref => {
+      if (ref.dispose) ref.dispose();
+    });
+    
+    if (pane && pane.dispose) {
+      pane.dispose();
+    }
+  });
+</script>
+```
+
+## Integration with Three.js
+
+### Shader Parameter Controls
+```svelte
+<script>
+  import { Pane } from 'svelte-tweakpane-ui';
+  import * as THREE from 'three';
+  
+  let uniforms = $state({
+    u_strength: { value: 1.0 },
+    u_vignette_strength: { value: 0.4 },
+    u_vignette_falloff: { value: 0.2 }
+  });
+  
+  let material; // Three.js shader material
+  let pane;
+  
+  onMount(() => {
+    if (!pane) return;
+    
+    // ✅ Good: Link Tweakpane to Three.js uniforms
+    const strengthBinding = pane.addBinding(uniforms.u_strength, 'value', {
+      min: 0,
+      max: 2,
+      step: 0.1,
+      label: 'Shader Strength'
+    });
+    
+    strengthBinding.on('change', (ev) => {
+      if (material && material.uniforms) {
+        material.uniforms.u_strength.value = ev.value;
+      }
+    });
+  });
+</script>
+
+<Pane bind:this={pane} title="Shader Controls" />
+```
+
+## Testing Patterns
+
+### Component Testing
+```javascript
+// ✅ Good: Test Tweakpane integration
+import { render, fireEvent } from '@testing-library/svelte';
+import { describe, it, expect } from 'vitest';
+import ShaderControls from './ShaderControls.svelte';
+
+describe('ShaderControls', () => {
+  it('should update shader parameters', async () => {
+    const { component } = render(ShaderControls);
+    
+    // Test parameter updates
+    const params = { strength: 1.5 };
+    component.$set({ params });
+    
+    // Verify controls reflect the new values
+    expect(component.params.strength).toBe(1.5);
+  });
+});
+```
+
+## Migration from Vanilla Tweakpane
+
+### Converting to Svelte Components
+```javascript
+// ❌ Old: Vanilla Tweakpane
+const pane = new Pane();
+pane.addBinding(PARAMS, 'speed', { min: 0, max: 100 });
+
+// ✅ New: Svelte components
+<Pane title="Controls">
+  <Binding 
+    bind:object={params} 
+    key="speed" 
+    min={0} 
+    max={100} 
+  />
+</Pane>
+```
+
+## References
+
+- [svelte-tweakpane-ui Documentation](https://kitschpatrol.com/svelte-tweakpane-ui/docs)
+- [Tweakpane Core Documentation](https://cocopon.github.io/tweakpane/)
+- [GitHub Issues](https://github.com/kitschpatrol/svelte-tweakpane-ui/issues)
+- [Current Project Usage](mdc:src/routes/+page.svelte)
+- [FileInput Component](mdc:src/lib/FileInput.svelte)
