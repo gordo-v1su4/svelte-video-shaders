@@ -1,9 +1,3 @@
----
-description: Best practices and guidelines for using the WebCodecs API in this project.
-globs: ["**/*.svelte", "**/*.js"]
-alwaysApply: true
----
-
 # WebCodecs API Best Practices
 
 This document outlines the core principles and patterns to follow when using the WebCodecs API to ensure performance, stability, and maintainability.
@@ -122,5 +116,118 @@ for (const sample of samples) {
   if (decoder.state === 'configured') {
     decoder.decode(chunk);
   }
+}
+```
+
+## 5. H.264 (AVC) Specific Requirements
+
+According to the [W3C WebCodecs AVC registration specification](https://www.w3.org/TR/webcodecs-avc-codec-registration/), H.264 videos have specific requirements that differ from other codecs.
+
+### AVC Format vs Annex B Format
+
+H.264 videos can be in two formats:
+
+- **`avc` format** (MP4 containers): Parameter sets (SPS/PPS) stored separately in container metadata
+- **`annexb` format** (streaming): Parameter sets included periodically in the bitstream
+
+### Critical Rule: Description Field for AVC Format
+
+**For H.264 videos in `avc` format (standard MP4 files), the `description` field is REQUIRED in `VideoDecoderConfig`:**
+
+```javascript
+// ✅ Correct: H.264 AVC format with description field
+const config = {
+  codec: 'avc1.64001f',
+  codedWidth: 1280,
+  codedHeight: 720,
+  description: avccDescriptionBuffer // ✅ REQUIRED for avc format
+};
+
+// ❌ Incorrect: Missing description field will cause DataError
+const config = {
+  codec: 'avc1.64001f',
+  codedWidth: 1280,
+  codedHeight: 720
+  // Missing description field - decoder will fail
+};
+```
+
+### Extracting H.264 Description from MP4
+
+The `description` field must contain an `AVCDecoderConfigurationRecord`. Extract it from MP4 metadata:
+
+```javascript
+// ✅ Good: Extract H.264 description from track metadata
+function getAvccDescription(track) {
+  // Path 1: Check for pre-packaged avcC box
+  if (track.description?.entries) {
+    for (const entry of track.description.entries) {
+      const avccBox = entry.boxes?.find(b => b.type === 'avcC');
+      if (avccBox?.data) {
+        return avccBox.data; // AVCDecoderConfigurationRecord
+      }
+    }
+  }
+  
+  // Path 2: Manually construct from SPS/PPS
+  if (track.avcC?.SPS && track.avcC?.PPS) {
+    return constructAvccDescription(track.avcC);
+  }
+  
+  return null;
+}
+
+// Configure decoder with description
+const track = info.videoTracks[0];
+const config = {
+  codec: track.codec,
+  codedWidth: track.track_width,
+  codedHeight: track.track_height
+};
+
+if (track.codec.startsWith('avc1')) {
+  const description = getAvccDescription(track);
+  if (description) {
+    config.description = description;
+  } else {
+    console.error('H.264 avc format requires description field');
+  }
+}
+```
+
+### Common H.264 Errors and Solutions
+
+**Error: "A key frame is required after configure() or flush(). If you're using AVC formatted H.264 you must fill out the description field"**
+
+- **Cause**: Missing `description` field in `VideoDecoderConfig` for `avc` format H.264
+- **Solution**: Extract `AVCDecoderConfigurationRecord` from MP4 metadata and add to config
+
+**Error: "Failed to execute 'isConfigSupported' on 'VideoDecoder': The provided value is not of type 'VideoDecoderConfig'"**
+
+- **Cause**: Invalid or incomplete configuration object
+- **Solution**: Ensure all required fields (`codec`, `codedWidth`, `codedHeight`) are present and valid
+
+### H.264 Format Detection
+
+```javascript
+// ✅ Good: Detect H.264 format and handle accordingly
+if (track.codec.startsWith('avc1')) {
+  // This is H.264 in avc format (MP4) - description required
+  const description = getAvccDescription(track);
+  if (description) {
+    config.description = description;
+  }
+} else if (track.codec.startsWith('avc3')) {
+  // This is H.264 in annexb format - no description needed
+  console.log('H.264 annexb format detected');
+}
+```
+
+## References
+
+- [W3C WebCodecs AVC Registration](https://www.w3.org/TR/webcodecs-avc-codec-registration/)
+- [WebCodecs API Specification](https://www.w3.org/TR/webcodecs/)
+- [MP4Box.js Documentation](https://github.com/gpac/mp4box.js)
+
 }
 ```
