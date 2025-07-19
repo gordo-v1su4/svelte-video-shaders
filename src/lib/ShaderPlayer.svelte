@@ -17,67 +17,76 @@
 	// three.js state
 	let renderer, scene, camera, material, texture, mesh;
 	let animationFrameId;
-
 	// WebCodecs state
 	let videoDecoder;
 	let mp4boxfile;
 
 	onMount(() => {
-		console.log('[Tracer] onMount: Component mounted.');
+		console.log('[Tracer] onMount: Component mounting.');
 		if (!canvas) {
-			console.error('[Tracer] onMount: Canvas element not found!');
+			console.error('[Tracer] onMount: Canvas element not found.');
 			return;
 		}
 		console.log('[Tracer] onMount: Canvas element found.');
 
-		// 1. Initialize three.js
+		// Initialize Three.js with simplified setup
 		try {
-			renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+			canvas.width = 640;
+			canvas.height = 360;
+			console.log(`[Tracer] onMount: Canvas size set to ${canvas.width}x${canvas.height}`);
+			
+			// 1. Create renderer
+			renderer = new THREE.WebGLRenderer({ canvas });
+			renderer.setSize(640, 360, false);
+			renderer.setClearColor(0x000000); // Black background
+			console.log('[Tracer] onMount: Three.js renderer created');
+			
+			// 2. Create scene
 			scene = new THREE.Scene();
-			camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-			console.log('[Tracer] onMount: Three.js renderer, scene, and camera initialized.');
-
+			
+			// 3. Create orthographic camera to fill entire canvas
+			camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+			camera.position.z = 1;
+			console.log('[Tracer] onMount: Orthographic camera positioned');
+			
+			// 4. Create video texture and material
 			const placeholder = document.createElement('canvas');
-			placeholder.width = 1;
-			placeholder.height = 1;
+			placeholder.width = 640;
+			placeholder.height = 360;
+			const ctx = placeholder.getContext('2d');
+			ctx.fillStyle = '#444444';
+			ctx.fillRect(0, 0, 640, 360);
+			ctx.fillStyle = '#ffffff';
+			ctx.font = '20px Arial';
+			ctx.textAlign = 'center';
+			ctx.fillText('Upload a video to begin', 320, 180);
+			
 			texture = new THREE.CanvasTexture(placeholder);
-			console.log('[Tracer] onMount: Placeholder texture created.');
-
-			material = new THREE.ShaderMaterial({
-				uniforms: {
-					u_texture: { value: texture },
-					...uniforms
-				},
-				vertexShader: `
-					varying vec2 v_uv;
-					void main() {
-						v_uv = uv;
-						gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-					}
-				`,
-				fragmentShader: fragmentShader || `
-					varying vec2 v_uv;
-					uniform sampler2D u_texture;
-					void main() {
-						gl_FragColor = texture2D(u_texture, v_uv);
-					}
-				`
+			texture.needsUpdate = true;
+			
+			material = new THREE.MeshBasicMaterial({ 
+				map: texture
 			});
-			console.log('[Tracer] onMount: Shader material created.');
-
+			console.log('[Tracer] onMount: Video texture material created');
+			
+			// 5. Create geometry to fill entire screen (-1 to 1)
 			const geometry = new THREE.PlaneGeometry(2, 2);
 			mesh = new THREE.Mesh(geometry, material);
 			scene.add(mesh);
-			console.log('[Tracer] onMount: Mesh created and added to scene.');
-
-			handleResize();
-			window.addEventListener('resize', handleResize);
-
-			// 2. Start the render loop
+			console.log('[Tracer] onMount: Green mesh fills entire canvas now');
+			
+			// 6. Start render loop
+			function render() {
+				if (renderer && scene && camera) {
+					renderer.render(scene, camera);
+					animationFrameId = requestAnimationFrame(render);
+				}
+			}
 			render();
-			console.log('[Tracer] onMount: Initial resize and render loop started.');
+			console.log('[Tracer] onMount: Render loop started - you should see GREEN square!');
+			
 		} catch (e) {
-			console.error('[Tracer] onMount: Error during Three.js initialization.', e);
+			console.error('[Tracer] onMount: Error during Three.js setup.', e);
 		}
 
 
@@ -91,6 +100,160 @@
 			console.log('[Tracer] onDestroy: Cleanup complete.');
 		};
 	});
+
+	// Essential video processing functions
+	export function loadVideo(videoFile) {
+		console.log('[Tracer] loadVideo: Starting video load process', videoFile);
+		if (!videoFile) {
+			console.error('[Tracer] loadVideo: No video file provided');
+			return;
+		}
+		
+		// Update placeholder to show loading
+		if (texture) {
+			const placeholder = document.createElement('canvas');
+			placeholder.width = 640;
+			placeholder.height = 360;
+			const ctx = placeholder.getContext('2d');
+			ctx.fillStyle = '#222222';
+			ctx.fillRect(0, 0, 640, 360);
+			ctx.fillStyle = '#ffffff';
+			ctx.font = '20px Arial';
+			ctx.textAlign = 'center';
+			ctx.fillText('Loading video...', 320, 180);
+			
+			texture.image = placeholder;
+			texture.needsUpdate = true;
+			console.log('[Tracer] loadVideo: Updated texture to show loading message');
+		}
+		
+		// Initialize video processing
+		initializeVideoProcessing(videoFile);
+	}
+
+	function initializeVideoProcessing(videoFile) {
+		console.log('[Tracer] initializeVideoProcessing: Setting up MP4Box and WebCodecs');
+		
+		// Create MP4Box file instance
+		mp4boxfile = MP4Box.createFile();
+		
+		// Set up MP4Box event handlers
+		mp4boxfile.onReady = function(info) {
+			console.log('[Tracer] MP4Box onReady:', info);
+			
+			const videoTrack = info.tracks.find(track => track.type === 'video');
+			if (!videoTrack) {
+				console.error('[Tracer] No video track found');
+				return;
+			}
+			
+			console.log('[Tracer] Video track found:', videoTrack);
+			setupVideoDecoder(videoTrack);
+		};
+		
+		mp4boxfile.onSamples = function(track_id, ref, samples) {
+			console.log(`[Tracer] MP4Box onSamples: ${samples.length} samples for track ${track_id}`);
+			
+			for (const sample of samples) {
+				if (videoDecoder && videoDecoder.state === 'configured') {
+					try {
+						const chunk = new EncodedVideoChunk({
+							type: sample.is_sync ? 'key' : 'delta',
+							timestamp: sample.cts * 1000,
+							data: sample.data
+						});
+						videoDecoder.decode(chunk);
+					} catch (e) {
+						console.error('[Tracer] Error decoding chunk:', e);
+					}
+				}
+			}
+		};
+		
+		// Read the video file
+		const reader = new FileReader();
+		reader.onload = function(e) {
+			const arrayBuffer = e.target.result;
+			arrayBuffer.fileStart = 0;
+			mp4boxfile.appendBuffer(arrayBuffer);
+			mp4boxfile.flush();
+			console.log('[Tracer] Video file loaded into MP4Box');
+		};
+		reader.readAsArrayBuffer(videoFile);
+	}
+
+	function setupVideoDecoder(videoTrack) {
+		console.log('[Tracer] setupVideoDecoder: Configuring WebCodecs decoder');
+		
+		try {
+			// Extract codec configuration
+			let description = null;
+			if (videoTrack.codec === 'avc1') {
+				// Extract AVC configuration
+				const trak = mp4boxfile.getTrackById(videoTrack.id);
+				if (trak && trak.mdia && trak.mdia.minf && trak.mdia.minf.stbl && trak.mdia.minf.stbl.stsd) {
+					const avcC = trak.mdia.minf.stbl.stsd.entries[0].avcC;
+					if (avcC && avcC.config) {
+						description = new Uint8Array(avcC.config);
+						console.log('[Tracer] AVC configuration extracted:', description.length, 'bytes');
+					}
+				}
+			}
+			
+			const config = {
+				codec: videoTrack.codec,
+				codedWidth: videoTrack.video.width,
+				codedHeight: videoTrack.video.height
+			};
+			
+			if (description) {
+				config.description = description;
+			}
+			
+			console.log('[Tracer] VideoDecoder config:', config);
+			
+			videoDecoder = new VideoDecoder({
+				output: handleVideoFrame,
+				error: (e) => console.error('[Tracer] VideoDecoder error:', e)
+			});
+			
+			videoDecoder.configure(config);
+			console.log('[Tracer] VideoDecoder configured successfully');
+			
+			// Start decoding
+			mp4boxfile.start();
+			
+		} catch (e) {
+			console.error('[Tracer] Error setting up video decoder:', e);
+		}
+	}
+
+	function handleVideoFrame(frame) {
+		console.log(`[Tracer] handleVideoFrame: Frame received ${frame.displayWidth}x${frame.displayHeight}`);
+		
+		if (texture && renderer) {
+			try {
+				// Create a canvas to draw the video frame
+				const canvas = document.createElement('canvas');
+				canvas.width = frame.displayWidth;
+				canvas.height = frame.displayHeight;
+				
+				const ctx = canvas.getContext('2d');
+				ctx.drawImage(frame, 0, 0);
+				
+				// Update Three.js texture
+				texture.image = canvas;
+				texture.needsUpdate = true;
+				
+				console.log('[Tracer] Video frame rendered to texture');
+			} catch (e) {
+				console.error('[Tracer] Error rendering video frame:', e);
+			}
+		}
+		
+		// Always close the frame to prevent memory leaks
+		frame.close();
+	}
 
 	function handleResize(videoWidth, videoHeight) {
 		if (!renderer || !canvas || !camera) return;
@@ -115,9 +278,24 @@
 	}
 
 	function render() {
-		if (renderer) {
+		if (renderer && scene && camera) {
+			// Debug: Log render info every 60 frames
+			if (animationFrameId % 60 === 0) {
+				console.log('[Tracer] render: Rendering frame', {
+					scene: !!scene,
+					camera: !!camera,
+					mesh: !!mesh,
+					meshVisible: mesh?.visible,
+					texture: !!texture,
+					material: !!material,
+					rendererSize: `${renderer.domElement.width}x${renderer.domElement.height}`
+				});
+			}
+			renderer.clear();
 			renderer.render(scene, camera);
 			animationFrameId = requestAnimationFrame(render);
+		} else {
+			console.warn('[Tracer] render: Missing renderer, scene, or camera');
 		}
 	}
 
