@@ -2,6 +2,12 @@
 
 This document outlines patterns and solutions for making `svelte-tweakpane-ui` work with other browser features and libraries.
 
+## Official Documentation
+
+📖 **[svelte-tweakpane-ui Official Documentation](https://kitschpatrol.com/svelte-tweakpane-ui/docs)**
+
+For comprehensive usage guides, API reference, and examples, refer to the official documentation above.
+
 ## Triggering a File Upload
 
 The standard method of using a hidden `<input type="file" />` and triggering it from a Tweakpane button is unreliable due to the way Tweakpane handles events and constructs its DOM.
