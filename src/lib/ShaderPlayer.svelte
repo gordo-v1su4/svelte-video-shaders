@@ -92,23 +92,25 @@
 		};
 	});
 
-	function handleResize() {
-		if (!renderer || !canvas || !camera || !mesh) return;
-		const container = canvas.parentElement;
-		if (!container) return;
+	function handleResize(videoWidth, videoHeight) {
+		if (!renderer || !canvas || !camera) return;
 
-		const { width, height } = container.getBoundingClientRect();
-		renderer.setSize(width, height);
+		// Set renderer to fixed canvas size (640x360)
+		renderer.setSize(640, 360);
+		console.log(`[Tracer] handleResize: Set renderer size to 640x360`);
 
-		const videoAspectRatio = (texture.image?.codedWidth || 16) / (texture.image?.codedHeight || 9);
-		const containerAspectRatio = width / height;
+		// Keep camera simple: standard orthographic -1 to 1
+		camera.left = -1;
+		camera.right = 1;
+		camera.top = 1;
+		camera.bottom = -1;
+		camera.updateProjectionMatrix();
+		console.log('[Tracer] handleResize: Camera frustum set to -1 to 1');
 
-		if (containerAspectRatio > videoAspectRatio) {
-			mesh.scale.x = videoAspectRatio / containerAspectRatio;
-			mesh.scale.y = 1;
-		} else {
-			mesh.scale.x = 1;
-			mesh.scale.y = containerAspectRatio / videoAspectRatio;
+		// No mesh scaling needed - 2x2 plane already covers -1 to 1 space
+		if (mesh) {
+			mesh.scale.set(1, 1, 1);
+			console.log('[Tracer] handleResize: Mesh scale reset to 1,1,1');
 		}
 	}
 
@@ -143,18 +145,93 @@
 				}
 				console.log('[Tracer] mp4box.onReady: Video track found. Inspecting in next log.');
 				console.log(videoTrack);
+				console.log('[Tracer] mp4box.onReady: VideoTrack keys:', Object.keys(videoTrack));
+				
+				// Check for AVC configuration in different locations
+				console.log('[Tracer] mp4box.onReady: VideoTrack.avcC:', videoTrack.avcC);
+				console.log('[Tracer] mp4box.onReady: VideoTrack.description:', videoTrack.description);
+				console.log('[Tracer] mp4box.onReady: VideoTrack.hvcC:', videoTrack.hvcC);
+				console.log('[Tracer] mp4box.onReady: VideoTrack.mimeCodec:', videoTrack.mimeCodec);
+				console.log('[Tracer] mp4box.onReady: VideoTrack.samples_description:', videoTrack.samples_description);
+				console.log('[Tracer] mp4box.onReady: VideoTrack.type:', videoTrack.type);
+				console.log('[Tracer] mp4box.onReady: VideoTrack.codec:', videoTrack.codec);
+				
+				// Check MP4Box info object for AVC configuration
+				console.log('[Tracer] mp4box.onReady: MP4Box info object:', info);
+				console.log('[Tracer] mp4box.onReady: MP4Box info.tracks:', info.tracks);
 
 				videoDecoder = new VideoDecoder({
 					output: (frame) => {
-						if (texture) {
-							// console.log('[Tracer] videoDecoder.output: Frame received, updating texture.', frame.timestamp);
-							texture.image = frame;
-							texture.needsUpdate = true;
-							if (frame.codedWidth) { // First frame will have dimensions
-								handleResize();
+						if (texture && renderer) {
+							console.log('[Tracer] videoDecoder.output: Frame received, updating texture directly.', frame.timestamp);
+							
+							// Close the previous frame if it exists
+							if (texture.image && texture.image.close) {
+								texture.image.close();
 							}
+							
+							// Recreate texture with correct video dimensions on first frame
+							if (frame.codedWidth && !texture.hasCorrectDimensions) {
+								console.log(`[Tracer] videoDecoder.output: Recreating texture with video dimensions ${frame.codedWidth}x${frame.codedHeight}`);
+								
+								// Create a new canvas with correct dimensions
+								const newCanvas = document.createElement('canvas');
+								newCanvas.width = frame.codedWidth;
+								newCanvas.height = frame.codedHeight;
+								
+								// Dispose old texture and create new one
+								texture.dispose();
+								texture = new THREE.CanvasTexture(newCanvas);
+								texture.hasCorrectDimensions = true;
+								
+								// Update material uniform
+								material.uniforms.u_texture.value = texture;
+								
+								// Keep canvas size fixed - no resize to video dimensions
+								console.log('[Tracer] videoDecoder.output: Texture recreated, keeping canvas at fixed 640x360 size');
+							}
+							
+							// Store the frame for cleanup
+							texture.image = frame;
+							
+							// Force Three.js to initialize the WebGL texture first
+							texture.needsUpdate = true;
+							renderer.render(scene, camera); // This forces texture initialization
+							
+							// Now try WebGL direct upload
+							const gl = renderer.getContext();
+							const glTexture = renderer.properties.get(texture).__webglTexture;
+							
+							console.log('[Tracer] videoDecoder.output: WebGL texture found:', !!glTexture);
+							
+							if (glTexture) {
+								gl.bindTexture(gl.TEXTURE_2D, glTexture);
+								
+								try {
+									// Use texSubImage2D for immutable textures (created with texStorage2D)
+									gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+									console.log('[Tracer] videoDecoder.output: Successfully uploaded VideoFrame to WebGL texture');
+								} catch (error) {
+									console.error('[Tracer] videoDecoder.output: Error uploading VideoFrame to WebGL texture:', error);
+									// Fallback to Three.js automatic texture handling
+									texture.image = frame;
+									texture.needsUpdate = true;
+								}
+								
+								gl.bindTexture(gl.TEXTURE_2D, null);
+							} else {
+								console.warn('[Tracer] videoDecoder.output: WebGL texture not found, using Three.js automatic texture handling.');
+								// Fallback to Three.js automatic texture handling
+								texture.image = frame;
+								texture.needsUpdate = true;
+							}
+							
+							// Update texture version to trigger re-render
+							texture.version++;
+						} else {
+							// If no texture, close the frame immediately
+							frame.close();
 						}
-						frame.close();
 					},
 					error: (e) => {
 						console.error('[Tracer] videoDecoder.error: Decoder error.', e);
@@ -169,11 +246,82 @@
 					optimizeForLatency: true
 				};
 
-				// For H.264/AVC, the description is required. This is a safe way to access it.
-				const avcC = videoTrack.description?.entries?.find(entry => entry.type === 'avc1')?.boxes?.find(box => box.type === 'avcC');
-				if (avcC) {
-					console.log('[Tracer] mp4box.onReady: Found avcC box, providing it as the description.');
-					config.description = avcC.data;
+				// For H.264/AVC, the description is required. Extract it from the MP4Box track.
+				if (videoTrack.codec.startsWith('avc1') || videoTrack.codec.startsWith('avc3')) {
+					console.log('[Tracer] mp4box.onReady: H.264/AVC codec detected, extracting description.');
+					
+					// Use MP4Box.js getTrackById to get the proper AVC configuration
+					const trackInfo = mp4boxfile.getTrackById(videoTrack.id);
+					console.log('[Tracer] mp4box.onReady: Track info from getTrackById:', trackInfo);
+					console.log('[Tracer] mp4box.onReady: TrackBox keys:', Object.keys(trackInfo));
+					
+					// Try to access the media info and sample description
+					if (trackInfo && trackInfo.mdia && trackInfo.mdia.minf && trackInfo.mdia.minf.stbl && trackInfo.mdia.minf.stbl.stsd) {
+						const stsd = trackInfo.mdia.minf.stbl.stsd;
+						console.log('[Tracer] mp4box.onReady: Found stsd (sample description):', stsd);
+						
+						// Look for AVC configuration in sample description entries
+						if (stsd.entries && stsd.entries.length > 0) {
+							const entry = stsd.entries[0];
+							console.log('[Tracer] mp4box.onReady: Sample description entry:', entry);
+							
+							if (entry.avcC) {
+								console.log('[Tracer] mp4box.onReady: Found avcC in sample description!');
+								console.log('[Tracer] mp4box.onReady: avcC object:', entry.avcC);
+								
+								// Convert avcC to ArrayBuffer for WebCodecs
+								let avcCBuffer = null;
+								
+								// Try different methods to extract the raw bytes
+								if (entry.avcC.data) {
+									console.log('[Tracer] mp4box.onReady: Using avcC.data as ArrayBuffer');
+									avcCBuffer = entry.avcC.data;
+								} else if (entry.avcC.size && entry.avcC.start) {
+									console.log('[Tracer] mp4box.onReady: Extracting avcC from file buffer');
+									// Extract the raw bytes from the file buffer
+									// The avcC box content starts after the 8-byte header (size + type)
+									const avcCSize = entry.avcC.size - 8; // subtract header size
+									const avcCStart = entry.avcC.start + 8; // skip header
+									
+									// Create a new ArrayBuffer and copy the avcC data
+									avcCBuffer = new ArrayBuffer(avcCSize);
+									const avcCView = new Uint8Array(avcCBuffer);
+									
+									// Access the file buffer through MP4Box
+									const fileBuffer = mp4boxfile.stream.buffer;
+									const sourceView = new Uint8Array(fileBuffer, avcCStart, avcCSize);
+									avcCView.set(sourceView);
+									
+									console.log('[Tracer] mp4box.onReady: Extracted avcC from file buffer, size:', avcCSize);
+								} else {
+									console.error('[Tracer] mp4box.onReady: Cannot extract bytes from avcC object');
+								}
+								
+								if (avcCBuffer) {
+									console.log('[Tracer] mp4box.onReady: Setting avcC ArrayBuffer as description, size:', avcCBuffer.byteLength);
+									config.description = avcCBuffer;
+								} else {
+									console.error('[Tracer] mp4box.onReady: Failed to convert avcC to ArrayBuffer');
+								}
+							} else {
+								console.log('[Tracer] mp4box.onReady: No avcC in sample description entry.');
+							}
+						}
+					}
+					
+					// If still no AVC config, try a different approach
+					if (!config.description) {
+						console.warn('[Tracer] mp4box.onReady: Trying to extract AVC config from MP4Box info structure.');
+						
+						// Alternative: try to extract from MP4Box info structure
+						const infoTrack = info.tracks.find(t => t.id === videoTrack.id);
+						if (infoTrack && infoTrack.avcC) {
+							console.log('[Tracer] mp4box.onReady: Found avcC in info.tracks.');
+							config.description = infoTrack.avcC;
+						} else {
+							console.error('[Tracer] mp4box.onReady: No AVC configuration found anywhere - decoder will fail.');
+						}
+					}
 				}
 
 				console.log('[Tracer] mp4box.onReady: Configuring decoder with:', config);
@@ -225,6 +373,18 @@
 		isPlaying = false;
 	}
 
+	export function frameForward() {
+		console.log('[Tracer] frameForward: Frame forward requested.');
+		// TODO: Implement frame-by-frame forward logic
+		// This would involve seeking to the next frame without continuous playback
+	}
+
+	export function frameBackward() {
+		console.log('[Tracer] frameBackward: Frame backward requested.');
+		// TODO: Implement frame-by-frame backward logic
+		// This would involve seeking to the previous frame
+	}
+
 	$effect(() => {
 		if (material) {
 			for (const key in uniforms) {
@@ -247,29 +407,31 @@
 <div class="player-container">
 	<canvas bind:this={canvas}></canvas>
 	{#if showOverlay}
-		<div class="play-overlay" onclick={start}>
+		<button class="play-overlay" onclick={start}>
 			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
 				><path
 					d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"
 				/></svg
 			>
 			<span>Click to Play</span>
-		</div>
+		</button>
 	{/if}
 </div>
 
 <style>
 	.player-container {
-		width: 100%;
-		height: 100%;
+		width: 640px;
+		height: 360px;
 		position: relative;
 		background-color: #000;
+		border: 2px solid #ff0000; /* Red border for debugging */
+		margin: 20px;
 	}
 
 	canvas {
 		display: block;
-		width: 100%;
-		height: 100%;
+		width: 640px;
+		height: 360px;
 	}
 
 	.play-overlay {
@@ -286,6 +448,9 @@
 		color: white;
 		cursor: pointer;
 		transition: opacity 0.3s ease;
+        border: none;
+        padding: 0;
+        font-family: inherit;
 	}
 
 	.play-overlay:hover {
