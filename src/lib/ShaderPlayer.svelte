@@ -17,6 +17,24 @@
 	// three.js state
 	let renderer, scene, camera, material, texture, mesh;
 	let animationFrameId;
+
+	// Default vertex shader for ShaderMaterial
+	const vertexShader = `
+		varying vec2 v_uv;
+		void main() {
+			v_uv = uv;
+			gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+		}
+	`;
+
+	// Default fragment shader (simple texture display)
+	const defaultFragmentShader = `
+		varying vec2 v_uv;
+		uniform sampler2D u_texture;
+		void main() {
+			gl_FragColor = texture2D(u_texture, v_uv);
+		}
+	`;
 	// WebCodecs state
 	let videoDecoder;
 	let mp4boxfile;
@@ -64,10 +82,18 @@
 			texture = new THREE.CanvasTexture(placeholder);
 			texture.needsUpdate = true;
 			
-			material = new THREE.MeshBasicMaterial({ 
-				map: texture
+			// Create ShaderMaterial for custom fragment shader support
+			material = new THREE.ShaderMaterial({
+				uniforms: {
+					u_texture: { value: texture },
+					...Object.fromEntries(
+						Object.entries(uniforms).map(([key, uniform]) => [key, { value: uniform.value }])
+					)
+				},
+				vertexShader: vertexShader,
+				fragmentShader: fragmentShader || defaultFragmentShader
 			});
-			console.log('[Tracer] onMount: Video texture material created');
+			console.log('[Tracer] onMount: ShaderMaterial created with', fragmentShader ? 'custom' : 'default', 'fragment shader');
 			
 			// 5. Create geometry to fill entire screen (-1 to 1)
 			const geometry = new THREE.PlaneGeometry(2, 2);
@@ -362,8 +388,10 @@
 								texture = new THREE.CanvasTexture(newCanvas);
 								texture.hasCorrectDimensions = true;
 								
-								// Update material uniform
-								material.uniforms.u_texture.value = texture;
+								// Update material texture uniform
+								if (material.uniforms && material.uniforms.u_texture) {
+									material.uniforms.u_texture.value = texture;
+								}
 								
 								// Keep canvas size fixed - no resize to video dimensions
 								console.log('[Tracer] videoDecoder.output: Texture recreated, keeping canvas at fixed 640x360 size');
@@ -564,7 +592,8 @@
 	}
 
 	$effect(() => {
-		if (material) {
+		if (material && material.uniforms) {
+			console.log('[Tracer] $effect: Updating uniforms');
 			for (const key in uniforms) {
 				if (material.uniforms[key]) {
 					material.uniforms[key].value = uniforms[key].value;
@@ -574,9 +603,9 @@
 	});
 
 	$effect(() => {
-		if (material && fragmentShader) {
+		if (material && material.fragmentShader !== undefined) {
 			console.log('[Tracer] $effect: Fragment shader changed.');
-			material.fragmentShader = fragmentShader;
+			material.fragmentShader = fragmentShader || defaultFragmentShader;
 			material.needsUpdate = true;
 		}
 	});
