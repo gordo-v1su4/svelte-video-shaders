@@ -6,7 +6,8 @@
 	let {
 		file,
 		fragmentShader,
-		uniforms = {}
+		uniforms = {},
+		filtersEnabled = true
 	} = $props();
 
 	// Internal state
@@ -64,10 +65,20 @@
 		camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
 		camera.position.z = 1;
 		
+		// Initialize material with all possible uniforms
+		const materialUniforms = { u_texture: { value: null } };
+
+		// Add all uniforms from the uniforms prop
+		if (uniforms) {
+			for (const key in uniforms) {
+				materialUniforms[key] = { value: uniforms[key].value };
+			}
+		}
+
 		material = new THREE.ShaderMaterial({
-			uniforms: { u_texture: { value: null } },
+			uniforms: materialUniforms,
 			vertexShader,
-			fragmentShader: fragmentShader || defaultFragmentShader
+			fragmentShader: filtersEnabled ? (fragmentShader || defaultFragmentShader) : defaultFragmentShader
 		});
 		
 		const geometry = new THREE.PlaneGeometry(2, 2);
@@ -244,6 +255,9 @@
 			for (const key in uniforms) {
 				if (material.uniforms[key]) {
 					material.uniforms[key].value = uniforms[key].value;
+				} else {
+					// Add missing uniform
+					material.uniforms[key] = { value: uniforms[key].value };
 				}
 			}
 		}
@@ -251,13 +265,31 @@
 
 	$effect(() => {
 		if (material) {
-			material.fragmentShader = fragmentShader || defaultFragmentShader;
+			// Use default shader when filters are disabled, otherwise use the provided shader
+			material.fragmentShader = filtersEnabled ? (fragmentShader || defaultFragmentShader) : defaultFragmentShader;
 			material.needsUpdate = true;
 		}
 	});
 
 	$effect(() => {
 		if (file && renderer) {
+			// Clean up previous video processing
+			if (videoDecoder) {
+				videoDecoder.close();
+				videoDecoder = null;
+			}
+			if (mp4boxfile) {
+				mp4boxfile.stop();
+				mp4boxfile = null;
+			}
+			// Clean up frame queue
+			frameQueue.forEach(frame => frame.close());
+			frameQueue = [];
+			if (currentFrame) {
+				currentFrame.close();
+				currentFrame = null;
+			}
+
 			start();
 		}
 	});

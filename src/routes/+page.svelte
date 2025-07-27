@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import * as Tweakpane from 'svelte-tweakpane-ui';
+	import { ThemeUtils } from 'svelte-tweakpane-ui';
 	import Button from 'svelte-tweakpane-ui/Button.svelte';
 	import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 	import { videoAssets, activeVideo } from '$lib/stores.js';
@@ -53,12 +54,18 @@
 		u_vignette_strength: { value: 0.5 },
 		u_vignette_falloff: { value: 0.3 }
 	});
-	$: fragmentShader = selectedShaderName === 'VHS' ? vhsFragmentShader : 
-		selectedShaderName === 'Grayscale' ? shaders.Grayscale : shaders.Vignette;
+	const fragmentShader = $derived(selectedShaderName === 'VHS' ? vhsFragmentShader :
+		selectedShaderName === 'Grayscale' ? shaders.Grayscale : shaders.Vignette);
 
 	// --- Component Refs ---
 	let shaderPlayerRef = $state();
 	let fileInput;
+
+	// --- Theme State ---
+	let themeKey = $state('standard');
+
+	// --- Filter Toggle State ---
+	let filtersEnabled = $state(true);
 
 	// --- File Handling Logic ---
 	function handleUploadClick() {
@@ -157,7 +164,22 @@
 	<aside class="sidebar">
 		<h2>Video Shaders</h2>
 		<div class="unified-controls">
-			<Tweakpane.Pane title="Video Shaders Controls">
+			<Tweakpane.Pane title="Video Shaders Controls" theme={ThemeUtils.presets[themeKey]}>
+				<!-- Theme Picker -->
+				<Tweakpane.List
+					bind:value={themeKey}
+					label="Theme"
+					options={Object.keys(ThemeUtils.presets)}
+				/>
+
+				<!-- Filter Toggle -->
+				<Tweakpane.Checkbox
+					bind:value={filtersEnabled}
+					label="Enable Filters"
+				/>
+
+				<Tweakpane.Separator />
+
 				<!-- All UI components are now direct children of the Pane -->
 				<Button title="Upload Video" on:click={handleUploadClick} />
 
@@ -201,79 +223,79 @@
 
 				{#if selectedShaderName === 'VHS'}
 					<Tweakpane.Folder title="VHS Effects" expanded={true}>
-						<Tweakpane.Input 
-							bind:value={uniforms.u_distortion.value} 
-							label="Barrel Distortion" 
-							min={0} 
-							max={0.5} 
+						<Tweakpane.Slider
+							bind:value={uniforms.u_distortion.value}
+							label="Barrel Distortion"
+							min={0}
+							max={0.5}
 							step={0.01}
 						/>
-						
-						<Tweakpane.Input 
-							bind:value={uniforms.u_scanlineIntensity.value} 
-							label="Scanline Intensity" 
-							min={0} 
-							max={1} 
+
+						<Tweakpane.Slider
+							bind:value={uniforms.u_scanlineIntensity.value}
+							label="Scanline Intensity"
+							min={0}
+							max={1}
 							step={0.01}
 						/>
-						
-						<Tweakpane.Input 
-							bind:value={uniforms.u_rgbShift.value} 
-							label="RGB Shift" 
-							min={0} 
-							max={0.1} 
+
+						<Tweakpane.Slider
+							bind:value={uniforms.u_rgbShift.value}
+							label="RGB Shift"
+							min={0}
+							max={0.1}
 							step={0.001}
 						/>
-						
-						<Tweakpane.Input 
-							bind:value={uniforms.u_noise.value} 
-							label="Noise" 
-							min={0} 
-							max={0.5} 
+
+						<Tweakpane.Slider
+							bind:value={uniforms.u_noise.value}
+							label="Noise"
+							min={0}
+							max={0.5}
 							step={0.01}
 						/>
-						
-						<Tweakpane.Input 
-							bind:value={uniforms.u_flickerIntensity.value} 
-							label="Flicker Intensity" 
-							min={0} 
-							max={2.0} 
+
+						<Tweakpane.Slider
+							bind:value={uniforms.u_flickerIntensity.value}
+							label="Flicker Intensity"
+							min={0}
+							max={2.0}
 							step={0.01}
 						/>
 					</Tweakpane.Folder>
 					
 					<Tweakpane.Folder title="VHS Tracking" expanded={true}>
-						<Tweakpane.Input 
-							bind:value={uniforms.u_trackingIntensity.value} 
-							label="Tracking Intensity" 
-							min={0} 
-							max={1} 
+						<Tweakpane.Slider
+							bind:value={uniforms.u_trackingIntensity.value}
+							label="Tracking Intensity"
+							min={0}
+							max={1}
 							step={0.01}
 						/>
-						
-						<Tweakpane.Input 
-							bind:value={uniforms.u_trackingSpeed.value} 
-							label="Tracking Speed" 
-							min={0} 
-							max={5.0} 
+
+						<Tweakpane.Slider
+							bind:value={uniforms.u_trackingSpeed.value}
+							label="Tracking Speed"
+							min={0}
+							max={5.0}
 							step={0.1}
 						/>
-						
-						<Tweakpane.Input 
-							bind:value={uniforms.u_trackingFreq.value} 
-							label="Tracking Frequency" 
-							min={1} 
-							max={100} 
+
+						<Tweakpane.Slider
+							bind:value={uniforms.u_trackingFreq.value}
+							label="Tracking Frequency"
+							min={1}
+							max={100}
 							step={1}
 						/>
 					</Tweakpane.Folder>
 					
 					<Tweakpane.Folder title="VHS Tape Effects" expanded={true}>
-						<Tweakpane.Input 
-							bind:value={uniforms.u_waveAmplitude.value} 
-							label="Wave Amplitude" 
-							min={0} 
-							max={1} 
+						<Tweakpane.Slider
+							bind:value={uniforms.u_waveAmplitude.value}
+							label="Wave Amplitude"
+							min={0}
+							max={1}
 							step={0.01}
 						/>
 					</Tweakpane.Folder>
@@ -317,6 +339,7 @@
 				file={$activeVideo.file}
 				{fragmentShader}
 				{uniforms}
+				{filtersEnabled}
 				key={$activeVideo.id}
 			/>
 		{:else}
