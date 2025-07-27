@@ -1,0 +1,77 @@
+export const vhsFragmentShader = `
+    varying vec2 v_uv;
+    uniform sampler2D u_texture;
+    uniform float u_time;
+    uniform float u_distortion;
+    uniform float u_scanlineIntensity;
+    uniform float u_rgbShift;
+    uniform float u_noise;
+    uniform float u_flickerIntensity;
+    uniform float u_trackingIntensity;
+    uniform float u_trackingSpeed;
+    uniform float u_trackingFreq;
+    uniform float u_waveAmplitude;
+
+    #define PI 3.14159265359
+
+    float vhsNoise(vec2 uv) {
+        return fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.5453);
+    }
+
+    void main() {
+        vec2 uv = v_uv;
+        vec2 uvn = uv;
+        
+        // Apply barrel distortion
+        vec2 cc = uv - 0.5;
+        float dist = dot(cc, cc) * u_distortion;
+        uv = uv + cc * (1.0 + dist) * dist;
+        uvn = uv;
+        
+        // VHS Tape Wave
+        if (u_waveAmplitude > 0.0) {
+            uvn.x += (vhsNoise(vec2(uvn.y, u_time)) - 0.5) * 0.005 * u_waveAmplitude * 10.0;
+            uvn.x += (vhsNoise(vec2(uvn.y * 100.0, u_time * 10.0)) - 0.5) * 0.01 * u_waveAmplitude * 10.0;
+        }
+        
+        // VHS Tracking
+        if (u_trackingIntensity > 0.0) {
+            float tcPhase = clamp((sin(uvn.y * u_trackingFreq - u_time * PI * u_trackingSpeed) - 0.92) * vhsNoise(vec2(u_time)), 0.0, 0.01) * 10.0;
+            float tcNoise = max(vhsNoise(vec2(uvn.y * 100.0, u_time * 10.0)) - 0.5, 0.0);
+            uvn.x = uvn.x - tcNoise * tcPhase * u_trackingIntensity * 20.0;
+        }
+        
+        // Check bounds and sample texture
+        vec4 texel = vec4(0.0);
+        if (uvn.x >= 0.0 && uvn.x <= 1.0 && uvn.y >= 0.0 && uvn.y <= 1.0) {
+            texel = texture2D(u_texture, uvn);
+        }
+        
+        // VHS tracking darkening
+        if (u_trackingIntensity > 0.0) {
+            float tcPhase = clamp((sin(uvn.y * u_trackingFreq - u_time * PI * u_trackingSpeed) - 0.92) * vhsNoise(vec2(u_time)), 0.0, 0.01) * 10.0;
+            texel.rgb *= 1.0 - tcPhase * u_trackingIntensity * 5.0;
+        }
+        
+        // Scanlines
+        if (u_scanlineIntensity > 0.0) {
+            float scanline = sin((v_uv.y * 90.0 + u_time * 5.0) * PI * 2.0) * 0.5 + 0.5;
+            texel.rgb *= 1.0 - u_scanlineIntensity + u_scanlineIntensity * scanline;
+        }
+        
+        gl_FragColor = texel;
+    }
+`;
+
+export const vhsUniforms = {
+    u_time: { value: 0.0 },
+    u_distortion: { value: 0.1 },
+    u_scanlineIntensity: { value: 0.3 },
+    u_rgbShift: { value: 0.02 },
+    u_noise: { value: 0.1 },
+    u_flickerIntensity: { value: 0.05 },
+    u_trackingIntensity: { value: 0.1 },
+    u_trackingSpeed: { value: 1.0 },
+    u_trackingFreq: { value: 50.0 },
+    u_waveAmplitude: { value: 0.1 }
+};

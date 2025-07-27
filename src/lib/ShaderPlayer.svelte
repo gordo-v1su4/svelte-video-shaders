@@ -45,6 +45,17 @@
 	let videoDecoder;
 	let mp4boxfile;
 
+	// Add looping support
+	let shouldLoop = $state(true);
+	let currentPlaybackTime = 0;
+
+	// Add frame rate control
+	const TARGET_FPS = 24;
+	const FRAME_DURATION_MS = 1000 / TARGET_FPS; // ~41.67ms per frame
+
+	let frameIndex = 0;
+	let lastFrameTime = 0;
+
 	onMount(() => {
 		if (!canvas) return;
 
@@ -54,7 +65,7 @@
 		camera.position.z = 1;
 		
 		material = new THREE.ShaderMaterial({
-			uniforms: { u_texture: { value: null } }, // Start with null texture
+			uniforms: { u_texture: { value: null } },
 			vertexShader,
 			fragmentShader: fragmentShader || defaultFragmentShader
 		});
@@ -101,15 +112,26 @@
 	function render() {
 		animationFrameId = requestAnimationFrame(render);
 
-		if (isPlaying && videoStartTime > 0 && frameQueue.length > 0) {
-			const elapsedTimeMs = performance.now() - videoStartTime;
-			const nextFrameTimeMs = frameQueue[0].timestamp / 1000;
+		// Update time uniform for animated effects
+		if (material?.uniforms?.u_time) {
+			material.uniforms.u_time.value = performance.now() * 0.001;
+		}
 
-			if (elapsedTimeMs >= nextFrameTimeMs) {
+		if (isPlaying && videoStartTime > 0 && frameQueue.length > 0) {
+			const currentTime = performance.now();
+			const elapsedTimeMs = currentTime - videoStartTime;
+			
+			// Calculate which frame we should be showing at 24fps
+			const targetFrameIndex = Math.floor(elapsedTimeMs / FRAME_DURATION_MS);
+			
+			// Only advance frame if we've reached the next 24fps interval
+			if (targetFrameIndex > frameIndex && frameQueue.length > 0) {
 				const newFrame = frameQueue.shift();
+				frameIndex = targetFrameIndex;
+				lastFrameTime = currentTime;
 
 				if (!currentFrame) {
-					// First frame: create the texture now that we have dimensions
+					// First frame: create the texture
 					texture = new THREE.CanvasTexture(newFrame);
 					texture.minFilter = THREE.LinearFilter;
 					texture.magFilter = THREE.LinearFilter;
@@ -117,14 +139,25 @@
 					texture.generateMipmaps = false;
 					material.uniforms.u_texture.value = texture;
 				} else {
-					// Subsequent frames: update image and close the old frame
+					// Update texture with new frame
 					texture.image = newFrame;
 					texture.needsUpdate = true;
-					currentFrame.close(); // IMPORTANT: close the old frame
+					currentFrame.close(); // Close previous frame
 				}
 				currentFrame = newFrame;
 			}
+			
+			// Check for end of video and loop
+			if (frameQueue.length === 0 && shouldLoop) {
+				setTimeout(() => {
+					if (shouldLoop) {
+						frameIndex = 0;
+						start();
+					}
+				}, 100);
+			}
 		}
+		
 		renderer.render(scene, camera);
 	}
 
@@ -183,12 +216,16 @@
 		}
 		
 		videoDecoder = new VideoDecoder({
-			output: (frame) => frameQueue.push(frame),
+			output: (frame) => {
+				// Buffer frames for smooth 24fps playback
+				frameQueue.push(frame);
+			},
 			error: (e) => console.error('VideoDecoder error:', e)
 		});
 		
 		videoDecoder.configure(config);
-		mp4boxfile.setExtractionOptions(videoTrack.id);
+		// Extract more samples for smoother 24fps buffering
+		mp4boxfile.setExtractionOptions(videoTrack.id, null, { nbSamples: 200 });
 		mp4boxfile.start();
 	}
 
@@ -196,6 +233,8 @@
 		showOverlay = false;
 		isPlaying = true;
 		frameQueue = [];
+		frameIndex = 0;
+		lastFrameTime = 0;
 		videoStartTime = performance.now();
 		initializeVideoProcessing(file);
 	}
@@ -222,6 +261,28 @@
 			start();
 		}
 	});
+
+	// Add these methods for external control
+	export function play() {
+		if (!isPlaying && frameQueue.length === 0) {
+			// Restart from beginning
+			start();
+		} else {
+			isPlaying = true;
+			if (videoStartTime === 0) {
+				videoStartTime = performance.now();
+			} else {
+				// Resume: adjust start time accounting for 24fps timing
+				const pausedDuration = performance.now() - (currentPlaybackTime || 0);
+				videoStartTime = performance.now() - (frameIndex * FRAME_DURATION_MS);
+			}
+		}
+	}
+
+	export function pause() {
+		isPlaying = false;
+		currentPlaybackTime = performance.now();
+	}
 </script>
 
 <div class="player-container">
@@ -286,3 +347,16 @@
 		font-weight: bold;
 	}
 </style>
+
+
+
+
+
+
+
+
+
+
+
+
+
