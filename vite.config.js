@@ -1,7 +1,7 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
-export default defineConfig({
+export default defineConfig(({ ssrBuild }) => ({
 	plugins: [
 		sveltekit(),
 		{
@@ -17,14 +17,19 @@ export default defineConfig({
 	],
 	build: {
 		chunkSizeWarningLimit: 1500,
-		rollupOptions: {
-			output: {
-				manualChunks: {
-					three: ['three'],
-					tweakpane: ['svelte-tweakpane-ui']
+		// Only apply manualChunks to the client build; SSR treats some deps as external
+		...(ssrBuild
+			? {}
+			: {
+				rollupOptions: {
+					output: {
+						manualChunks: {
+							// three is often external in SSR; split only tweakpane here
+							tweakpane: ['svelte-tweakpane-ui']
+						}
+					}
 				}
-			}
-		}
+			})
 	},
 	server: {
 		port: 5173,
@@ -58,4 +63,4 @@ export default defineConfig({
 			}
 		]
 	}
-});
+}));
