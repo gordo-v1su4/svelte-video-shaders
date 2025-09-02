@@ -15,6 +15,17 @@ export default defineConfig({
 			}
 		}
 	],
+	build: {
+		chunkSizeWarningLimit: 1500,
+		rollupOptions: {
+			output: {
+				manualChunks: {
+					three: ['three'],
+					tweakpane: ['svelte-tweakpane-ui']
+				}
+			}
+		}
+	},
 	server: {
 		port: 5173,
 		strictPort: true // Exit if port is already in use instead of trying another port
@@ -47,4 +58,4 @@ export default defineConfig({
 			}
 		]
 	}
-}); 
+});

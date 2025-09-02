@@ -33,10 +33,10 @@ git clone <repository-url>
 cd svelte-video-shaders
 
 # Install dependencies
-pnpm install
+bun install
 
 # Start development server
-pnpm run dev
+bun run dev
 ```
 
 ### Usage
@@ -51,22 +51,22 @@ pnpm run dev
 ### Development Server
 
 ```bash
-pnpm run dev
+bun run dev
 
 # Open in browser automatically
-pnpm run dev -- --open
+bun run dev -- --open
 ```
 
 ### Building for Production
 
 ```bash
-pnpm run build
+bun run build
 ```
 
 ### Preview Production Build
 
 ```bash
-pnpm run preview
+bun run preview
 ```
 
 ## 📁 Project Structure

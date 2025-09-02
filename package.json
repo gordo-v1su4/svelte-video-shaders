@@ -11,7 +11,7 @@
 		"format": "prettier --write .",
 		"lint": "prettier --check . && eslint .",
 		"test:unit": "vitest",
-		"test": "npm run test:unit -- --run",
+		"test": "vitest --run",
 		"storybook": "storybook dev -p 6006",
 		"build-storybook": "storybook build"
 	},
@@ -50,11 +50,6 @@
 		"vite-plugin-glsl": "^1.5.1",
 		"vitest": "^3.2.3",
 		"vitest-browser-svelte": "^0.1.0"
-	},
-	"pnpm": {
-		"onlyBuiltDependencies": [
-			"esbuild"
-		]
 	},
 	"dependencies": {
 		"mediabunny": "^1.0.3",

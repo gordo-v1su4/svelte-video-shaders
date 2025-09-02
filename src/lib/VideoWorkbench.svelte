@@ -1,12 +1,11 @@
 <script>
-	import { onMount } from 'svelte';
 	import * as Tweakpane from 'svelte-tweakpane-ui';
 	import { ThemeUtils } from 'svelte-tweakpane-ui';
 	import Button from 'svelte-tweakpane-ui/Button.svelte';
 	import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 	import { videoAssets, activeVideo } from '$lib/stores.js';
 	import { generateThumbnail } from '$lib/video-utils.js';
-	import { vhsFragmentShader, vhsUniforms } from '$lib/shaders/vhs-shader.js';
+	import { vhsFragmentShader } from '$lib/shaders/vhs-shader.js';
 
 	// --- Shader State ---
 	const shaders = {
@@ -48,7 +47,7 @@
 		u_trackingSpeed: { value: 1.2 },
 		u_trackingFreq: { value: 8.0 },
 		u_waveAmplitude: { value: 0.1 },
-		
+
 		// Existing shader uniforms
 		u_strength: { value: 0.5 },
 		u_vignette_strength: { value: 0.5 },
@@ -85,7 +84,7 @@
 		};
 
 		videoAssets.update((assets) => [...assets, newAsset]);
-        if ($videoAssets.length === 1) activeVideo.set(newAsset);
+		if ($videoAssets.length === 1) activeVideo.set(newAsset);
 
 		const thumbUrl = await generateThumbnail(file);
 		videoAssets.update((assets) =>
@@ -97,7 +96,7 @@
 		activeVideo.set(asset);
 	}
 
-	// Add VHS preset functions
+	// VHS presets
 	function applyVHSPreset(preset) {
 		switch (preset) {
 			case 'classic':
@@ -111,7 +110,6 @@
 				uniforms.u_trackingFreq.value = 8.0;
 				uniforms.u_waveAmplitude.value = 0.1;
 				break;
-			
 			case 'damaged':
 				uniforms.u_distortion.value = 0.15;
 				uniforms.u_scanlineIntensity.value = 0.4;
@@ -123,7 +121,6 @@
 				uniforms.u_trackingFreq.value = 12.0;
 				uniforms.u_waveAmplitude.value = 0.3;
 				break;
-			
 			case 'clean':
 				uniforms.u_distortion.value = 0.02;
 				uniforms.u_scanlineIntensity.value = 0.1;
@@ -135,7 +132,6 @@
 				uniforms.u_trackingFreq.value = 4.0;
 				uniforms.u_waveAmplitude.value = 0.02;
 				break;
-			
 			case 'heavy':
 				uniforms.u_distortion.value = 0.3;
 				uniforms.u_scanlineIntensity.value = 0.6;
@@ -151,7 +147,7 @@
 	}
 </script>
 
-<!-- Hidden file input for the entire page -->
+<!-- Hidden file input for the entire workbench -->
 <input
 	type="file"
 	bind:this={fileInput}
@@ -359,104 +355,17 @@
 </div>
 
 <style>
-	.app-container {
-		display: flex;
-		height: 100vh;
-		background-color: #1a1a1a;
-		color: #fff;
-	}
-	.sidebar {
-		width: 350px;
-		padding: 1rem;
-		background-color: #242424;
-		display: flex;
-		flex-direction: column;
-		gap: 1.5rem;
-		overflow-y: auto;
-	}
-	.sidebar h2 {
-		text-align: center;
-		margin-bottom: 0;
-	}
-    .unified-controls {
-        flex: 1;
-    }
-	.main-content {
-		flex-grow: 1;
-		display: flex;
-		justify-content: center;
-		align-items: center;
-		padding: 1rem;
-	}
-	.placeholder {
-		text-align: center;
-	}
-	.playback-controls {
-		display: flex;
-		gap: 0.5rem;
-		margin-bottom: 1rem;
-	}
-	.thumbnail-gallery {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-		gap: 10px;
-		margin-bottom: 1rem;
-	}
-	.thumbnail-button {
-		background-color: #333;
-		border: 2px solid #444;
-		border-radius: 4px;
-		padding: 0;
-		cursor: pointer;
-		transition: all 0.2s ease;
-        font-family: inherit;
-        color: inherit;
-		width: 100%;
-		aspect-ratio: 16 / 9;
-		background-size: cover;
-		background-position: center;
-		position: relative;
-		display: flex;
-		align-items: flex-end;
-		justify-content: center;
-	}
-	.thumbnail-button:hover {
-		border-color: #666;
-	}
-	.thumbnail-button.active {
-		border-color: #00aaff;
-	}
-	.thumbnail-placeholder {
-		width: 100%;
-		height: 100%;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: #444;
-		color: #888;
-		position: absolute;
-		top: 0;
-		left: 0;
-	}
-	.thumbnail-label {
-		font-size: 0.8rem;
-		background-color: rgba(0,0,0,0.6);
-		padding: 2px 4px;
-		border-radius: 2px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		width: 100%;
-		text-align: center;
-		z-index: 1;
-	}
+	.app-container { display: flex; height: 100vh; background-color: #1a1a1a; color: #fff; }
+	.sidebar { width: 350px; padding: 1rem; background-color: #242424; display: flex; flex-direction: column; gap: 1.5rem; overflow-y: auto; }
+	.sidebar h2 { text-align: center; margin-bottom: 0; }
+	.unified-controls { flex: 1; }
+	.main-content { flex-grow: 1; display: flex; justify-content: center; align-items: center; padding: 1rem; }
+	.placeholder { text-align: center; }
+	.playback-controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+	.thumbnail-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-bottom: 1rem; }
+	.thumbnail-button { background-color: #333; border: 2px solid #444; border-radius: 4px; padding: 0; cursor: pointer; transition: all 0.2s ease; font-family: inherit; color: inherit; width: 100%; aspect-ratio: 16 / 9; background-size: cover; background-position: center; position: relative; display: flex; align-items: flex-end; justify-content: center; }
+	.thumbnail-button:hover { border-color: #666; }
+	.thumbnail-button.active { border-color: #00aaff; }
+	.thumbnail-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #444; color: #888; position: absolute; top: 0; left: 0; }
+	.thumbnail-label { font-size: 0.8rem; background-color: rgba(0,0,0,0.6); padding: 2px 4px; border-radius: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; text-align: center; z-index: 1; }
 </style>
-
-
-
-
-
-
-
-
-
