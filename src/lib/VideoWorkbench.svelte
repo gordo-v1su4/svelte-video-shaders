@@ -6,6 +6,8 @@
 	import { videoAssets, activeVideo } from '$lib/stores.js';
 	import { generateThumbnail } from '$lib/video-utils.js';
 	import { vhsFragmentShader } from '$lib/shaders/vhs-shader.js';
+	import { xlsczNFragmentShader, xlsczNUniforms } from '$lib/shaders/xlsczn-shader.js';
+	import { AudioAnalyzer } from '$lib/audio-utils.js';
 
 	// --- Shader State ---
 	const shaders = {
@@ -35,6 +37,16 @@
 		`
 	};
 	let selectedShaderName = $state('VHS');
+	let audioAnalyzer = null;
+	let audioFile = $state(null);
+	let audioVolume = $state(0.5);
+	let audioIntensity = $state(1.0);
+	let audioColorShift = $state(0.5);
+	let audioPulseSpeed = $state(1.0);
+	let audioWaveAmplitude = $state(0.5);
+	let audioReactivePlayback = $state(false);
+	let beatSensitivity = $state(0.3);
+	let audioFilterIntensity = $state(1.0);
 	let uniforms = $state({
 		// VHS shader uniforms
 		u_time: { value: 0.0 },
@@ -51,14 +63,35 @@
 		// Existing shader uniforms
 		u_strength: { value: 0.5 },
 		u_vignette_strength: { value: 0.5 },
-		u_vignette_falloff: { value: 0.3 }
+		u_vignette_falloff: { value: 0.3 },
+
+		// XlsczN audio-reactive uniforms
+		u_audioLevel: { value: 0.0 },
+		u_bassLevel: { value: 0.0 },
+		u_midLevel: { value: 0.0 },
+		u_trebleLevel: { value: 0.0 },
+		u_intensity: { value: 0.5 },
+		u_colorShift: { value: 0.3 },
+		u_pulseSpeed: { value: 2.0 },
+		u_waveAmplitude: { value: 0.5 },
+		u_resolution: { value: [1920, 1080] }
 	});
-	const fragmentShader = $derived(selectedShaderName === 'VHS' ? vhsFragmentShader :
-		selectedShaderName === 'Grayscale' ? shaders.Grayscale : shaders.Vignette);
+	const fragmentShader = $derived(
+		selectedShaderName === 'VHS' ? vhsFragmentShader :
+		selectedShaderName === 'XlsczN' ? xlsczNFragmentShader :
+		selectedShaderName === 'Grayscale' ? shaders.Grayscale : shaders.Vignette
+	);
 
 	// --- Component Refs ---
 	let shaderPlayerRef = $state();
 	let fileInput;
+	let audioInput;
+
+	// --- Playback State ---
+	let isPlaying = $state(false);
+	let videoCycleInterval = null;
+	let videoCycleDuration = $state(5000); // 5 seconds per video
+	let enableVideoCycling = $state(false);
 
 	// --- Theme State ---
 	let themeKey = $state('standard');
@@ -71,30 +104,187 @@
 		fileInput?.click();
 	}
 
-	async function onFileSelected(event) {
+	function handleAudioUploadClick() {
+		audioInput?.click();
+	}
+
+	async function onAudioSelected(event) {
 		const file = event.currentTarget.files?.[0];
 		if (!file) return;
 
-		const newAsset = {
-			id: crypto.randomUUID(),
-			file: file,
-			name: file.name,
-			objectUrl: URL.createObjectURL(file),
-			thumbnailUrl: null
-		};
+		audioFile = file;
+		
+		// Initialize audio analyzer
+		if (audioAnalyzer) {
+			audioAnalyzer.destroy();
+		}
+		audioAnalyzer = new AudioAnalyzer();
+		const success = await audioAnalyzer.initializeAudio(file);
+		
+		if (success) {
+			audioAnalyzer.setVolume(audioVolume);
+			// Start audio analysis loop
+			startAudioAnalysis();
+		}
+	}
 
-		videoAssets.update((assets) => [...assets, newAsset]);
-		if ($videoAssets.length === 1) activeVideo.set(newAsset);
+	function startAudioAnalysis() {
+		if (!audioAnalyzer) return;
+		
+		function updateAudioUniforms() {
+			if (audioAnalyzer && audioAnalyzer.isAnalyzing) {
+				const audioData = audioAnalyzer.getAudioData();
+				
+				// Debug: log audio data to console
+				console.log('Audio Data:', audioData);
+				
+				uniforms.u_audioLevel.value = audioData.audioLevel;
+				uniforms.u_bassLevel.value = audioData.bassLevel;
+				uniforms.u_midLevel.value = audioData.midLevel;
+				uniforms.u_trebleLevel.value = audioData.trebleLevel;
+				
+				// Apply audio-reactive filter intensity only if audio is actually playing
+				if (audioReactivePlayback) {
+					const baseIntensity = filtersEnabled ? 1.0 : 0.0;
+					const audioModulation = audioData.audioLevel * audioFilterIntensity;
+					uniforms.u_intensity.value = Math.min(baseIntensity + audioModulation, 2.0);
+				}
+			} else {
+				// Reset audio levels when no audio is playing
+				uniforms.u_audioLevel.value = 0;
+				uniforms.u_bassLevel.value = 0;
+				uniforms.u_midLevel.value = 0;
+				uniforms.u_trebleLevel.value = 0;
+			}
+			
+			requestAnimationFrame(updateAudioUniforms);
+		}
+		
+		updateAudioUniforms();
+	}
 
-		const thumbUrl = await generateThumbnail(file);
-		videoAssets.update((assets) =>
-			assets.map((asset) => (asset.id === newAsset.id ? { ...asset, thumbnailUrl: thumbUrl } : asset))
-		);
+	function handleAudioVolumeChange() {
+		if (audioAnalyzer) {
+			audioAnalyzer.setVolume(audioVolume);
+		}
+	}
+
+	function playAudio() {
+		if (audioAnalyzer) {
+			console.log('Playing audio, analyzer state:', audioAnalyzer.isAnalyzing);
+			audioAnalyzer.play();
+			console.log('Audio playing, analyzer state:', audioAnalyzer.isAnalyzing);
+		}
+	}
+
+	function pauseAudio() {
+		if (audioAnalyzer) {
+			audioAnalyzer.pause();
+		}
+	}
+
+	async function onFileSelected(event) {
+		const files = Array.from(event.currentTarget.files || []);
+		if (files.length === 0) return;
+
+		console.log('Processing', files.length, 'video files');
+		
+		for (const file of files) {
+			const newAsset = {
+				id: crypto.randomUUID(),
+				file: file,
+				name: file.name,
+				objectUrl: URL.createObjectURL(file),
+				thumbnailUrl: null
+			};
+
+			videoAssets.update((assets) => [...assets, newAsset]);
+			if ($videoAssets.length === 1) activeVideo.set(newAsset);
+
+			const thumbUrl = await generateThumbnail(file);
+			videoAssets.update((assets) =>
+				assets.map((asset) => (asset.id === newAsset.id ? { ...asset, thumbnailUrl: thumbUrl } : asset))
+			);
+		}
+		
+		// Reset file input to allow re-uploading same files
+		if (fileInput) fileInput.value = '';
 	}
 
 	function handleVideoSelect(asset) {
 		activeVideo.set(asset);
 	}
+
+	function togglePlayback() {
+		if (shaderPlayerRef) {
+			if (isPlaying) {
+				shaderPlayerRef.pause();
+				isPlaying = false;
+			} else {
+				shaderPlayerRef.start();
+				isPlaying = true;
+			}
+		}
+	}
+
+	// Video cycling functionality
+	function nextVideo() {
+		if ($videoAssets.length <= 1) {
+			console.log('Cannot cycle - only', $videoAssets.length, 'video(s)');
+			return;
+		}
+		const currentIndex = $videoAssets.findIndex(asset => asset.id === $activeVideo?.id);
+		const nextIndex = (currentIndex + 1) % $videoAssets.length;
+		console.log('Switching from video', currentIndex, 'to', nextIndex, ':', $videoAssets[nextIndex].name);
+		activeVideo.set($videoAssets[nextIndex]);
+		
+		// Force shader player to restart with new video
+		if (shaderPlayerRef) {
+			shaderPlayerRef.stop();
+			setTimeout(() => shaderPlayerRef.start(), 100);
+		}
+	}
+
+	function previousVideo() {
+		if ($videoAssets.length <= 1) {
+			console.log('Cannot cycle - only', $videoAssets.length, 'video(s)');
+			return;
+		}
+		const currentIndex = $videoAssets.findIndex(asset => asset.id === $activeVideo?.id);
+		const prevIndex = currentIndex === 0 ? $videoAssets.length - 1 : currentIndex - 1;
+		console.log('Switching from video', currentIndex, 'to', prevIndex, ':', $videoAssets[prevIndex].name);
+		activeVideo.set($videoAssets[prevIndex]);
+		
+		// Force shader player to restart with new video
+		if (shaderPlayerRef) {
+			shaderPlayerRef.stop();
+			setTimeout(() => shaderPlayerRef.start(), 100);
+		}
+	}
+
+	function startVideoCycling() {
+		if (!enableVideoCycling || $videoAssets.length <= 1) return;
+		
+		console.log('Auto-cycling every', videoCycleDuration, 'ms');
+		stopVideoCycling();
+		videoCycleInterval = setInterval(nextVideo, videoCycleDuration);
+	}
+
+	function stopVideoCycling() {
+		if (videoCycleInterval) {
+			clearInterval(videoCycleInterval);
+			videoCycleInterval = null;
+		}
+	}
+
+	$effect(() => {
+		if (enableVideoCycling && $videoAssets.length > 1) {
+			startVideoCycling();
+		} else {
+			stopVideoCycling();
+		}
+		return () => stopVideoCycling();
+	});
 
 	// VHS presets
 	function applyVHSPreset(preset) {
@@ -147,12 +337,21 @@
 	}
 </script>
 
-<!-- Hidden file input for the entire workbench -->
+<!-- Hidden file inputs for the entire workbench -->
+	<input
+		type="file"
+		bind:this={fileInput}
+		onchange={onFileSelected}
+		accept="video/mp4,video/webm"
+		multiple
+		hidden
+	/>
 <input
 	type="file"
-	bind:this={fileInput}
-	onchange={onFileSelected}
-	accept="video/mp4,video/webm"
+	bind:this={audioInput}
+	onchange={onAudioSelected}
+	accept="audio/*"
+	multiple
 	hidden
 />
 
@@ -212,12 +411,141 @@
 					label="Shader"
 					options={{
 						VHS: 'VHS',
+						XlsczN: 'XlsczN (Audio Reactive)',
 						Grayscale: 'Grayscale',
 						Vignette: 'Vignette'
 					}}
 				/>
 
+				<!-- Video Controls -->
+				<Tweakpane.Folder title="Video Controls" expanded={true}>
+					<Button title="Upload Video" on:click={handleUploadClick} />
+					
+					{#if $activeVideo}
+						<Tweakpane.Separator />
+						
+						<div class="playback-controls">
+							<Button title={isPlaying ? "Pause" : "Play"} on:click={togglePlayback} />
+						</div>
+					{/if}
+					
+					{#if $videoAssets.length > 1}
+						<Tweakpane.Separator />
+						
+						<div class="video-controls">
+							<Button title="← Previous" on:click={previousVideo} />
+							<Button title="Next →" on:click={nextVideo} />
+						</div>
+						
+						<Tweakpane.Checkbox
+							bind:value={enableVideoCycling}
+							label="Auto Cycle Videos"
+						/>
+						
+						{#if enableVideoCycling}
+							<Tweakpane.Slider
+								bind:value={videoCycleDuration}
+								label="Cycle Duration (ms)"
+								min={1000}
+								max={30000}
+								step={500}
+							/>
+						{/if}
+					{/if}
+				</Tweakpane.Folder>
+
+				<!-- Audio Controls -->
+				<Tweakpane.Folder title="Audio Controls" expanded={selectedShaderName === 'XlsczN'}>
+					<Button title="Upload Audio" on:click={handleAudioUploadClick} />
+					
+					{#if audioFile}
+						<div class="audio-info">
+							<strong>Audio:</strong> {audioFile.name}
+						</div>
+						
+						<div class="audio-controls">
+							<Button title="Play" on:click={playAudio} />
+							<Button title="Pause" on:click={pauseAudio} />
+						</div>
+						
+						<Tweakpane.Slider
+							bind:value={audioVolume}
+							label="Volume"
+							min={0}
+							max={1}
+							step={0.01}
+							on:change={handleAudioVolumeChange}
+						/>
+						
+						<Tweakpane.Checkbox
+							bind:value={audioReactivePlayback}
+							label="Audio Reactive Playback"
+						/>
+						
+						<Tweakpane.Slider
+							bind:value={beatSensitivity}
+							label="Beat Sensitivity"
+							min={0.1}
+							max={1.0}
+							step={0.01}
+						/>
+						
+						<Tweakpane.Slider
+							bind:value={audioFilterIntensity}
+							label="Audio Filter Intensity"
+							min={0}
+							max={2.0}
+							step={0.01}
+						/>
+					{/if}
+				</Tweakpane.Folder>
+
+				{#if selectedShaderName === 'XlsczN'}
+					<Tweakpane.Folder title="Audio Reactive Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_intensity.value}
+							label="Intensity"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+
+						<Tweakpane.Slider
+							bind:value={uniforms.u_colorShift.value}
+							label="Color Shift"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+
+						<Tweakpane.Slider
+							bind:value={uniforms.u_pulseSpeed.value}
+							label="Pulse Speed"
+							min={0.1}
+							max={5}
+							step={0.1}
+						/>
+
+						<Tweakpane.Slider
+							bind:value={uniforms.u_waveAmplitude.value}
+							label="Wave Amplitude"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
 				{#if selectedShaderName === 'VHS'}
+					<Tweakpane.Folder title="VHS Presets" expanded={true}>
+						<div class="preset-buttons">
+							<Button title="Classic VHS" on:click={() => applyVHSPreset('classic')} />
+							<Button title="Damaged Tape" on:click={() => applyVHSPreset('damaged')} />
+							<Button title="Clean VHS" on:click={() => applyVHSPreset('clean')} />
+							<Button title="Heavy Distortion" on:click={() => applyVHSPreset('heavy')} />
+						</div>
+					</Tweakpane.Folder>
+
 					<Tweakpane.Folder title="VHS Effects" expanded={true}>
 						<Tweakpane.Slider
 							bind:value={uniforms.u_distortion.value}
@@ -295,15 +623,6 @@
 							step={0.01}
 						/>
 					</Tweakpane.Folder>
-					
-					<Tweakpane.Separator />
-					
-					<Tweakpane.Folder title="VHS Presets" expanded={false}>
-						<Button title="Classic VHS" on:click={() => applyVHSPreset('classic')} />
-						<Button title="Damaged Tape" on:click={() => applyVHSPreset('damaged')} />
-						<Button title="Clean VHS" on:click={() => applyVHSPreset('clean')} />
-						<Button title="Heavy Distortion" on:click={() => applyVHSPreset('heavy')} />
-					</Tweakpane.Folder>
 				{/if}
 
 				{#if selectedShaderName === 'Grayscale'}
@@ -344,6 +663,7 @@
 				{fragmentShader}
 				{uniforms}
 				{filtersEnabled}
+				{audioReactivePlayback}
 				key={$activeVideo.id}
 			/>
 		{:else}
@@ -367,5 +687,35 @@
 	.thumbnail-button:hover { border-color: #666; }
 	.thumbnail-button.active { border-color: #00aaff; }
 	.thumbnail-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #444; color: #888; position: absolute; top: 0; left: 0; }
-	.thumbnail-label { font-size: 0.8rem; background-color: rgba(0,0,0,0.6); padding: 2px 4px; border-radius: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; text-align: center; z-index: 1; }
+	.thumbnail-label {
+		font-size: 0.8rem;
+		background-color: rgba(0,0,0,0.6);
+		padding: 2px 4px;
+		border-radius: 2px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		width: 100%;
+		text-align: center;
+		z-index: 1;
+	}
+
+	.audio-info {
+		padding: 0.5rem 0;
+		font-size: 0.9rem;
+		color: #ccc;
+	}
+
+	.video-controls {
+		display: flex;
+		gap: 0.5rem;
+		margin: 0.5rem 0;
+	}
+
+	.preset-buttons {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.5rem;
+		margin: 0.5rem 0;
+	}
 </style>

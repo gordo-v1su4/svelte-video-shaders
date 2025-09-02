@@ -7,7 +7,8 @@
 		file,
 		fragmentShader,
 		uniforms = {},
-		filtersEnabled = true
+		filtersEnabled = true,
+		audioReactivePlayback = false
 	} = $props();
 
 	// Internal state
@@ -56,6 +57,12 @@
 
 	let frameIndex = 0;
 	let lastFrameTime = 0;
+	
+	// Audio-reactive playback variables
+	let audioPlaybackSpeed = 1.0;
+	let lastBeatTime = 0;
+	let beatThreshold = 0.3;
+	let frameSkipChance = 0;
 
 	onMount(() => {
 		if (!canvas) return;
@@ -132,10 +139,42 @@
 			const currentTime = performance.now();
 			const elapsedTimeMs = currentTime - videoStartTime;
 			
-			// Calculate which frame we should be showing at 24fps
-			const targetFrameIndex = Math.floor(elapsedTimeMs / FRAME_DURATION_MS);
+			// Audio-reactive playback modifications
+			if (audioReactivePlayback && uniforms) {
+				const audioLevel = uniforms.u_audioLevel?.value || 0;
+				const bassLevel = uniforms.u_bassLevel?.value || 0;
+				const trebleLevel = uniforms.u_trebleLevel?.value || 0;
+				
+				// Speed ramping based on audio intensity (0.5x to 2.5x speed)
+				audioPlaybackSpeed = 0.5 + (audioLevel * 2.0);
+				
+				// Beat detection for jump cuts
+				if (bassLevel > beatThreshold && (currentTime - lastBeatTime) > 200) {
+					lastBeatTime = currentTime;
+					// Jump cut: skip 1-3 frames on strong beats
+					const skipFrames = Math.floor(bassLevel * 3) + 1;
+					for (let i = 0; i < skipFrames && frameQueue.length > 0; i++) {
+						const skippedFrame = frameQueue.shift();
+						if (skippedFrame) skippedFrame.close();
+					}
+				}
+				
+				// Frame skipping based on treble (glitch effect)
+				frameSkipChance = trebleLevel * 0.3;
+				if (Math.random() < frameSkipChance && frameQueue.length > 1) {
+					const skippedFrame = frameQueue.shift();
+					if (skippedFrame) skippedFrame.close();
+				}
+			} else {
+				// Default 24fps playback when audio reactive is disabled
+				audioPlaybackSpeed = 1.0;
+			}
 			
-			// Only advance frame if we've reached the next 24fps interval
+			// Calculate target frame with audio-reactive speed
+			const effectiveFrameDuration = FRAME_DURATION_MS / audioPlaybackSpeed;
+			const targetFrameIndex = Math.floor(elapsedTimeMs / effectiveFrameDuration);
+			
+			// Only advance frame if we've reached the next interval
 			if (targetFrameIndex > frameIndex && frameQueue.length > 0) {
 				const newFrame = frameQueue.shift();
 				frameIndex = targetFrameIndex;
