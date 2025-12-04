@@ -1,140 +1,164 @@
-# Video Shaders
+# Svelte Video Shaders
 
-A modern web application for real-time video processing and shader effects, built with Svelte 5 and powered by WebCodecs API for hardware-accelerated video decoding.
+**Real-time video shader effects using WebCodecs API, WebGL/Three.js, and Svelte 5 runes.**
 
-## 🎬 Features
+A high-performance video processing application that uses browser-native WebCodecs API for hardware-accelerated video decoding and Three.js for real-time shader-based effects.
 
-- **Hardware-Accelerated Video Decoding**: Uses WebCodecs API for efficient H.264 video processing
-- **Real-Time Shader Effects**: WebGL/Three.js powered video rendering with custom shaders
-- **Interactive Controls**: Tweakpane UI for real-time parameter adjustment
-- **Advanced MP4 Support**: MP4Box.js integration for robust video file parsing
-- **Browser-Native Performance**: Direct VideoFrame-to-WebGL texture uploads
+## Features
 
-## 🏗️ Architecture
+- **Hardware-Accelerated Video Decoding** - Smooth 60fps playback via WebCodecs API
+- **Real-time GLSL Shaders** - Custom fragment shaders with Three.js
+- **Audio-Reactive Effects** - Shaders respond to audio frequency analysis
+- **Svelte 5 Runes** - Built with modern Svelte 5 syntax (`$state`, `$derived`, `$effect`)
+- **Tweakpane UI** - Intuitive real-time parameter controls
+- **Responsive Design** - Scales to any viewport size
 
-- **Frontend**: Svelte 5 with runes
-- **Video Processing**: WebCodecs API + MP4Box.js
-- **Rendering**: Three.js + WebGL
-- **UI**: Tweakpane for interactive controls
-- **Media Utils**: Mediabunny library
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
-- Node.js 18+ 
-- Modern browser with WebCodecs support (Chrome 94+, Edge 94+)
+- **Bun** package manager (faster than npm/pnpm)
+- Chrome 94+ or Edge 94+ (WebCodecs support required)
 
-### Installation
+Install Bun:
+```bash
+# Windows (PowerShell)
+powershell -c "irm bun.sh/install.ps1|iex"
+
+# macOS/Linux
+curl -fsSL https://bun.sh/install | bash
+```
+
+### Install & Run (2 Commands)
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd svelte-video-shaders
-
-# Install dependencies
+# 1. Install dependencies
 bun install
 
-# Start development server
+# 2. Start development server
 bun run dev
 ```
 
-### Usage
+The app will open at: **http://localhost:5173**
 
-1. **Upload Video**: Click the upload button in the Tweakpane UI
-2. **Select MP4 File**: Choose an H.264 encoded MP4 video
-3. **Apply Shaders**: Use the controls to adjust shader parameters in real-time
-4. **Enjoy**: Watch your video with custom shader effects!
-
-## 🛠️ Development
-
-### Development Server
+### Build Commands
 
 ```bash
+# Development server (with hot reload)
 bun run dev
 
-# Open in browser automatically
-bun run dev -- --open
-```
-
-### Building for Production
-
-```bash
+# Production build
 bun run build
-```
 
-### Preview Production Build
-
-```bash
+# Preview production build
 bun run preview
+
+# Run all tests
+bun run test
 ```
 
-## 📁 Project Structure
+## Usage
+
+1. **Upload Video**: Drag & drop or click "Select Video" button
+2. **Select Shader**: Choose from VHS, Grayscale, or Vignette effects
+3. **Adjust Parameters**: Use Tweakpane controls to tweak shader settings
+4. **Upload Audio** (for XlsczN shader): Audio-reactive effects will synchronize
+5. **Control Playback**: Play, pause, and stop with controls
+
+## Tech Stack
+
+- **Svelte 5** - Modern reactive framework with runes
+- **WebCodecs API** - Hardware-accelerated video decoding
+- **Three.js** - WebGL shader rendering
+- **MP4Box.js** - MP4 file parsing
+- **Tweakpane** - UI controls
+- **Vite** - Build tooling
+- **Bun** - Package manager (fast, reliable)
+
+## Browser Compatibility
+
+- ✅ Chrome 94+ (Recommended)
+- ✅ Edge 94+
+- ❌ Firefox (WebCodecs behind flag, experimental)
+- ❌ Safari (WebCodecs not implemented)
+
+## Development Notes
+
+### Video Format Requirements
+
+- MP4 container
+- H.264 (AVC) video codec
+- Any resolution supported by hardware decoder
+
+### Audio Format Requirements
+
+- Most formats supported via browser `<audio>` tag
+- For audio-reactive features: MP3, WAV, or OGG recommended
+
+### Project Structure
 
 ```
-svelte-video-shaders/
-├── src/
-│   ├── lib/
-│   │   ├── ShaderPlayer.svelte    # Main video rendering component
-│   │   └── VideoControls.svelte   # Tweakpane UI controls
-│   ├── routes/
-│   │   └── +page.svelte           # Main application page
-│   └── app.html
-├── mediabunny/                    # Video processing utilities
-├── static/                        # Static assets
-├── DEVELOPMENT_PLAN.md           # Detailed development notes
-└── package.json
+src/
+├── lib/
+│   ├── ShaderPlayer.svelte    # Main shader renderer
+│   ├── VideoControls.svelte   # Tweakpane UI
+│   └── shaders/               # GLSL shader files
+│       ├── vhs-shader.js
+│       └── xlsczn-shader.js
+├── routes/
+│   └── +page.svelte           # Main app page
+└── app.html
 ```
 
-## 🔧 Technical Details
+### Shader Uniforms
 
-### Video Processing Pipeline
+All shaders receive these uniforms:
 
-1. **File Upload** → Tweakpane UI file dialog
-2. **MP4 Parsing** → MP4Box.js extracts video track + AVC config
-3. **WebCodecs Setup** → VideoDecoder configured with H.264 parameters
-4. **Frame Decoding** → Hardware-accelerated decoding to VideoFrames
-5. **WebGL Upload** → Direct VideoFrame-to-texture using `gl.texSubImage2D`
-6. **Shader Rendering** → Three.js renders with custom fragment shaders
+```glsl
+uniform sampler2D u_texture;     // Video frame
+uniform vec2 u_resolution;       // Canvas resolution
+uniform float u_time;            // Elapsed time
+// Plus shader-specific uniforms from Tweakpane
+```
 
-### Key Technologies
+Audio-reactive shaders also get:
 
-- **WebCodecs API**: Browser-native video decoding
-- **MP4Box.js**: Robust MP4 file parsing and AVC configuration extraction
-- **Three.js**: WebGL abstraction for shader rendering
-- **Tweakpane**: Interactive parameter controls
-- **Svelte 5**: Reactive UI with runes
+```glsl
+uniform float u_audioLevel;      // Overall volume 0-1
+uniform float u_bassLevel;       // Bass frequencies 0-1
+uniform float u_midLevel;        // Mid frequencies 0-1
+uniform float u_trebleLevel;     // Treble frequencies 0-1
+```
 
-### Browser Compatibility
+## Performance
 
-- **Chrome 94+**: Full WebCodecs support
-- **Edge 94+**: Full WebCodecs support
-- **Firefox**: Limited (WebCodecs behind flag)
-- **Safari**: Not supported (WebCodecs not implemented)
+- **Target FPS**: 60fps @ 1080p
+- **Memory**: VideoFrames auto-released after upload
+- **GPU**: Hardware decoding + WebGL acceleration
+- **CPU**: Minimal load (mostly async WebCodecs)
 
-## 📚 Documentation
+## Troubleshooting
 
-- [Development Plan](./DEVELOPMENT_PLAN.md) - Detailed development notes and task list
-- [Mediabunny Docs](./mediabunny/docs/) - Video processing utilities documentation
-- [Tweakpane UI Docs](https://kitschpatrol.com/svelte-tweakpane-ui/docs) - UI controls documentation
+### "Port 5173 already in use"
+```bash
+bun run dev -- --port 3000
+```
 
-## 🔍 Debugging
+### "WebCodecs not supported"
+- Ensure Chrome/Edge 94+
+- Check `chrome://gpu` for hardware acceleration
+- May require HTTPS in some enterprise environments
 
-For detailed debugging information, check:
+### Video won't load
+- Verify H.264 encoding: `ffmpeg -i video.mp4`
+- Check file isn't corrupt by playing in browser directly
+- Inspect browser console for specific errors
 
-1. **Browser Console**: Look for `[Tracer]` prefixed logs
-2. **WebCodecs Support**: Ensure browser supports VideoDecoder
-3. **File Format**: Use H.264 encoded MP4 files
-4. **Development Plan**: Check `DEVELOPMENT_PLAN.md` for current issues
+### Shaders not appearing
+- Check WebGL support: `chrome://gpu`
+- Inspect console for shader compilation errors
+- Verify Three.js initialized: `window.THREE` in console
 
-## 🤝 Contributing
+## License
 
-Contributions are welcome! Please check the [Development Plan](./DEVELOPMENT_PLAN.md) for current tasks and known issues.
-
-## 📄 License
-
-[MIT License](LICENSE) - Feel free to use this project for your own video shader experiments!
-
----
-
-**Note**: This project requires a modern browser with WebCodecs API support for hardware-accelerated video decoding.
+MIT - Feel free to use for your own video processing projects!
