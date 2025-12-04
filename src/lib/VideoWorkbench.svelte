@@ -2,12 +2,15 @@
 	import * as Tweakpane from 'svelte-tweakpane-ui';
 	import { ThemeUtils } from 'svelte-tweakpane-ui';
 	import Button from 'svelte-tweakpane-ui/Button.svelte';
-	import ShaderPlayer from '$lib/ShaderPlayer.svelte';
+import ShaderPlayer from '$lib/ShaderPlayer.svelte';
+	import WaveformDisplay from '$lib/WaveformDisplay.svelte';
 	import { videoAssets, activeVideo } from '$lib/stores.js';
 	import { generateThumbnail } from '$lib/video-utils.js';
 	import { vhsFragmentShader } from '$lib/shaders/vhs-shader.js';
 	import { xlsczNFragmentShader, xlsczNUniforms } from '$lib/shaders/xlsczn-shader.js';
 	import { AudioAnalyzer } from '$lib/audio-utils.js';
+	import { EssentiaService } from '$lib/essentia-service.js';
+	import { frameBuffer } from '$lib/frame-buffer.js';
 
 	// --- Shader State ---
 	const shaders = {
@@ -38,6 +41,9 @@
 	};
 	let selectedShaderName = $state('VHS');
 	let audioAnalyzer = null;
+	let essentiaService = null;
+	let analysisData = $state({ beats: [], bpm: 0 });
+	let isAnalyzingAudio = $state(false);
 	let audioFile = $state(null);
 	let audioVolume = $state(0.5);
 	let audioIntensity = $state(1.0);
@@ -93,11 +99,21 @@
 	let videoCycleDuration = $state(5000); // 5 seconds per video
 	let enableVideoCycling = $state(false);
 
+	// --- Frame Buffer State ---
+	let isPreloading = $state(false);
+	let preloadProgress = $state(0);
+	let preloadStatus = $state('');
+	let isBufferReady = $state(false);
+
 	// --- Theme State ---
 	let themeKey = $state('standard');
 
 	// --- Filter Toggle State ---
 	let filtersEnabled = $state(true);
+
+	// --- Audio Playback Time ---
+	let audioCurrentTime = $state(0);
+	let audioDuration = $state(0);
 
 	// --- File Handling Logic ---
 	function handleUploadClick() {
@@ -113,16 +129,39 @@
 		if (!file) return;
 
 		audioFile = file;
+		isAnalyzingAudio = true;
 		
-		// Initialize audio analyzer
+		// Initialize audio analyzer for playback/FFT
 		if (audioAnalyzer) {
 			audioAnalyzer.destroy();
 		}
 		audioAnalyzer = new AudioAnalyzer();
 		const success = await audioAnalyzer.initializeAudio(file);
 		
-		if (success) {
+	// Initialize Essentia API and run offline analysis
+		try {
+			if (!essentiaService) {
+				essentiaService = new EssentiaService();
+				await essentiaService.initialize();
+			}
+			
+			console.log("Starting Essentia analysis via API...");
+			const result = await essentiaService.analyzeFile(file);
+			console.log("Analysis complete:", result);
+			
+			analysisData = result;
+		} catch (err) {
+			console.error("Essentia analysis failed:", err);
+		} finally {
+			isAnalyzingAudio = false;
+		}
+		
+	if (success) {
 			audioAnalyzer.setVolume(audioVolume);
+			// Set initial duration (may update once metadata loads)
+			audioAnalyzer.audioElement?.addEventListener('loadedmetadata', () => {
+				audioDuration = audioAnalyzer.getDuration();
+			});
 			// Start audio analysis loop
 			startAudioAnalysis();
 		}
@@ -135,8 +174,11 @@
 			if (audioAnalyzer && audioAnalyzer.isAnalyzing) {
 				const audioData = audioAnalyzer.getAudioData();
 				
-				// Debug: log audio data to console
-				console.log('Audio Data:', audioData);
+				// Update playhead time for waveform
+				audioCurrentTime = audioAnalyzer.getCurrentTime?.() || 0;
+				if (!audioDuration && audioAnalyzer.getDuration?.()) {
+					audioDuration = audioAnalyzer.getDuration();
+				}
 				
 				uniforms.u_audioLevel.value = audioData.audioLevel;
 				uniforms.u_bassLevel.value = audioData.bassLevel;
@@ -189,6 +231,7 @@
 
 		console.log('Processing', files.length, 'video files');
 		
+		// Add to asset list for thumbnails
 		for (const file of files) {
 			const newAsset = {
 				id: crypto.randomUUID(),
@@ -207,8 +250,35 @@
 			);
 		}
 		
-		// Reset file input to allow re-uploading same files
+		// Reset file input
 		if (fileInput) fileInput.value = '';
+		
+		// Pre-decode all videos into frame buffer
+		await preloadAllVideos();
+	}
+
+	async function preloadAllVideos() {
+		const allFiles = $videoAssets.map(asset => asset.file);
+		if (allFiles.length === 0) return;
+
+		isPreloading = true;
+		isBufferReady = false;
+		preloadProgress = 0;
+		preloadStatus = 'Starting...';
+
+		try {
+			await frameBuffer.preloadClips(allFiles, (progress, status) => {
+				preloadProgress = progress;
+				preloadStatus = status;
+			});
+			isBufferReady = true;
+			console.log('Frame buffer ready:', frameBuffer.totalFrames, 'frames');
+		} catch (err) {
+			console.error('Failed to preload videos:', err);
+			preloadStatus = 'Error: ' + err.message;
+		} finally {
+			isPreloading = false;
+		}
 	}
 
 	function handleVideoSelect(asset) {
@@ -221,70 +291,35 @@
 				shaderPlayerRef.pause();
 				isPlaying = false;
 			} else {
-				shaderPlayerRef.start();
+				shaderPlayerRef.play();
 				isPlaying = true;
 			}
 		}
 	}
 
-	// Video cycling functionality
+	// Video cycling functionality - now uses frame buffer directly
 	function nextVideo() {
-		if ($videoAssets.length <= 1) {
-			console.log('Cannot cycle - only', $videoAssets.length, 'video(s)');
-			return;
-		}
+		if (!shaderPlayerRef || $videoAssets.length <= 1) return;
 		const currentIndex = $videoAssets.findIndex(asset => asset.id === $activeVideo?.id);
 		const nextIndex = (currentIndex + 1) % $videoAssets.length;
-		console.log('Switching from video', currentIndex, 'to', nextIndex, ':', $videoAssets[nextIndex].name);
 		activeVideo.set($videoAssets[nextIndex]);
-		
-		// Force shader player to restart with new video
-		if (shaderPlayerRef) {
-			shaderPlayerRef.stop();
-			setTimeout(() => shaderPlayerRef.start(), 100);
-		}
+		shaderPlayerRef.seekToClip(nextIndex);
 	}
 
 	function previousVideo() {
-		if ($videoAssets.length <= 1) {
-			console.log('Cannot cycle - only', $videoAssets.length, 'video(s)');
-			return;
-		}
+		if (!shaderPlayerRef || $videoAssets.length <= 1) return;
 		const currentIndex = $videoAssets.findIndex(asset => asset.id === $activeVideo?.id);
 		const prevIndex = currentIndex === 0 ? $videoAssets.length - 1 : currentIndex - 1;
-		console.log('Switching from video', currentIndex, 'to', prevIndex, ':', $videoAssets[prevIndex].name);
 		activeVideo.set($videoAssets[prevIndex]);
-		
-		// Force shader player to restart with new video
-		if (shaderPlayerRef) {
-			shaderPlayerRef.stop();
-			setTimeout(() => shaderPlayerRef.start(), 100);
-		}
+		shaderPlayerRef.seekToClip(prevIndex);
 	}
 
-	function startVideoCycling() {
-		if (!enableVideoCycling || $videoAssets.length <= 1) return;
-		
-		console.log('Auto-cycling every', videoCycleDuration, 'ms');
-		stopVideoCycling();
-		videoCycleInterval = setInterval(nextVideo, videoCycleDuration);
-	}
-
-	function stopVideoCycling() {
-		if (videoCycleInterval) {
-			clearInterval(videoCycleInterval);
-			videoCycleInterval = null;
-		}
-	}
-
-	$effect(() => {
-		if (enableVideoCycling && $videoAssets.length > 1) {
-			startVideoCycling();
-		} else {
-			stopVideoCycling();
-		}
-		return () => stopVideoCycling();
-	});
+    // Removed time-based cycling logic as we now use onVideoEnd
+    /*
+	function startVideoCycling() { ... }
+	function stopVideoCycling() { ... }
+    $effect(...)
+    */
 
 	// VHS presets
 	function applyVHSPreset(preset) {
@@ -441,16 +476,7 @@
 							bind:value={enableVideoCycling}
 							label="Auto Cycle Videos"
 						/>
-						
-						{#if enableVideoCycling}
-							<Tweakpane.Slider
-								bind:value={videoCycleDuration}
-								label="Cycle Duration (ms)"
-								min={1000}
-								max={30000}
-								step={500}
-							/>
-						{/if}
+						<!-- Removed slider since cycling is now sequential -->
 					{/if}
 				</Tweakpane.Folder>
 
@@ -461,6 +487,11 @@
 					{#if audioFile}
 						<div class="audio-info">
 							<strong>Audio:</strong> {audioFile.name}
+							{#if isAnalyzingAudio}
+								<span class="status-analyzing">(Analyzing...)</span>
+							{:else if analysisData.bpm > 0}
+								<span class="status-ready">({Math.round(analysisData.bpm)} BPM)</span>
+							{/if}
 						</div>
 						
 						<div class="audio-controls">
@@ -656,20 +687,45 @@
 	</aside>
 
 	<main class="main-content">
-		{#if $activeVideo}
+		<div class="player-area">
+			{#if isPreloading}
+				<div class="loading-overlay">
+				<div class="loading-content">
+					<h3>Preparing Videos...</h3>
+					<div class="progress-bar">
+						<div class="progress-fill" style="width: {preloadProgress * 100}%"></div>
+					</div>
+					<p class="progress-status">{preloadStatus}</p>
+					<p class="progress-percent">{Math.round(preloadProgress * 100)}%</p>
+				</div>
+			</div>
+		{:else if isBufferReady}
 			<ShaderPlayer
 				bind:this={shaderPlayerRef}
-				file={$activeVideo.file}
+				{frameBuffer}
 				{fragmentShader}
 				{uniforms}
 				{filtersEnabled}
 				{audioReactivePlayback}
-				key={$activeVideo.id}
+				{analysisData}
 			/>
-		{:else}
-			<div class="placeholder">
-				<h3>Upload a video to begin</h3>
-			</div>
+			{:else}
+				<div class="placeholder">
+					<h3>Upload videos to begin</h3>
+					<p>All videos will be pre-decoded for seamless playback</p>
+				</div>
+			{/if}
+		</div>
+
+		{#if audioFile}
+			<WaveformDisplay
+				{audioFile}
+				beats={analysisData.beats}
+				bpm={analysisData.bpm}
+				currentTime={audioCurrentTime}
+				duration={audioDuration}
+				onSeek={(time) => audioAnalyzer?.seekTo?.(time)}
+			/>
 		{/if}
 	</main>
 </div>
@@ -706,6 +762,9 @@
 		color: #ccc;
 	}
 
+	.status-analyzing { color: #ffaa00; margin-left: 0.5rem; font-style: italic; }
+	.status-ready { color: #00ffaa; margin-left: 0.5rem; }
+
 	.video-controls {
 		display: flex;
 		gap: 0.5rem;
@@ -717,5 +776,57 @@
 		grid-template-columns: 1fr 1fr;
 		gap: 0.5rem;
 		margin: 0.5rem 0;
+	}
+
+	.loading-overlay {
+		width: 854px;
+		height: 480px;
+		background-color: #000;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		border-radius: 8px;
+	}
+
+	.loading-content {
+		text-align: center;
+		width: 80%;
+		max-width: 400px;
+	}
+
+	.loading-content h3 {
+		margin-bottom: 1.5rem;
+		color: #fff;
+	}
+
+	.progress-bar {
+		height: 8px;
+		background-color: #333;
+		border-radius: 4px;
+		overflow: hidden;
+		margin-bottom: 1rem;
+	}
+
+	.progress-fill {
+		height: 100%;
+		background: linear-gradient(90deg, #00aaff, #00ffaa);
+		transition: width 0.2s ease;
+	}
+
+	.progress-status {
+		font-size: 0.9rem;
+		color: #888;
+		margin-bottom: 0.5rem;
+	}
+
+	.progress-percent {
+		font-size: 2rem;
+		font-weight: bold;
+		color: #00aaff;
+	}
+
+	.placeholder p {
+		color: #666;
+		margin-top: 0.5rem;
 	}
 </style>

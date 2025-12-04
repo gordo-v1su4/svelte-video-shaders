@@ -228,6 +228,5 @@ if (track.codec.startsWith('avc1')) {
 - [W3C WebCodecs AVC Registration](https://www.w3.org/TR/webcodecs-avc-codec-registration/)
 - [WebCodecs API Specification](https://www.w3.org/TR/webcodecs/)
 - [MP4Box.js Documentation](https://github.com/gpac/mp4box.js)
-
-}
-```
+- [frame-buffer.js](mdc:src/lib/frame-buffer.js) - Pre-decoded frame buffer implementation
+- [ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte) - WebCodecs + Three.js integration

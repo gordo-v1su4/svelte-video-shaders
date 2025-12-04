@@ -5,7 +5,7 @@ alwaysApply: false
 ---
 # Project Structure and Important Files
 
-This document outlines the directory structure and key files in the svelte-video-shaders project.
+This document outlines the directory structure and key files in the svelte-video-shaders project - an audio-reactive video shader application with real-time beat detection and timeline editing.
 
 ## Root Directory Structure
 
@@ -21,6 +21,9 @@ svelte-video-shaders/
 │   ├── main.js                 # Storybook main configuration
 │   └── preview.js              # Storybook preview settings
 ├── .svelte-kit/                # SvelteKit build output (auto-generated)
+├── api/                        # Python FastAPI backend
+│   ├── main.py                 # Essentia beat detection endpoint
+│   └── requirements.txt        # Python dependencies (fastapi, uvicorn, essentia)
 ├── docs/                       # Project documentation
 │   ├── changes.md              # Change log (empty)
 │   ├── create-rules-project.md # Rules project creation guide
@@ -42,7 +45,7 @@ svelte-video-shaders/
 ├── eslint.config.js            # ESLint configuration
 ├── jsconfig.json               # JavaScript configuration
 ├── package.json                # Project dependencies and scripts
-├── pnpm-lock.yaml              # PNPM lock file
+├── bun.lockb                   # Bun lock file
 ├── README.md                   # Project readme
 ├── svelte.config.js            # Svelte configuration
 ├── vite.config.js              # Vite build configuration
@@ -58,8 +61,20 @@ svelte-video-shaders/
 
 ### Library Components (`src/lib/`)
 - **[index.js](mdc:src/lib/index.js)** - Library exports
-- **[ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte)** - Main shader player component
-- **[stores.js](mdc:src/lib/stores.js)** - Svelte stores for state management
+- **[ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte)** - Core WebCodecs decoder + Three.js renderer
+- **[VideoWorkbench.svelte](mdc:src/lib/VideoWorkbench.svelte)** - Main container with controls and UI
+- **[WaveformDisplay.svelte](mdc:src/lib/WaveformDisplay.svelte)** - Timeline editor with waveform, segments, markers
+- **[VideoControls.svelte](mdc:src/lib/VideoControls.svelte)** - Tweakpane controls + file upload
+- **[FileInput.svelte](mdc:src/lib/FileInput.svelte)** - File upload component
+- **[stores.js](mdc:src/lib/stores.js)** - Svelte stores for video assets
+- **[frame-buffer.js](mdc:src/lib/frame-buffer.js)** - Pre-decoded frame buffer for seamless playback
+- **[audio-utils.js](mdc:src/lib/audio-utils.js)** - AudioAnalyzer class (FFT-based real-time analysis)
+- **[essentia-service.js](mdc:src/lib/essentia-service.js)** - Calls Python API for offline beat detection
+- **[video-utils.js](mdc:src/lib/video-utils.js)** - Thumbnail generation with mediabunny
+
+### Shader Files (`src/lib/shaders/`)
+- **[vhs-shader.js](mdc:src/lib/shaders/vhs-shader.js)** - VHS tape effect (distortion, scanlines, tracking)
+- **[xlsczn-shader.js](mdc:src/lib/shaders/xlsczn-shader.js)** - Audio-reactive glitch shader (YIQ color space)
 
 ### Routes (`src/routes/`)
 - **[+layout.js](mdc:src/routes/+layout.js)** - Layout load function
@@ -101,7 +116,7 @@ Contains various image and SVG assets for Storybook stories:
 
 ### Version Control
 - **[.gitignore](mdc:.gitignore)** - Git ignore patterns
-- **pnpm-lock.yaml** - PNPM dependency lock file
+- **bun.lockb** - Bun dependency lock file
 
 ## Documentation
 
@@ -168,8 +183,11 @@ import Layout from '$routes/+layout.svelte';
 ## Important Notes
 
 - **Svelte 5 syntax** is used throughout the project (see [svelte-5-syntax.mdc](mdc:.cursor/rules/svelte-5-syntax.mdc))
+- **Bun** is the package manager and runtime
+- **Python FastAPI backend** handles offline beat detection via Essentia
+- **WebCodecs + Three.js** pipeline for hardware-accelerated video playback
+- **Pre-decoded frame buffer** enables seamless retiming and jump cuts
 - **Storybook** is configured for component development and documentation
 - **Vite** is used as the build tool with SvelteKit
-- **PNPM** is the package manager
 - **ESLint and Prettier** are configured for code quality
 - **Vitest** is used for testing

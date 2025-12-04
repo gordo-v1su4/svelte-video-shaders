@@ -5,15 +5,16 @@ alwaysApply: true
 ---
 # Video Playback Best Practices
 
-This rule covers video playback implementation using WebCodecs, mp4box, and three.js integration. Based on the current [ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte) implementation and [research-changes.md](mdc:docs/research-changes.md).
+This rule covers video playback implementation using WebCodecs, mp4box, and three.js integration. Based on the current [ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte) and [frame-buffer.js](mdc:src/lib/frame-buffer.js) implementations.
 
 ## Core Video Playback Architecture
 
 ### Technology Stack
 - **WebCodecs API**: Native browser video decoding (Chrome 94+, Edge 94+, Safari 16.4+)
 - **mp4box.js**: MP4 container demuxing and sample extraction
+- **Frame Buffer**: Pre-decoded ImageBitmap arrays for seamless retiming
 - **three.js**: WebGL2 rendering with shader materials
-- **HTML5 `<video>`**: Fallback for unsupported browsers
+- **Audio-reactive**: Real-time FFT drives shader uniforms and playback speed
 
 ### Import Pattern
 ```javascript
@@ -309,8 +310,118 @@ camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
 camera = new THREE.OrthographicCamera(-width/2, width/2, height/2, -height/2, 0.1, 10);
 ```
 
+## Pre-Decoded Frame Buffer System
+
+For seamless retiming, speed ramps, and jump cuts, use the pre-decoded frame buffer approach:
+
+### 1. Frame Buffer Setup
+```javascript
+import { FrameBuffer } from '$lib/frame-buffer.js';
+
+const frameBuffer = new FrameBuffer();
+
+// Pre-decode all videos with progress callback
+await frameBuffer.preloadClips(videoFiles, (progress, status) => {
+  console.log(`${status}: ${(progress * 100).toFixed(0)}%`);
+});
+
+console.log(`Ready: ${frameBuffer.totalFrames} frames`);
+```
+
+### 2. Frame Access
+```javascript
+// ✅ Good: Random access to any frame
+const frame = frameBuffer.getFrame(globalFrameIndex);
+const localFrame = frameBuffer.getFrameAt(clipIndex, localFrameIndex);
+
+// ✅ Good: Jump to specific clip
+frameBuffer.seekToClip(clipIndex);
+```
+
+### 3. ShaderPlayer Integration
+```svelte
+<ShaderPlayer
+  bind:this={shaderPlayerRef}
+  {frameBuffer}
+  {uniforms}
+  {fragmentShader}
+  onVideoEnd={handleVideoEnd}
+/>
+
+<script>
+  // Control playback
+  shaderPlayerRef.play();
+  shaderPlayerRef.pause();
+  shaderPlayerRef.seek(frameIndex);
+  shaderPlayerRef.setSpeed(1.5);
+  shaderPlayerRef.jumpFrames(30); // Jump forward 30 frames
+</script>
+```
+
+## Audio-Reactive Playback
+
+### Real-time FFT Analysis
+```javascript
+import { AudioAnalyzer } from '$lib/audio-utils.js';
+
+const audioAnalyzer = new AudioAnalyzer();
+await audioAnalyzer.initializeAudio(audioFile);
+
+function updateLoop() {
+  const audioData = audioAnalyzer.getAudioData();
+  // audioData: { audioLevel, bassLevel, midLevel, trebleLevel }
+  
+  // Update shader uniforms
+  uniforms.u_audioLevel.value = audioData.audioLevel;
+  uniforms.u_bassLevel.value = audioData.bassLevel;
+  
+  requestAnimationFrame(updateLoop);
+}
+```
+
+### Beat-Synced Video Control
+```javascript
+// Offline beat detection via Python API
+import { EssentiaService } from '$lib/essentia-service.js';
+
+const essentiaService = new EssentiaService();
+await essentiaService.initialize();
+const { bpm, beats } = await essentiaService.analyzeFile(audioFile);
+
+// Sync video to beats
+if (bassLevel > beatSensitivity) {
+  shaderPlayerRef.jumpFrames(Math.random() * 60); // Random jump cut
+}
+```
+
+## Timeline Component Integration
+
+### WaveformDisplay Usage
+```svelte
+<WaveformDisplay
+  {audioFile}
+  beats={analysisData.beats}
+  bpm={analysisData.bpm}
+  currentTime={audioCurrentTime}
+  duration={audioDuration}
+  frameRate={30}
+  onSeek={(time) => audioAnalyzer.seekTo(time)}
+  onSegmentChange={(segments) => handleSegments(segments)}
+  onMarkerAdd={(marker) => handleMarker(marker)}
+/>
+```
+
+### Timeline Features
+- **Time display modes**: Time (mm:ss.ms), Frames, Beats
+- **Zoomable**: Ctrl+scroll to zoom, scroll to pan
+- **Segments**: Shift+drag to create, drag handles to resize
+- **Markers**: Press M to add marker at playhead
+- **Snap to beats**: Toggle for beat-aligned editing
+
 ## References
 - [ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte)
-- [research-changes.md](mdc:docs/research-changes.md)
-- [PLAN.md](mdc:docs/PLAN.md)
+- [frame-buffer.js](mdc:src/lib/frame-buffer.js)
+- [WaveformDisplay.svelte](mdc:src/lib/WaveformDisplay.svelte)
+- [audio-utils.js](mdc:src/lib/audio-utils.js)
+- [essentia-service.js](mdc:src/lib/essentia-service.js)
 - [stack-and-dependencies.mdc](mdc:.cursor/rules/stack-and-dependencies.mdc)

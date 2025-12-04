@@ -5,23 +5,32 @@ alwaysApply: true
 ---
 # Application Stack & Major Dependencies
 
-This rule documents the technology stack, major dependencies, their versions, and best practices for the `svelte-video-shaders` project. It is based on the current [PLAN.md](mdc:docs/PLAN.md), [research-changes.md](mdc:docs/research-changes.md), and [GEMINI.md](mdc:docs/GEMINI.md).
+This rule documents the technology stack, major dependencies, their versions, and best practices for the `svelte-video-shaders` project.
 
 ## Core Stack Overview
 
 - **Framework:** SvelteKit (`@sveltejs/kit` ^2.16.0, Svelte ^5.0.0)
+- **Package Manager:** Bun 1.3+ (preferred over npm/pnpm)
 - **Build Tool:** Vite (^6.2.6)
 - **Component Library:** Storybook (^9.0.15) for UI development
 - **Shader/3D Engine:** three.js (^0.178.0)
 - **Video Decoding:** **WebCodecs API (browser-native)** - **PRIMARY VIDEO PLAYBACK TECHNOLOGY**
 - **Video Demuxing:** mp4box (^1.2.0) - **REQUIRED FOR WebCodecs**
-- **Video Processing:** ffmpeg.wasm (via @ffmpeg/ffmpeg ^0.12.15, @ffmpeg/util ^0.12.2) - **FALLBACK/COMPLEX TASKS ONLY**
-- **Audio Analysis:** Web Audio API (custom, see AudioTimeline.svelte)
+- **Frame Buffer:** Custom pre-decoded ImageBitmap arrays for seamless retiming
+- **Audio Analysis (Real-time):** Web Audio API FFT (see audio-utils.js)
+- **Audio Analysis (Offline):** Python Essentia API for beat detection
+- **Timeline/Waveform:** Custom WaveformDisplay.svelte component
 - **UI Controls:** svelte-tweakpane-ui (^1.5.9), tweakpane (^4.0.5)
 - **Testing:** Vitest (^3.2.3), vitest-browser-svelte (^0.1.0)
-- **Linting/Formatting:** ESLint (^9.18.0), Prettier (^3.4.2), prettier-plugin-svelte (^3.3.3), prettier-plugin-tailwindcss (^0.6.11)
+- **Linting/Formatting:** ESLint (^9.18.0), Prettier (^3.4.2), prettier-plugin-svelte (^3.3.3)
 - **CSS:** TailwindCSS (^4.0.0), @tailwindcss/typography (^0.5.15)
-- **Other:** wavesurfer.js (^7.9.5) for waveform display
+
+## Backend Stack (Python API)
+
+- **Framework:** FastAPI with uvicorn
+- **Beat Detection:** Essentia (RhythmExtractor2013)
+- **Package Manager:** uv (preferred for Python venvs)
+- **Endpoint:** `POST /analyze` - accepts audio file, returns BPM, beat timestamps, confidence
 
 ## Dependency Versions (from [package.json](mdc:package.json))
 
@@ -32,11 +41,9 @@ This rule documents the technology stack, major dependencies, their versions, an
   "svelte": "^5.0.0",
   "three": "^0.178.0",
   "mp4box": "^1.2.0",
-  "@ffmpeg/ffmpeg": "^0.12.15",
-  "@ffmpeg/util": "^0.12.2",
   "svelte-tweakpane-ui": "^1.5.9",
   "tweakpane": "^4.0.5",
-  "wavesurfer.js": "^7.9.5"
+  "mediabunny": "latest"
 }
 ```
 
@@ -97,14 +104,24 @@ This rule documents the technology stack, major dependencies, their versions, an
 
 ### Linting & Formatting
 - Use ESLint and Prettier with Svelte and Tailwind plugins for consistent code style.
-- Run `pnpm run lint` and `pnpm run format` before commits.
+- Run `bun run lint` and `bun run format` before commits.
+
+### Frame Buffer System
+- Pre-decode all videos into ImageBitmap arrays on load for instant random access
+- Enables seamless speed ramps, jump cuts, and retiming without decode latency
+- Fixed output dimensions (1920x1080) for consistent texture handling
+- Progress callback during preloading for UI feedback
+
+### Beat Detection Pipeline
+- **Real-time FFT** runs in browser via Web Audio API (audioLevel, bassLevel, midLevel, trebleLevel)
+- **Offline beat detection** via Python Essentia API (BPM, beat timestamps, confidence)
+- Start API: `cd api && uv venv && uv pip install -r requirements.txt && uvicorn main:app --reload --port 8000`
 
 ### General
+- **Bun:** Use `bun install`, `bun run dev`, etc. instead of npm/pnpm
 - **WebCodecs First:** Always implement new video features using WebCodecs + three.js first.
-- Always test fallback paths (e.g., HTML5 video, FFmpeg fallback for thumbnails).
 - Use COEP/COOP headers in Vite dev server for SharedArrayBuffer/WebCodecs support.
 - Keep dependencies up to date, but pin versions to avoid breaking changes.
-- **Transition Strategy:** Gradually replace HTML5 `<video>` with WebCodecs implementations.
 
 ## Example: Good Import Patterns
 ```typescript

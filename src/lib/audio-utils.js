@@ -121,6 +121,20 @@ export class AudioAnalyzer {
         }
     }
 
+    getCurrentTime() {
+        return this.audioElement?.currentTime || 0;
+    }
+
+    getDuration() {
+        return this.audioElement?.duration || 0;
+    }
+
+    seekTo(time) {
+        if (this.audioElement) {
+            this.audioElement.currentTime = Math.max(0, Math.min(time, this.getDuration()));
+        }
+    }
+
     destroy() {
         this.stop();
         if (this.source) {

@@ -1,31 +1,45 @@
 <script>
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import * as THREE from 'three';
-	import * as MP4Box from 'mp4box';
 
 	let {
-		file,
+		frameBuffer = null,
 		fragmentShader,
 		uniforms = {},
 		filtersEnabled = true,
-		audioReactivePlayback = false
+		audioReactivePlayback = false,
+		analysisData = { beats: [], bpm: 0 }
 	} = $props();
+
+	// Fixed output dimensions
+	const OUTPUT_WIDTH = 1920;
+	const OUTPUT_HEIGHT = 1080;
+	const TARGET_FPS = 24;
+	const FRAME_DURATION_MS = 1000 / TARGET_FPS;
 
 	// Internal state
 	let canvas;
-	let showOverlay = $state(true);
 	let isPlaying = $state(false);
+	let isReady = $state(false);
 
-	// three.js state
+	// Three.js state
 	let renderer, scene, camera, material, mesh;
-	let texture = null; // Texture will be created from the first frame
+	let texture = null;
 	let animationFrameId;
-	let videoDimensions = $state({ width: 1, height: 1 });
 
-	// Playback loop state
-	let frameQueue = [];
-	let videoStartTime = 0;
-	let currentFrame = null;
+	// Playback state - this is the heart of retiming
+	let globalFrameIndex = 0;
+	let playbackSpeed = 1.0;
+	let lastRenderTime = 0;
+	let accumulatedTime = 0;
+
+	// Audio-reactive state
+	let beatIndex = 0;
+	let playbackStartTime = 0;
+
+	// Reusable canvas for texture updates
+	let textureCanvas = null;
+	let textureContext = null;
 
 	// Default shaders
 	const vertexShader = `
@@ -43,39 +57,17 @@
 		}
 	`;
 
-	// WebCodecs state
-	let videoDecoder;
-	let mp4boxfile;
-
-	// Add looping support
-	let shouldLoop = $state(true);
-	let currentPlaybackTime = 0;
-
-	// Add frame rate control
-	const TARGET_FPS = 24;
-	const FRAME_DURATION_MS = 1000 / TARGET_FPS; // ~41.67ms per frame
-
-	let frameIndex = 0;
-	let lastFrameTime = 0;
-	
-	// Audio-reactive playback variables
-	let audioPlaybackSpeed = 1.0;
-	let lastBeatTime = 0;
-	let beatThreshold = 0.3;
-	let frameSkipChance = 0;
-
 	onMount(() => {
 		if (!canvas) return;
 
+		// Initialize Three.js
 		renderer = new THREE.WebGLRenderer({ canvas });
 		scene = new THREE.Scene();
 		camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
 		camera.position.z = 1;
-		
-		// Initialize material with all possible uniforms
-		const materialUniforms = { u_texture: { value: null } };
 
-		// Add all uniforms from the uniforms prop
+		// Initialize material with uniforms
+		const materialUniforms = { u_texture: { value: null } };
 		if (uniforms) {
 			for (const key in uniforms) {
 				materialUniforms[key] = { value: uniforms[key].value };
@@ -87,207 +79,168 @@
 			vertexShader,
 			fragmentShader: filtersEnabled ? (fragmentShader || defaultFragmentShader) : defaultFragmentShader
 		});
-		
+
 		const geometry = new THREE.PlaneGeometry(2, 2);
 		mesh = new THREE.Mesh(geometry, material);
 		scene.add(mesh);
-		
-		handleResize();
-		window.addEventListener('resize', handleResize);
-		
+
+		// Setup fixed size
+		renderer.setSize(854, 480, false);
+		mesh.scale.set(1, 1, 1);
+
+		// Create texture canvas once
+		textureCanvas = document.createElement('canvas');
+		textureCanvas.width = OUTPUT_WIDTH;
+		textureCanvas.height = OUTPUT_HEIGHT;
+		textureContext = textureCanvas.getContext('2d', { willReadFrequently: true });
+
+		// Create texture once
+		texture = new THREE.Texture(textureCanvas);
+		texture.minFilter = THREE.LinearFilter;
+		texture.magFilter = THREE.LinearFilter;
+		texture.wrapS = THREE.ClampToEdgeWrapping;
+		texture.wrapT = THREE.ClampToEdgeWrapping;
+		texture.format = THREE.RGBAFormat;
+		texture.generateMipmaps = false;
+		material.uniforms.u_texture.value = texture;
+
+		// Start render loop
 		render();
 
 		return () => {
-			window.removeEventListener('resize', handleResize);
 			if (animationFrameId) cancelAnimationFrame(animationFrameId);
-			if (videoDecoder) videoDecoder.close();
-			if (mp4boxfile) mp4boxfile.stop();
 			if (renderer) renderer.dispose();
-			frameQueue.forEach(frame => frame.close());
-			if (currentFrame) currentFrame.close();
+			if (texture) texture.dispose();
 		};
 	});
 
-	function handleResize() {
-		if (!renderer || !mesh) return;
-
-		const canvasWidth = canvas.clientWidth;
-		const canvasHeight = canvas.clientHeight;
-		renderer.setSize(canvasWidth, canvasHeight, false);
-
-		const videoAspect = videoDimensions.width / videoDimensions.height;
-		const canvasAspect = canvasWidth / canvasHeight;
-
-		if (canvasAspect > videoAspect) {
-			mesh.scale.x = videoAspect / canvasAspect;
-			mesh.scale.y = 1;
-		} else {
-			mesh.scale.x = 1;
-			mesh.scale.y = canvasAspect / videoAspect;
-		}
-	}
-
 	function render() {
 		animationFrameId = requestAnimationFrame(render);
+		const currentTime = performance.now();
+		const deltaTime = currentTime - lastRenderTime;
+		lastRenderTime = currentTime;
 
-		// Update time uniform for animated effects
+		// Update time uniform
 		if (material?.uniforms?.u_time) {
-			material.uniforms.u_time.value = performance.now() * 0.001;
+			material.uniforms.u_time.value = currentTime * 0.001;
 		}
 
-		if (isPlaying && videoStartTime > 0 && frameQueue.length > 0) {
-			const currentTime = performance.now();
-			const elapsedTimeMs = currentTime - videoStartTime;
-			
+		// Only advance frames if playing and buffer is ready
+		if (isPlaying && frameBuffer && frameBuffer.totalFrames > 0) {
 			// Audio-reactive playback modifications
 			if (audioReactivePlayback && uniforms) {
 				const audioLevel = uniforms.u_audioLevel?.value || 0;
-				const bassLevel = uniforms.u_bassLevel?.value || 0;
 				const trebleLevel = uniforms.u_trebleLevel?.value || 0;
-				
-				// Speed ramping based on audio intensity (0.5x to 2.5x speed)
-				audioPlaybackSpeed = 0.5 + (audioLevel * 2.0);
-				
-				// Beat detection for jump cuts
-				if (bassLevel > beatThreshold && (currentTime - lastBeatTime) > 200) {
-					lastBeatTime = currentTime;
-					// Jump cut: skip 1-3 frames on strong beats
-					const skipFrames = Math.floor(bassLevel * 3) + 1;
-					for (let i = 0; i < skipFrames && frameQueue.length > 0; i++) {
-						const skippedFrame = frameQueue.shift();
-						if (skippedFrame) skippedFrame.close();
+				const bassLevel = uniforms.u_bassLevel?.value || 0;
+
+				// Beat-synced jumps using Essentia data
+				if (analysisData?.beats?.length > 0) {
+					const audioTimeSeconds = (currentTime - playbackStartTime) / 1000;
+					
+					while (beatIndex < analysisData.beats.length &&
+						   analysisData.beats[beatIndex] < audioTimeSeconds) {
+						// Jump cut on beat - skip forward 2-4 frames
+						globalFrameIndex += Math.floor(2 + bassLevel * 3);
+						beatIndex++;
 					}
 				}
-				
-				// Frame skipping based on treble (glitch effect)
-				frameSkipChance = trebleLevel * 0.3;
-				if (Math.random() < frameSkipChance && frameQueue.length > 1) {
-					const skippedFrame = frameQueue.shift();
-					if (skippedFrame) skippedFrame.close();
+
+				// Speed ramp based on audio intensity (0.5x to 3x)
+				playbackSpeed = 0.5 + (audioLevel * 2.5);
+
+				// Stutter/glitch on high treble
+				if (trebleLevel > 0.6 && Math.random() < 0.1) {
+					globalFrameIndex -= Math.floor(Math.random() * 3);
 				}
 			} else {
-				// Default 24fps playback when audio reactive is disabled
-				audioPlaybackSpeed = 1.0;
+				playbackSpeed = 1.0;
 			}
-			
-			// Calculate target frame with audio-reactive speed
-			const effectiveFrameDuration = FRAME_DURATION_MS / audioPlaybackSpeed;
-			const targetFrameIndex = Math.floor(elapsedTimeMs / effectiveFrameDuration);
-			
-			// Only advance frame if we've reached the next interval
-			if (targetFrameIndex > frameIndex && frameQueue.length > 0) {
-				const newFrame = frameQueue.shift();
-				frameIndex = targetFrameIndex;
-				lastFrameTime = currentTime;
 
-				if (!currentFrame) {
-					// First frame: create the texture
-					texture = new THREE.CanvasTexture(newFrame);
-					texture.minFilter = THREE.LinearFilter;
-					texture.magFilter = THREE.LinearFilter;
-					texture.format = THREE.RGBAFormat;
-					texture.generateMipmaps = false;
-					material.uniforms.u_texture.value = texture;
-				} else {
-					// Update texture with new frame
-					texture.image = newFrame;
-					texture.needsUpdate = true;
-					currentFrame.close(); // Close previous frame
-				}
-				currentFrame = newFrame;
+			// Accumulate time and advance frames
+			accumulatedTime += deltaTime * playbackSpeed;
+			const framesToAdvance = Math.floor(accumulatedTime / FRAME_DURATION_MS);
+			if (framesToAdvance > 0) {
+				globalFrameIndex += framesToAdvance;
+				accumulatedTime -= framesToAdvance * FRAME_DURATION_MS;
 			}
-			
-			// Check for end of video and loop
-			if (frameQueue.length === 0 && shouldLoop) {
-				setTimeout(() => {
-					if (shouldLoop) {
-						frameIndex = 0;
-						start();
-					}
-				}, 100);
+
+			// Get current frame from buffer
+			const bitmap = frameBuffer.getFrame(globalFrameIndex);
+			if (bitmap) {
+				textureContext.drawImage(bitmap, 0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+				texture.needsUpdate = true;
+			}
+		} else if (frameBuffer && frameBuffer.totalFrames > 0 && !isReady) {
+			// Not playing but buffer ready - show first frame
+			const bitmap = frameBuffer.getFrame(0);
+			if (bitmap) {
+				textureContext.drawImage(bitmap, 0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+				texture.needsUpdate = true;
+				isReady = true;
 			}
 		}
-		
-		renderer.render(scene, camera);
+
+		renderer?.render(scene, camera);
 	}
 
-	function initializeVideoProcessing(videoFile) {
-		mp4boxfile = MP4Box.createFile();
-		
-		mp4boxfile.onReady = (info) => {
-			const videoTrack = info.tracks.find(track => track.type === 'video');
-			if (!videoTrack) return console.error('No video track found');
-			
-			videoDimensions = { width: videoTrack.video.width, height: videoTrack.video.height };
-			handleResize();
-			setupVideoDecoder(videoTrack);
-		};
-		
-		mp4boxfile.onSamples = (track_id, ref, samples) => {
-			for (const sample of samples) {
-				if (videoDecoder?.state === 'configured') {
-					videoDecoder.decode(new EncodedVideoChunk({
-						type: sample.is_sync ? 'key' : 'delta',
-						timestamp: sample.cts,
-						duration: sample.duration,
-						data: sample.data
-					}));
-				}
-			}
-		};
-		
-		const reader = new FileReader();
-		reader.onload = (e) => {
-			const arrayBuffer = e.target.result;
-			arrayBuffer.fileStart = 0;
-			mp4boxfile.appendBuffer(arrayBuffer);
-			mp4boxfile.flush();
-		};
-		reader.readAsArrayBuffer(videoFile);
-	}
-
-	function setupVideoDecoder(videoTrack) {
-		const config = {
-			codec: videoTrack.codec,
-			codedWidth: videoTrack.video.width,
-			codedHeight: videoTrack.video.height,
-		};
-
-		if (videoTrack.codec.startsWith('avc1')) {
-			const trak = mp4boxfile.getTrackById(videoTrack.id);
-			const avcC = trak?.mdia?.minf?.stbl?.stsd?.entries?.[0]?.avcC;
-			if (avcC) {
-				const descriptionStart = avcC.start + 8;
-				const descriptionSize = avcC.size - 8;
-				config.description = mp4boxfile.stream.buffer.slice(descriptionStart, descriptionStart + descriptionSize);
-			} else {
-				return console.error("Failed to extract AVC configuration.");
-			}
-		}
-		
-		videoDecoder = new VideoDecoder({
-			output: (frame) => {
-				// Buffer frames for smooth 24fps playback
-				frameQueue.push(frame);
-			},
-			error: (e) => console.error('VideoDecoder error:', e)
-		});
-		
-		videoDecoder.configure(config);
-		// Extract more samples for smoother 24fps buffering
-		mp4boxfile.setExtractionOptions(videoTrack.id, null, { nbSamples: 200 });
-		mp4boxfile.start();
-	}
-
-	function start() {
-		showOverlay = false;
+	// === External Control API ===
+	
+	export function play() {
+		if (!frameBuffer || frameBuffer.totalFrames === 0) return;
 		isPlaying = true;
-		frameQueue = [];
-		frameIndex = 0;
-		lastFrameTime = 0;
-		videoStartTime = performance.now();
-		initializeVideoProcessing(file);
+		lastRenderTime = performance.now();
+		playbackStartTime = performance.now();
+		beatIndex = 0;
+		accumulatedTime = 0;
 	}
+
+	export function pause() {
+		isPlaying = false;
+	}
+
+	export function stop() {
+		isPlaying = false;
+		globalFrameIndex = 0;
+		accumulatedTime = 0;
+		beatIndex = 0;
+		isReady = false;
+	}
+
+	export function seek(frameIndex) {
+		globalFrameIndex = frameIndex;
+		accumulatedTime = 0;
+	}
+
+	export function seekToClip(clipIndex) {
+		if (!frameBuffer) return;
+		const clipInfo = frameBuffer.getClipInfo(clipIndex);
+		if (clipInfo) {
+			globalFrameIndex = clipInfo.startFrame;
+			accumulatedTime = 0;
+		}
+	}
+
+	export function setSpeed(speed) {
+		playbackSpeed = speed;
+	}
+
+	export function jumpFrames(delta) {
+		globalFrameIndex += delta;
+	}
+
+	export function getCurrentFrame() {
+		return globalFrameIndex;
+	}
+
+	export function getTotalFrames() {
+		return frameBuffer?.totalFrames || 0;
+	}
+
+	export function getIsPlaying() {
+		return isPlaying;
+	}
+
+	// === Reactive Updates ===
 
 	$effect(() => {
 		if (material?.uniforms) {
@@ -295,7 +248,6 @@
 				if (material.uniforms[key]) {
 					material.uniforms[key].value = uniforms[key].value;
 				} else {
-					// Add missing uniform
 					material.uniforms[key] = { value: uniforms[key].value };
 				}
 			}
@@ -304,118 +256,57 @@
 
 	$effect(() => {
 		if (material) {
-			// Use default shader when filters are disabled, otherwise use the provided shader
 			material.fragmentShader = filtersEnabled ? (fragmentShader || defaultFragmentShader) : defaultFragmentShader;
 			material.needsUpdate = true;
 		}
 	});
 
+	// Reset when frameBuffer changes
 	$effect(() => {
-		if (file && renderer) {
-			// Clean up previous video processing
-			if (videoDecoder) {
-				videoDecoder.close();
-				videoDecoder = null;
-			}
-			if (mp4boxfile) {
-				mp4boxfile.stop();
-				mp4boxfile = null;
-			}
-			// Clean up frame queue
-			frameQueue.forEach(frame => frame.close());
-			frameQueue = [];
-			if (currentFrame) {
-				currentFrame.close();
-				currentFrame = null;
-			}
-
-			start();
+		if (frameBuffer && frameBuffer.totalFrames > 0) {
+			globalFrameIndex = 0;
+			accumulatedTime = 0;
+			beatIndex = 0;
+			isReady = false;
 		}
 	});
-
-	// Add these methods for external control
-	export function play() {
-		if (!isPlaying && frameQueue.length === 0) {
-			// Restart from beginning
-			start();
-		} else {
-			isPlaying = true;
-			if (videoStartTime === 0) {
-				videoStartTime = performance.now();
-			} else {
-				// Resume: adjust start time accounting for 24fps timing
-				const pausedDuration = performance.now() - (currentPlaybackTime || 0);
-				videoStartTime = performance.now() - (frameIndex * FRAME_DURATION_MS);
-			}
-		}
-	}
-
-	export function pause() {
-		isPlaying = false;
-		currentPlaybackTime = performance.now();
-	}
 </script>
 
 <div class="player-container">
 	<canvas bind:this={canvas}></canvas>
-	{#if showOverlay}
-		<button class="play-overlay" onclick={start}>
-			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
-				><path
-					d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"
-				/></svg
-			>
-			<span>Click to Play</span>
-		</button>
+	{#if !frameBuffer || frameBuffer.totalFrames === 0}
+		<div class="overlay">
+			<span>Upload videos to begin</span>
+		</div>
 	{/if}
 </div>
 
 <style>
 	.player-container {
-		width: 100%;
-		height: 100%;
+		width: 854px;
+		height: 480px;
 		position: relative;
 		background-color: #000;
 	}
 
 	canvas {
 		display: block;
-		width: 100%;
-		height: 100%;
+		width: 854px;
+		height: 480px;
 	}
 
-	.play-overlay {
+	.overlay {
 		position: absolute;
 		top: 0;
 		left: 0;
 		right: 0;
 		bottom: 0;
-		background-color: rgba(0, 0, 0, 0.6);
+		background-color: rgba(0, 0, 0, 0.8);
 		display: flex;
-		flex-direction: column;
 		justify-content: center;
 		align-items: center;
-		color: white;
-		cursor: pointer;
-		transition: opacity 0.3s ease;
-        border: none;
-        padding: 0;
-        font-family: inherit;
-	}
-
-	.play-overlay:hover {
-		background-color: rgba(0, 0, 0, 0.7);
-	}
-
-	.play-overlay svg {
-		width: 80px;
-		height: 80px;
-		margin-bottom: 1rem;
-	}
-
-	.play-overlay span {
-		font-size: 1.5rem;
-		font-weight: bold;
+		color: #666;
+		font-size: 1.2rem;
 	}
 </style>
 

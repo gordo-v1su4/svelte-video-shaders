@@ -1,3 +1,8 @@
+---
+description: mp4box.js integration patterns for MP4 demuxing with WebCodecs
+globs: **/*.{js,svelte}
+alwaysApply: false
+---
 # mp4box.js Integration and Usage Rule
 
 This rule documents the correct way to integrate and use [mp4box.js](https://github.com/gpac/mp4box.js) for MP4 demuxing in the Svelte Video Shaders project, ensuring compatibility with SvelteKit, WebCodecs, and Three.js.
@@ -105,7 +110,3 @@ import MP4Box from 'mp4box'; // ❌ Not Vite-compatible
 - [mp4box.js GitHub](https://github.com/gpac/mp4box.js)
 - [ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte)
 - [WebCodecs API Best Practices](mdc:.cursor/rules/webcodecs-api.mdc)
-description:
-globs:
-alwaysApply: false
----

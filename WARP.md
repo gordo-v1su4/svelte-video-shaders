@@ -57,15 +57,21 @@ src/
 │   ├── ShaderPlayer.svelte       # Core: WebCodecs decoder + Three.js renderer
 │   ├── VideoControls.svelte      # UI: Tweakpane controls + file upload
 │   ├── VideoWorkbench.svelte     # Container component
+│   ├── WaveformDisplay.svelte    # Timeline editor with waveform, segments, markers
 │   ├── FileInput.svelte          # File upload component
 │   ├── video-utils.js            # Thumbnail generation with mediabunny
 │   ├── audio-utils.js            # AudioAnalyzer class (FFT-based)
+│   ├── frame-buffer.js           # Pre-decoded frame buffer for seamless playback
+│   ├── essentia-service.js       # Calls Python API for beat detection
 │   ├── stores.js                 # Svelte stores for video assets
 │   └── shaders/
 │       ├── vhs-shader.js         # VHS tape effect (distortion, scanlines, tracking)
 │       └── xlsczn-shader.js      # Audio-reactive glitch shader (YIQ color space)
 ├── routes/
 │   └── +page.svelte              # Main application entry
+├── api/                          # Python FastAPI backend
+│   ├── main.py                   # Essentia beat detection endpoint
+│   └── requirements.txt          # Python dependencies
 └── stories/                      # Storybook component stories
 ```
 
@@ -90,6 +96,34 @@ src/
 - Frequency ranges: Bass (20-250Hz), Mid (250-4000Hz), Treble (4000-20000Hz)
 - Normalized output values (0-1) drive shader uniforms in real-time
 - Audio playback synchronized separately from video (not frame-locked)
+- Beat detection via Python Essentia API (offline analysis)
+
+#### Timeline Component (WaveformDisplay.svelte)
+Pro audio-style timeline editor with dark theme (purple/blue #a882ff accents on #08080a background):
+
+**Display Features:**
+- Time display modes: Time (mm:ss.ms), Frames (xxxf), Beats (based on BPM)
+- Zoomable timeline (Ctrl+scroll up to 50x, regular scroll to pan)
+- Adaptive time ruler (shows bars for beats, frame numbers, or time)
+- Purple gradient waveform with smooth mirrored display
+- Beat markers with subtle vertical glow effect
+- White playhead spanning all tracks with triangle indicator on ruler
+- Monospace timecode display (large centered)
+
+**Editing Features:**
+- Segments track: Shift+drag to create, drag handles to resize, click to select, Del to delete
+- Markers: Press M to drop marker at playhead position
+- Snap to beats toggle (snaps seeking/segment creation to nearest beat)
+- Click waveform to seek
+
+**UI Elements:**
+- Header with Time/Frames/Beats toggle buttons
+- Show Beats checkbox, Snap checkbox
+- Add marker (🚩) and delete segment (🗑) buttons
+- Zoom indicator in footer
+- Instructions hint bar
+
+**Props:** `audioFile`, `beats[]`, `bpm`, `currentTime`, `duration`, `frameRate`, `onSeek()`, `onSegmentChange()`, `onMarkerAdd()`
 
 ### Svelte 5 Patterns (Runes)
 This codebase uses **Svelte 5 runes syntax**:
