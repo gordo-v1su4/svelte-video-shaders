@@ -190,4 +190,4 @@ import Layout from '$routes/+layout.svelte';
 - **Storybook** is configured for component development and documentation
 - **Vite** is used as the build tool with SvelteKit
 - **ESLint and Prettier** are configured for code quality
-- **Vitest** is used for testing
+- **Vitest 4.0+** is used for testing (browser mode for Svelte components, node mode for unit tests)

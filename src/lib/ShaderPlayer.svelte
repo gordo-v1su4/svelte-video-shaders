@@ -255,9 +255,37 @@
 	});
 
 	$effect(() => {
-		if (material) {
-			material.fragmentShader = filtersEnabled ? (fragmentShader || defaultFragmentShader) : defaultFragmentShader;
-			material.needsUpdate = true;
+		if (material && uniforms && fragmentShader) {
+			// Ensure all uniforms exist before updating shader
+			// This prevents shader compilation errors from missing uniforms
+			for (const key in uniforms) {
+				if (!material.uniforms[key]) {
+					material.uniforms[key] = { value: uniforms[key].value };
+				}
+			}
+			
+			// Update fragment shader
+			const newFragmentShader = filtersEnabled ? (fragmentShader || defaultFragmentShader) : defaultFragmentShader;
+			
+			// Only update if shader actually changed
+			if (material.fragmentShader !== newFragmentShader) {
+				try {
+					material.fragmentShader = newFragmentShader;
+					material.needsUpdate = true;
+					
+					// Force program recompilation
+					if (material.program) {
+						material.program.needsUpdate = true;
+					}
+					
+					console.log('[ShaderPlayer] Shader updated, length:', newFragmentShader.length);
+				} catch (error) {
+					console.error('[ShaderPlayer] Error updating shader:', error);
+					// Fallback to default shader on error
+					material.fragmentShader = defaultFragmentShader;
+					material.needsUpdate = true;
+				}
+			}
 		}
 	});
 

@@ -447,23 +447,24 @@ import { AutoObject } from 'svelte-tweakpane-ui/AutoObject.svelte';
 
 ## Testing Patterns
 
-### Component Testing
+### Component Testing (Vitest 4 + Browser Mode)
 ```javascript
-// ✅ Good: Test Tweakpane integration
-import { render, fireEvent } from '@testing-library/svelte';
+// ✅ Good: Test Tweakpane integration with Vitest 4 browser mode
 import { describe, it, expect } from 'vitest';
+import { page } from 'vitest/browser';
+import { render } from 'vitest-browser-svelte';
 import ShaderControls from './ShaderControls.svelte';
 
 describe('ShaderControls', () => {
   it('should update shader parameters', async () => {
-    const { component } = render(ShaderControls);
+    render(ShaderControls);
     
-    // Test parameter updates
-    const params = { strength: 1.5 };
-    component.$set({ params });
+    // Use Playwright locators to interact with Tweakpane controls
+    const strengthInput = page.getByLabel('Strength');
+    await strengthInput.fill('1.5');
     
-    // Verify controls reflect the new values
-    expect(component.params.strength).toBe(1.5);
+    // Verify the value was updated
+    await expect(strengthInput).toHaveValue('1.5');
   });
 });
 ```

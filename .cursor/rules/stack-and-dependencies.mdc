@@ -9,7 +9,7 @@ This rule documents the technology stack, major dependencies, their versions, an
 
 ## Core Stack Overview
 
-- **Framework:** SvelteKit (`@sveltejs/kit` ^2.16.0, Svelte ^5.0.0)
+- **Framework:** SvelteKit (`@sveltejs/kit` ^2.49.1, Svelte ^5.0.0)
 - **Package Manager:** Bun 1.3+ (preferred over npm/pnpm)
 - **Build Tool:** Vite (^6.2.6)
 - **Component Library:** Storybook (^9.0.15) for UI development
@@ -21,7 +21,7 @@ This rule documents the technology stack, major dependencies, their versions, an
 - **Audio Analysis (Offline):** Python Essentia API for beat detection
 - **Timeline/Waveform:** Custom WaveformDisplay.svelte component
 - **UI Controls:** svelte-tweakpane-ui (^1.5.9), tweakpane (^4.0.5)
-- **Testing:** Vitest (^3.2.3), vitest-browser-svelte (^0.1.0)
+- **Testing:** Vitest (^4.0.14), vitest-browser-svelte (^2.0.1), @vitest/browser-playwright (^4.0.15)
 - **Linting/Formatting:** ESLint (^9.18.0), Prettier (^3.4.2), prettier-plugin-svelte (^3.3.3)
 - **CSS:** TailwindCSS (^4.0.0), @tailwindcss/typography (^0.5.15)
 
@@ -37,7 +37,7 @@ This rule documents the technology stack, major dependencies, their versions, an
 ### Key Dependencies
 ```json
 {
-  "@sveltejs/kit": "^2.16.0",
+  "@sveltejs/kit": "^2.49.1",
   "svelte": "^5.0.0",
   "three": "^0.178.0",
   "mp4box": "^1.2.0",
@@ -52,7 +52,7 @@ This rule documents the technology stack, major dependencies, their versions, an
 {
   "vite": "^6.2.6",
   "@storybook/sveltekit": "^9.0.15",
-  "vitest": "^3.2.3",
+  "vitest": "^4.0.14",
   "eslint": "^9.18.0",
   "prettier": "^3.4.2",
   "tailwindcss": "^4.0.0"
@@ -99,8 +99,22 @@ This rule documents the technology stack, major dependencies, their versions, an
 - Keep stories in `src/stories/` and assets in `src/stories/assets/`.
 
 ### Vitest
-- Use for unit and browser-based testing.
-- Use `vitest-browser-svelte` for Svelte component tests.
+- Use Vitest 4.0+ for unit and browser-based testing.
+- **Browser Mode:** Vitest 4 uses stable browser mode (no longer experimental).
+- Use `vitest-browser-svelte` v2.0+ for Svelte component tests in browser mode.
+- **Configuration:**
+  - Use `browser.enabled: true` (do NOT set `environment: 'browser'` in Vitest 4).
+  - Provider must be a factory function: `provider: playwright()` from `@vitest/browser-playwright`.
+  - Import `page` from `vitest/browser` (not `@vitest/browser/context`).
+  - Browser matchers available via `@vitest/browser/matchers` (import in setup file or test files).
+  - Setup file should include reference types: `/// <reference types="vitest/browser/matchers" />`
+- **Test Projects:** Use separate projects for browser (`browser.enabled: true`) and node (`environment: 'node'`) tests.
+- **Breaking Changes from Vitest 3:**
+  - `environment: 'browser'` removed - use `browser.enabled: true` instead.
+  - `provider: 'playwright'` (string) → `provider: playwright()` (factory function).
+  - `@vitest/browser/context` → `vitest/browser` for page import.
+  - `expect.element()` removed - use standard `expect()` with browser matchers.
+- Browser tests require Playwright browsers: `bunx playwright install`.
 
 ### Linting & Formatting
 - Use ESLint and Prettier with Svelte and Tailwind plugins for consistent code style.
@@ -139,6 +153,11 @@ import * as MP4Box from 'mp4box';
 
 // ✅ Good: Vite-compatible mp4box import
 import { default as MP4BoxModule } from 'mp4box';
+
+// ✅ Good: Vitest 4 browser mode imports
+import { page } from 'vitest/browser';
+import { playwright } from '@vitest/browser-playwright';
+import '@vitest/browser/matchers'; // For browser matchers (toBeInTheDocument, etc.)
 ```
 
 ## References

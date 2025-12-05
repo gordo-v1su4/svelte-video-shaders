@@ -8,6 +8,26 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 	import { generateThumbnail } from '$lib/video-utils.js';
 	import { vhsFragmentShader } from '$lib/shaders/vhs-shader.js';
 	import { xlsczNFragmentShader, xlsczNUniforms } from '$lib/shaders/xlsczn-shader.js';
+	import { waterFragmentShader, waterUniforms } from '$lib/shaders/water-shader.js';
+	import { chromaticAberrationFragmentShader, chromaticAberrationUniforms } from '$lib/shaders/chromatic-aberration-shader.js';
+	import { glitchFragmentShader, glitchUniforms } from '$lib/shaders/glitch-shader.js';
+	import { noiseFragmentShader, noiseUniforms } from '$lib/shaders/noise-shader.js';
+	import { vignetteFragmentShader, vignetteUniforms } from '$lib/shaders/vignette-shader.js';
+	import { bloomFragmentShader, bloomUniforms } from '$lib/shaders/bloom-shader.js';
+	import { depthOfFieldFragmentShader, depthOfFieldUniforms } from '$lib/shaders/depth-of-field-shader.js';
+	import { depthFragmentShader, depthUniforms } from '$lib/shaders/depth-shader.js';
+	import { sepiaFragmentShader, sepiaUniforms } from '$lib/shaders/sepia-shader.js';
+	import { scanlineFragmentShader, scanlineUniforms } from '$lib/shaders/scanline-shader.js';
+	import { pixelationFragmentShader, pixelationUniforms } from '$lib/shaders/pixelation-shader.js';
+	import { dotScreenFragmentShader, dotScreenUniforms } from '$lib/shaders/dot-screen-shader.js';
+	import { hueSaturationFragmentShader, hueSaturationUniforms } from '$lib/shaders/hue-saturation-shader.js';
+	import { brightnessContrastFragmentShader, brightnessContrastUniforms } from '$lib/shaders/brightness-contrast-shader.js';
+	import { colorDepthFragmentShader, colorDepthUniforms } from '$lib/shaders/color-depth-shader.js';
+	import { colorAverageFragmentShader, colorAverageUniforms } from '$lib/shaders/color-average-shader.js';
+	import { tiltShiftFragmentShader, tiltShiftUniforms } from '$lib/shaders/tilt-shift-shader.js';
+	import { toneMappingFragmentShader, toneMappingUniforms } from '$lib/shaders/tone-mapping-shader.js';
+	import { asciiFragmentShader, asciiUniforms } from '$lib/shaders/ascii-shader.js';
+	import { gridFragmentShader, gridUniforms } from '$lib/shaders/grid-shader.js';
 	import { AudioAnalyzer } from '$lib/audio-utils.js';
 	import { EssentiaService } from '$lib/essentia-service.js';
 	import { frameBuffer } from '$lib/frame-buffer.js';
@@ -66,8 +86,9 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 		u_trackingFreq: { value: 8.0 },
 		u_waveAmplitude: { value: 0.1 },
 
-		// Existing shader uniforms
+		// Existing shader uniforms (Grayscale)
 		u_strength: { value: 0.5 },
+		// Old Vignette shader uniforms (kept for compatibility)
 		u_vignette_strength: { value: 0.5 },
 		u_vignette_falloff: { value: 0.3 },
 
@@ -80,13 +101,120 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 		u_colorShift: { value: 0.3 },
 		u_pulseSpeed: { value: 2.0 },
 		u_waveAmplitude: { value: 0.5 },
-		u_resolution: { value: [1920, 1080] }
+		u_resolution: { value: [1920, 1080] },
+
+		// Water shader uniforms
+		u_factor: { value: 0.5 },
+
+		// Chromatic Aberration uniforms
+		u_offset: { value: [0.002, 0.002] },
+		u_radialModulation: { value: 0.0 },
+		u_modulationOffset: { value: 0.15 },
+
+		// Glitch uniforms
+		u_glitch_strength: { value: 0.5 },
+		u_columns: { value: 20.0 },
+		u_ratio: { value: 0.5 },
+		u_duration: { value: 0.6 },
+		u_delay: { value: 1.5 },
+
+		// Noise uniforms
+		u_opacity: { value: 0.02 },
+		u_premultiply: { value: 0.0 },
+
+		// Vignette (new) uniforms
+		u_offset_vignette: { value: 0.5 },
+		u_darkness: { value: 0.5 },
+		u_eskil: { value: 0.0 },
+
+		// Bloom uniforms
+		u_intensity_bloom: { value: 1.0 },
+		u_luminanceThreshold: { value: 0.9 },
+		u_luminanceSmoothing: { value: 0.025 },
+
+		// Depth of Field uniforms
+		u_focusDistance: { value: 0.3 },
+		u_focusRange: { value: 0.5 },
+		u_bokehScale: { value: 2.0 },
+		u_focusPoint: { value: [0.5, 0.5] },
+
+		// Depth visualization uniforms
+		u_near: { value: 0.0 },
+		u_far: { value: 1.0 },
+		u_inverted: { value: 0.0 },
+
+		// Sepia uniforms
+		u_sepia_intensity: { value: 1.0 },
+
+		// Scanline uniforms
+		u_scanline_density: { value: 1.25 },
+
+		// Pixelation uniforms
+		u_granularity: { value: 20.0 },
+
+		// Dot Screen uniforms
+		u_dot_angle: { value: 1.57 },
+		u_dot_scale: { value: 1.0 },
+
+		// Hue Saturation uniforms
+		u_hue: { value: 0.0 },
+		u_saturation: { value: 0.0 },
+
+		// Brightness Contrast uniforms
+		u_brightness: { value: 0.0 },
+		u_contrast: { value: 0.0 },
+
+		// Color Depth uniforms
+		u_bits: { value: 16.0 },
+
+		// Tilt Shift uniforms
+		u_tilt_offset: { value: 0.3 },
+		u_tilt_feather: { value: 0.2 },
+		u_tilt_rotation: { value: 0.0 },
+
+		// Tone Mapping uniforms
+		u_exposure: { value: 1.0 },
+		u_maxLuminance: { value: 16.0 },
+		u_middleGrey: { value: 0.6 },
+
+		// ASCII uniforms
+		u_charSize: { value: 8.0 },
+
+		// Grid uniforms
+		u_grid_scale: { value: 1.0 },
+		u_grid_lineWidth: { value: 0.0 }
 	});
-	const fragmentShader = $derived(
-		selectedShaderName === 'VHS' ? vhsFragmentShader :
-		selectedShaderName === 'XlsczN' ? xlsczNFragmentShader :
-		selectedShaderName === 'Grayscale' ? shaders.Grayscale : shaders.Vignette
-	);
+	const fragmentShader = $derived.by(() => {
+		let shader;
+		switch (selectedShaderName) {
+			case 'VHS': shader = vhsFragmentShader; break;
+			case 'XlsczN': shader = xlsczNFragmentShader; break;
+			case 'Water': shader = waterFragmentShader; break;
+			case 'ChromaticAberration': shader = chromaticAberrationFragmentShader; break;
+			case 'Glitch': shader = glitchFragmentShader; break;
+			case 'Noise': shader = noiseFragmentShader; break;
+			case 'Vignette': shader = vignetteFragmentShader; break;
+			case 'Bloom': shader = bloomFragmentShader; break;
+			case 'DepthOfField': shader = depthOfFieldFragmentShader; break;
+			case 'Depth': shader = depthFragmentShader; break;
+			case 'Sepia': shader = sepiaFragmentShader; break;
+			case 'Scanline': shader = scanlineFragmentShader; break;
+			case 'Pixelation': shader = pixelationFragmentShader; break;
+			case 'DotScreen': shader = dotScreenFragmentShader; break;
+			case 'HueSaturation': shader = hueSaturationFragmentShader; break;
+			case 'BrightnessContrast': shader = brightnessContrastFragmentShader; break;
+			case 'ColorDepth': shader = colorDepthFragmentShader; break;
+			case 'ColorAverage': shader = colorAverageFragmentShader; break;
+			case 'TiltShift': shader = tiltShiftFragmentShader; break;
+			case 'ToneMapping': shader = toneMappingFragmentShader; break;
+			case 'ASCII': shader = asciiFragmentShader; break;
+			case 'Grid': shader = gridFragmentShader; break;
+			case 'Grayscale': shader = shaders.Grayscale; break;
+			default: shader = shaders.Vignette; break;
+		}
+		console.log('[VideoWorkbench] Selected shader:', selectedShaderName, 'Shader length:', shader?.length || 0);
+		return shader;
+	});
 
 	// --- Component Refs ---
 	let shaderPlayerRef = $state();
@@ -447,8 +575,27 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 					options={{
 						VHS: 'VHS',
 						XlsczN: 'XlsczN (Audio Reactive)',
-						Grayscale: 'Grayscale',
-						Vignette: 'Vignette'
+						Water: 'Water',
+						ChromaticAberration: 'Chromatic Aberration',
+						Glitch: 'Glitch',
+						Noise: 'Noise',
+						Vignette: 'Vignette',
+						Bloom: 'Bloom',
+						DepthOfField: 'Depth of Field',
+						Depth: 'Depth Visualization',
+						Sepia: 'Sepia',
+						Scanline: 'Scanline',
+						Pixelation: 'Pixelation',
+						DotScreen: 'Dot Screen',
+						HueSaturation: 'Hue Saturation',
+						BrightnessContrast: 'Brightness Contrast',
+						ColorDepth: 'Color Depth',
+						ColorAverage: 'Color Average',
+						TiltShift: 'Tilt Shift',
+						ToneMapping: 'Tone Mapping',
+						ASCII: 'ASCII',
+						Grid: 'Grid',
+						Grayscale: 'Grayscale'
 					}}
 				/>
 
@@ -666,21 +813,408 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 					/>
 				{/if}
 
+				{#if selectedShaderName === 'Water'}
+					<Tweakpane.Folder title="Water Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_factor.value}
+							label="Factor"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'ChromaticAberration'}
+					<Tweakpane.Folder title="Chromatic Aberration" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_offset.value[0]}
+							label="Offset X"
+							min={0}
+							max={0.02}
+							step={0.0001}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_offset.value[1]}
+							label="Offset Y"
+							min={0}
+							max={0.02}
+							step={0.0001}
+						/>
+						<Tweakpane.Checkbox
+							bind:value={uniforms.u_radialModulation.value}
+							label="Radial Modulation"
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_modulationOffset.value}
+							label="Modulation Offset"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'Glitch'}
+					<Tweakpane.Folder title="Glitch Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_glitch_strength.value}
+							label="Strength"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_columns.value}
+							label="Columns"
+							min={5}
+							max={50}
+							step={1}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_ratio.value}
+							label="Ratio"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_duration.value}
+							label="Duration"
+							min={0.1}
+							max={2}
+							step={0.1}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_delay.value}
+							label="Delay"
+							min={0.5}
+							max={5}
+							step={0.1}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'Noise'}
+					<Tweakpane.Folder title="Noise Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_opacity.value}
+							label="Opacity"
+							min={0}
+							max={0.5}
+							step={0.001}
+						/>
+						<Tweakpane.Checkbox
+							bind:value={uniforms.u_premultiply.value}
+							label="Premultiply"
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
 				{#if selectedShaderName === 'Vignette'}
-					<Tweakpane.Slider
-						bind:value={uniforms.u_vignette_strength.value}
-						label="Vignette Strength"
-						min={0}
-						max={1}
-						step={0.01}
-					/>
-					<Tweakpane.Slider
-						bind:value={uniforms.u_vignette_falloff.value}
-						label="Vignette Falloff"
-						min={0}
-						max={1}
-						step={0.01}
-					/>
+					<Tweakpane.Folder title="Vignette Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_offset_vignette.value}
+							label="Offset"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_darkness.value}
+							label="Darkness"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+						<Tweakpane.Checkbox
+							bind:value={uniforms.u_eskil.value}
+							label="Eskil Mode"
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'Bloom'}
+					<Tweakpane.Folder title="Bloom Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_intensity_bloom.value}
+							label="Intensity"
+							min={0}
+							max={3}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_luminanceThreshold.value}
+							label="Luminance Threshold"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_luminanceSmoothing.value}
+							label="Luminance Smoothing"
+							min={0}
+							max={0.1}
+							step={0.001}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'DepthOfField'}
+					<Tweakpane.Folder title="Depth of Field" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_focusDistance.value}
+							label="Focus Distance"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_focusRange.value}
+							label="Focus Range"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_bokehScale.value}
+							label="Bokeh Scale"
+							min={0}
+							max={5}
+							step={0.1}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_focusPoint.value[0]}
+							label="Focus Point X"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_focusPoint.value[1]}
+							label="Focus Point Y"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'Depth'}
+					<Tweakpane.Folder title="Depth Visualization" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_near.value}
+							label="Near Plane"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_far.value}
+							label="Far Plane"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Checkbox
+							bind:value={uniforms.u_inverted.value}
+							label="Inverted"
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'Sepia'}
+					<Tweakpane.Folder title="Sepia Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_sepia_intensity.value}
+							label="Intensity"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'Scanline'}
+					<Tweakpane.Folder title="Scanline Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_scanline_density.value}
+							label="Density"
+							min={0.5}
+							max={5}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'Pixelation'}
+					<Tweakpane.Folder title="Pixelation Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_granularity.value}
+							label="Granularity"
+							min={1}
+							max={100}
+							step={1}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'DotScreen'}
+					<Tweakpane.Folder title="Dot Screen Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_dot_angle.value}
+							label="Angle"
+							min={0}
+							max={6.28}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_dot_scale.value}
+							label="Scale"
+							min={0.1}
+							max={10}
+							step={0.1}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'HueSaturation'}
+					<Tweakpane.Folder title="Hue Saturation Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_hue.value}
+							label="Hue"
+							min={-3.14}
+							max={3.14}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_saturation.value}
+							label="Saturation"
+							min={-1}
+							max={1}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'BrightnessContrast'}
+					<Tweakpane.Folder title="Brightness Contrast Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_brightness.value}
+							label="Brightness"
+							min={-1}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_contrast.value}
+							label="Contrast"
+							min={-1}
+							max={1}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'ColorDepth'}
+					<Tweakpane.Folder title="Color Depth Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_bits.value}
+							label="Bits"
+							min={1}
+							max={16}
+							step={1}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'ColorAverage'}
+					<Tweakpane.Folder title="Color Average" expanded={true}>
+						<p>Converts image to grayscale average</p>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'TiltShift'}
+					<Tweakpane.Folder title="Tilt Shift Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_tilt_offset.value}
+							label="Offset"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_tilt_feather.value}
+							label="Feather"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_tilt_rotation.value}
+							label="Rotation"
+							min={0}
+							max={6.28}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'ToneMapping'}
+					<Tweakpane.Folder title="Tone Mapping Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_exposure.value}
+							label="Exposure"
+							min={0}
+							max={5}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_maxLuminance.value}
+							label="Max Luminance"
+							min={1}
+							max={32}
+							step={0.1}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_middleGrey.value}
+							label="Middle Grey"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'ASCII'}
+					<Tweakpane.Folder title="ASCII Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_charSize.value}
+							label="Character Size"
+							min={4}
+							max={32}
+							step={1}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'Grid'}
+					<Tweakpane.Folder title="Grid Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_grid_scale.value}
+							label="Scale"
+							min={0}
+							max={10}
+							step={0.1}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_grid_lineWidth.value}
+							label="Line Width"
+							min={0}
+							max={0.1}
+							step={0.001}
+						/>
+					</Tweakpane.Folder>
 				{/if}
 			</Tweakpane.Pane>
 		</div>
