@@ -1,7 +1,7 @@
 services:
   essentia-api:
     build:
-      context: .
+      context: api
       dockerfile: Dockerfile
     container_name: essentia-audio-api
     ports:
