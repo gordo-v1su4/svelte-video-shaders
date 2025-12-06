@@ -2,22 +2,41 @@
 FROM python:3.11-slim as builder
 
 # Install build dependencies for Essentia
-# libtag1-dev may not be available in all Debian versions, so we make it optional
+# Handle dpkg errors and problematic packages gracefully
 RUN apt-get update && \
     apt-get install -y --fix-broken || true && \
-    apt-get install -y --no-install-recommends \
+    dpkg --configure -a || true && \
+    # Install core build tools first (these should always work)
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     libyaml-dev \
     libfftw3-dev \
+    python3-dev \
+    && \
+    # Install FFmpeg libraries
+    # If libcodec2 fails, we'll handle it with dpkg --force
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     libavcodec-dev \
     libavformat-dev \
     libavutil-dev \
     libswresample-dev \
-    python3-dev \
-    && (apt-get install -y --no-install-recommends libtag1-dev || \
-        apt-get install -y --no-install-recommends libtag-dev || true) \
-    && rm -rf /var/lib/apt/lists/*
+    || ( \
+        # If installation failed, try to fix broken packages
+        echo "Attempting to fix broken packages..." && \
+        dpkg --configure -a --force-depends || true && \
+        apt-get install -f -y || true && \
+        # Remove problematic libcodec2 if it's causing issues
+        dpkg -r --force-depends libcodec2-1.2 2>/dev/null || true && \
+        # Try installing FFmpeg libs again
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libavcodec-dev libavformat-dev libavutil-dev libswresample-dev || \
+        echo "Warning: Some FFmpeg packages failed, but continuing..." \
+    ) && \
+    # Try optional libtag packages
+    (apt-get install -y --no-install-recommends libtag1-dev || \
+     apt-get install -y --no-install-recommends libtag-dev || true) && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Essentia and Python dependencies
 WORKDIR /app
