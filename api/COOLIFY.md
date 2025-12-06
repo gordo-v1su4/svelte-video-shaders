@@ -1,8 +1,97 @@
 # Coolify Deployment Guide
 
-Coolify can deploy this API in two ways: using the Dockerfile directly or using docker-compose.yml.
+Coolify can deploy this API in multiple ways. **GitHub deployment is recommended** for automatic updates and version control.
 
-## Option 1: Dockerfile (Recommended for Coolify)
+## Option 1: GitHub Repository (Recommended ⭐)
+
+**Best for:** Automatic deployments, version control, easy updates
+
+### Steps:
+
+1. **Push your code to GitHub** (if not already)
+2. **In Coolify**, select "Public Repository" or "Private Repository (with GitHub App)"
+3. **Connect your repository**
+4. **Set build context** to `api/` directory
+5. **Coolify will auto-detect** the Dockerfile
+6. **Set environment variables** in Coolify dashboard:
+   ```
+   CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
+   API_HOST=0.0.0.0
+   API_PORT=8000
+   ```
+7. **Deploy!** Coolify will build and deploy automatically
+
+### Benefits:
+- ✅ **Auto-deploy on push** - Every git push triggers a new deployment
+- ✅ **Version control** - Easy rollback to previous versions
+- ✅ **Branch deployments** - Test features on separate branches
+- ✅ **Build logs** - Full visibility into build process
+- ✅ **No manual uploads** - Everything automated
+
+### Build Context Configuration:
+When setting up in Coolify, make sure to:
+- **Root Directory**: Leave empty or set to `/`
+- **Dockerfile Path**: `api/Dockerfile`
+- **Build Context**: `api/` (this is important!)
+- **Branch**: Select your branch (defaults to `main`, but you can choose any branch)
+
+### Branch Deployments
+
+**Deploying from a non-main branch:**
+
+1. **During setup**: In Coolify, you can select which branch to deploy from
+2. **After setup**: You can change the branch in Coolify settings
+3. **Multiple environments**: You can create separate Coolify resources for different branches:
+   - `main` → Production deployment
+   - `develop` → Staging deployment
+   - `feature/xyz` → Feature testing
+
+**Example workflow:**
+```bash
+# Work on feature branch
+git checkout -b feature/new-shader
+# Make changes to api/main.py
+git push origin feature/new-shader
+
+# In Coolify:
+# - Create a new resource pointing to 'feature/new-shader' branch
+# - Or update existing resource to use this branch
+# - Test your changes before merging to main
+```
+
+**Branch Selection in Coolify:**
+- When connecting a repository, Coolify will show available branches
+- You can change the branch later in the resource settings
+- Each branch can have its own environment variables
+- Perfect for testing API changes before merging to main
+
+## Option 2: Dockerfile (Manual Upload)
+
+**Best for:** Quick testing, one-off deployments
+
+### Steps:
+
+1. **In Coolify**, select "Dockerfile"
+2. **Upload** your `api/Dockerfile` and `api/requirements.txt`
+3. **Set environment variables** as above
+4. **Deploy**
+
+### Limitations:
+- ❌ No automatic updates
+- ❌ Manual re-upload needed for changes
+- ❌ No version control integration
+
+## Option 3: Docker Compose (Manual Upload)
+
+**Best for:** Complex multi-service setups (not needed for this API)
+
+If you prefer using docker-compose.yml:
+
+1. **In Coolify**, select "Docker Compose Empty"
+2. **Upload** `api/docker-compose.yml` and related files
+3. **Set environment variables** as above
+
+**Note:** For a single-service API, GitHub + Dockerfile is simpler and recommended.
 
 Coolify can automatically detect and use the Dockerfile. This is the simplest approach.
 
