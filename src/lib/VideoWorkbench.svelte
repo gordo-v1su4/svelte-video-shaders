@@ -266,20 +266,36 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 		audioAnalyzer = new AudioAnalyzer();
 		const success = await audioAnalyzer.initializeAudio(file);
 		
-	// Initialize Essentia API and run offline analysis
+		// Initialize Essentia API and run offline analysis
 		try {
 			if (!essentiaService) {
+				console.log("[VideoWorkbench] Creating EssentiaService instance...");
 				essentiaService = new EssentiaService();
 				await essentiaService.initialize();
 			}
 			
-			console.log("Starting Essentia analysis via API...");
-			const result = await essentiaService.analyzeFile(file);
-			console.log("Analysis complete:", result);
+			if (!essentiaService.isReady) {
+				console.warn("[VideoWorkbench] ⚠️ EssentiaService is not ready, attempting to reinitialize...");
+				await essentiaService.initialize();
+			}
 			
-			analysisData = result;
+			console.log("[VideoWorkbench] Starting Essentia analysis via API...");
+			const result = await essentiaService.analyzeFile(file);
+			console.log("[VideoWorkbench] Analysis complete:", result);
+			
+			if (result && (result.bpm > 0 || result.beats?.length > 0)) {
+				analysisData = result;
+				console.log("[VideoWorkbench] ✅ Analysis data set:", {
+					bpm: result.bpm,
+					beatsCount: result.beats?.length || 0,
+					confidence: result.confidence
+				});
+			} else {
+				console.warn("[VideoWorkbench] ⚠️ Analysis returned empty data, API may not have processed the file");
+			}
 		} catch (err) {
-			console.error("Essentia analysis failed:", err);
+			console.error("[VideoWorkbench] ❌ Essentia analysis failed:", err);
+			console.error("[VideoWorkbench] Error details:", err.stack);
 		} finally {
 			isAnalyzingAudio = false;
 		}
@@ -1252,14 +1268,16 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 		</div>
 
 		{#if audioFile}
-			<WaveformDisplay
-				{audioFile}
-				beats={analysisData.beats}
-				bpm={analysisData.bpm}
-				currentTime={audioCurrentTime}
-				duration={audioDuration}
-				onSeek={(time) => audioAnalyzer?.seekTo?.(time)}
-			/>
+			<div class="waveform-wrapper">
+				<WaveformDisplay
+					{audioFile}
+					beats={analysisData.beats}
+					bpm={analysisData.bpm}
+					currentTime={audioCurrentTime}
+					duration={audioDuration}
+					onSeek={(time) => audioAnalyzer?.seekTo?.(time)}
+				/>
+			</div>
 		{/if}
 	</main>
 </div>
@@ -1269,7 +1287,16 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 	.sidebar { width: 350px; padding: 1rem; background-color: #242424; display: flex; flex-direction: column; gap: 1.5rem; overflow-y: auto; }
 	.sidebar h2 { text-align: center; margin-bottom: 0; }
 	.unified-controls { flex: 1; }
-	.main-content { flex-grow: 1; display: flex; justify-content: center; align-items: center; padding: 1rem; }
+	.main-content { 
+		flex-grow: 1; 
+		display: flex; 
+		flex-direction: column;
+		justify-content: flex-start; 
+		align-items: stretch; 
+		padding: 1rem; 
+		overflow-x: hidden;
+		min-width: 0; /* Allows flex item to shrink below content size */
+	}
 	.placeholder { text-align: center; }
 	.playback-controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
 	.thumbnail-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-bottom: 1rem; }
@@ -1351,6 +1378,13 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 		font-size: 0.9rem;
 		color: #888;
 		margin-bottom: 0.5rem;
+	}
+
+	.waveform-wrapper {
+		width: 100%;
+		max-width: 100%;
+		overflow-x: hidden;
+		margin-top: 1rem;
 	}
 
 	.progress-percent {

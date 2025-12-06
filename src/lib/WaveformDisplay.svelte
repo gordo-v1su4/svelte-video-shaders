@@ -779,6 +779,10 @@
 		color: #8a8a8e;
 		user-select: none;
 		border: 1px solid #1a1a1e;
+		width: 100%;
+		max-width: 100%;
+		overflow-x: hidden;
+		box-sizing: border-box;
 	}
 
 	/* Header toolbar */

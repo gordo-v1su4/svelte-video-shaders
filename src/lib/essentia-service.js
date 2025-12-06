@@ -12,6 +12,10 @@
 // SvelteKit/Vite public env vars are available at build time
 const API_URL = import.meta.env.VITE_ESSENTIA_API_URL || 'http://localhost:8000';
 
+// Log the API URL on module load to verify it's set correctly
+console.log(`[EssentiaService] Module loaded. API_URL: ${API_URL}`);
+console.log(`[EssentiaService] Environment variable VITE_ESSENTIA_API_URL:`, import.meta.env.VITE_ESSENTIA_API_URL);
+
 export class EssentiaService {
     constructor() {
         this.isReady = false;
@@ -19,14 +23,17 @@ export class EssentiaService {
 
     async initialize() {
         // Check if API is available
+        console.log(`[EssentiaService] Initializing with API URL: ${API_URL}`);
         try {
             const response = await fetch(`${API_URL}/health`);
             if (response.ok) {
                 this.isReady = true;
-                console.log('Essentia API connected');
+                console.log(`[EssentiaService] ✅ API connected successfully at ${API_URL}`);
+            } else {
+                console.warn(`[EssentiaService] ⚠️ API health check failed: ${response.status} ${response.statusText}`);
             }
         } catch (e) {
-            console.warn('Essentia API not available:', e.message);
+            console.warn(`[EssentiaService] ❌ API not available at ${API_URL}:`, e.message);
             console.warn('Start the API with: cd api && uvicorn main:app --reload --port 8000');
         }
     }
@@ -38,28 +45,37 @@ export class EssentiaService {
      */
     async analyzeFile(audioFile) {
         if (!this.isReady) {
-            console.warn('Essentia API not available, returning empty analysis');
+            console.warn('[EssentiaService] ⚠️ API not available, returning empty analysis');
             return { bpm: 0, beats: [], confidence: 0 };
         }
+
+        console.log(`[EssentiaService] 📤 Sending audio file to ${API_URL}/analyze`);
+        console.log(`[EssentiaService] File: ${audioFile.name}, Size: ${(audioFile.size / 1024).toFixed(2)} KB`);
 
         const formData = new FormData();
         formData.append('file', audioFile);
 
         try {
+            const startTime = performance.now();
             const response = await fetch(`${API_URL}/analyze`, {
                 method: 'POST',
                 body: formData
             });
 
+            const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+            
             if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
+                const errorText = await response.text();
+                console.error(`[EssentiaService] ❌ API error (${response.status}):`, errorText);
+                throw new Error(`API error: ${response.status} - ${errorText}`);
             }
 
             const result = await response.json();
-            console.log('Analysis result:', result);
+            console.log(`[EssentiaService] ✅ Analysis complete in ${elapsed}s:`, result);
+            console.log(`[EssentiaService] BPM: ${result.bpm}, Beats: ${result.beats?.length || 0}, Confidence: ${result.confidence}`);
             return result;
         } catch (e) {
-            console.error('Analysis failed:', e);
+            console.error('[EssentiaService] ❌ Analysis failed:', e);
             return { bpm: 0, beats: [], confidence: 0 };
         }
     }
