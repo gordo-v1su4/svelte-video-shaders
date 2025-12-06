@@ -2,7 +2,10 @@
 FROM python:3.11-slim as builder
 
 # Install build dependencies for Essentia
-RUN apt-get update && apt-get install -y \
+# libtag1-dev may not be available in all Debian versions, so we make it optional
+RUN apt-get update && \
+    apt-get install -y --fix-broken || true && \
+    apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     libyaml-dev \
@@ -11,8 +14,9 @@ RUN apt-get update && apt-get install -y \
     libavformat-dev \
     libavutil-dev \
     libswresample-dev \
-    libtag1-dev \
     python3-dev \
+    && (apt-get install -y --no-install-recommends libtag1-dev || \
+        apt-get install -y --no-install-recommends libtag-dev || true) \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Essentia and Python dependencies
