@@ -24,13 +24,14 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 FROM python:3.11-slim
 
 # Install runtime dependencies for Essentia
+# Using package names without version numbers for Debian compatibility
+# libtag may not be needed at runtime if Essentia statically links it
 RUN apt-get update && apt-get install -y \
     libfftw3-3 \
-    libavcodec59 \
-    libavformat59 \
-    libavutil57 \
-    libswresample4 \
-    libtag1v5 \
+    libavcodec \
+    libavformat \
+    libavutil \
+    libswresample \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder
