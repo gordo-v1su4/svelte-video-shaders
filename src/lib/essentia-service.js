@@ -1,8 +1,16 @@
 /**
  * Audio Analysis Service - Calls Python Essentia API for beat detection
+ * 
+ * API URL can be configured via environment variable:
+ * - VITE_ESSENTIA_API_URL (defaults to http://localhost:8000)
+ * - For production, set this to your deployed API URL
+ * 
+ * To set: Create a .env file in the project root with:
+ *   VITE_ESSENTIA_API_URL=http://your-api-server:8000
  */
 
-const API_URL = 'http://localhost:8000';
+// SvelteKit/Vite public env vars are available at build time
+const API_URL = import.meta.env.VITE_ESSENTIA_API_URL || 'http://localhost:8000';
 
 export class EssentiaService {
     constructor() {

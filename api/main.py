@@ -1,6 +1,7 @@
 """
 Audio Analysis API - Uses Essentia for beat detection and BPM extraction
 Run with: uvicorn main:app --reload --port 8000
+Or with Docker: docker-compose up
 """
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,12 +10,17 @@ import numpy as np
 import tempfile
 import os
 
-app = FastAPI(title="Audio Analysis API")
+# Environment variables for configuration
+API_HOST = os.getenv("API_HOST", "0.0.0.0")
+API_PORT = int(os.getenv("API_PORT", "8000"))
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 
-# CORS for local dev
+app = FastAPI(title="Audio Analysis API", version="1.0.0")
+
+# CORS configuration (supports multiple origins via comma-separated env var)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,4 +62,4 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=API_HOST, port=API_PORT)
