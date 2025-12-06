@@ -646,6 +646,8 @@
 
 <svelte:window onkeydown={handleKeyDown} />
 
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div 
 	class="timeline-container" 
 	bind:this={container}
@@ -655,6 +657,7 @@
 	onmouseleave={handleSegmentMouseUp}
 	role="application"
 	aria-label="Timeline editor"
+	tabindex="0"
 >
 	<!-- Header toolbar -->
 	<div class="timeline-header">

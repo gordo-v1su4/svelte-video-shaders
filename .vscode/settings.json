@@ -1,3 +1,17 @@
 {
-    "claudeCodeChat.permissions.yoloMode": false
+	"python.analysis.typeCheckingMode": "basic",
+	"python.analysis.diagnosticSeverityOverrides": {
+		"reportMissingImports": "none",
+		"reportMissingModuleSource": "none",
+		"reportMissingTypeStubs": "none"
+	},
+	"python.analysis.autoImportCompletions": true,
+	"python.analysis.diagnosticMode": "workspace",
+	"[python]": {
+		"editor.defaultFormatter": "ms-python.black-formatter",
+		"editor.formatOnSave": false
+	},
+	"files.associations": {
+		"**/api/**/*.py": "python"
+	}
 }
