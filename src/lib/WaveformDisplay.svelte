@@ -4,6 +4,7 @@
 	let {
 		audioFile = null,
 		beats = [],
+		onsets = [],
 		bpm = 0,
 		currentTime = 0,
 		duration = 0,
@@ -31,6 +32,7 @@
 	let localDuration = $state(0);
 	let timeDisplayMode = $state('time'); // 'time', 'frames', 'beats'
 	let showBeats = $state(true);
+	let showOnsets = $state(true);
 	let snapToBeats = $state(false);
 	let zoom = $state(1);
 	let scrollOffset = $state(0);
@@ -298,6 +300,26 @@
 				
 				// Beat line
 				ctx.strokeStyle = 'rgba(168, 130, 255, 0.4)';
+				ctx.lineWidth = 1;
+				ctx.beginPath();
+				ctx.moveTo(x, 0);
+				ctx.lineTo(x, height);
+				ctx.stroke();
+			}
+		}
+
+		// Draw onset markers (transients)
+		if (showOnsets && onsets && onsets.length > 0) {
+			for (const onset of onsets) {
+				const x = timeToX(onset);
+				if (x < 0 || x > width) continue;
+				
+				// Onset highlight (different color - orange/red)
+				ctx.fillStyle = 'rgba(255, 100, 100, 0.1)';
+				ctx.fillRect(x - 0.5, 0, 1, height);
+				
+				// Onset line (thinner, different color)
+				ctx.strokeStyle = 'rgba(255, 150, 100, 0.5)';
 				ctx.lineWidth = 1;
 				ctx.beginPath();
 				ctx.moveTo(x, 0);
@@ -669,6 +691,9 @@
 			{#if beats.length > 0}
 				<span class="beats-badge">{beats.length} beats</span>
 			{/if}
+			{#if onsets && onsets.length > 0}
+				<span class="onsets-badge">{onsets.length} onsets</span>
+			{/if}
 		</div>
 		
 		<div class="header-center">
@@ -695,6 +720,12 @@
 				<input type="checkbox" bind:checked={showBeats} />
 				<span>Beats</span>
 			</label>
+			{#if onsets && onsets.length > 0}
+				<label class="toggle-option">
+					<input type="checkbox" bind:checked={showOnsets} />
+					<span>Onsets</span>
+				</label>
+			{/if}
 			<label class="toggle-option">
 				<input type="checkbox" bind:checked={snapToBeats} />
 				<span>Snap</span>
@@ -822,6 +853,14 @@
 	.beats-badge {
 		background: rgba(255, 100, 100, 0.15);
 		color: #ff6464;
+		padding: 2px 8px;
+		border-radius: 10px;
+		font-size: 10px;
+	}
+
+	.onsets-badge {
+		background: rgba(255, 150, 100, 0.15);
+		color: #ff9664;
 		padding: 2px 8px;
 		border-radius: 10px;
 		font-size: 10px;

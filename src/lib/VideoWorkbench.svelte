@@ -259,14 +259,18 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 		audioFile = file;
 		isAnalyzingAudio = true;
 		
-		// Initialize audio analyzer for playback/FFT
+		// Initialize Essentia API FIRST (one-time analysis, no ongoing connection)
+		// This sends the file to the server, gets results, then disconnects
+		console.log("[VideoWorkbench] 📡 Starting Essentia API analysis (one-time request, no ongoing connection)...");
+		
+		// Initialize audio analyzer for playback/FFT (local Web Audio API, not server)
 		if (audioAnalyzer) {
 			audioAnalyzer.destroy();
 		}
 		audioAnalyzer = new AudioAnalyzer();
 		const success = await audioAnalyzer.initializeAudio(file);
 		
-		// Initialize Essentia API and run offline analysis
+		// Initialize Essentia API and run offline analysis (separate from AudioAnalyzer)
 		try {
 			if (!essentiaService) {
 				console.log("[VideoWorkbench] Creating EssentiaService instance...");
@@ -282,14 +286,18 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 			console.log("[VideoWorkbench] Starting Essentia analysis via API...");
 			const result = await essentiaService.analyzeFile(file);
 			console.log("[VideoWorkbench] Analysis complete:", result);
+			console.log("[VideoWorkbench] 📡 API connection closed (one-time request completed)");
 			
 			if (result && (result.bpm > 0 || result.beats?.length > 0)) {
 				analysisData = result;
 				console.log("[VideoWorkbench] ✅ Analysis data set:", {
 					bpm: result.bpm,
 					beatsCount: result.beats?.length || 0,
-					confidence: result.confidence
+					onsetsCount: result.onsets?.length || 0,
+					confidence: result.confidence,
+					duration: result.duration
 				});
+				console.log("[VideoWorkbench] ℹ️ Note: 'Playing audio, analyzer state' messages are from LOCAL Web Audio API (not server)");
 			} else {
 				console.warn("[VideoWorkbench] ⚠️ Analysis returned empty data, API may not have processed the file");
 			}
@@ -1271,8 +1279,9 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 			<div class="waveform-wrapper">
 				<WaveformDisplay
 					{audioFile}
-					beats={analysisData.beats}
-					bpm={analysisData.bpm}
+					beats={analysisData.beats || []}
+					onsets={analysisData.onsets || []}
+					bpm={analysisData.bpm || 0}
 					currentTime={audioCurrentTime}
 					duration={audioDuration}
 					onSeek={(time) => audioAnalyzer?.seekTo?.(time)}
