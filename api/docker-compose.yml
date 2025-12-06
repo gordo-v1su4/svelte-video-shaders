@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: essentia-audio-api
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_PORT:-7000}:8000"
     environment:
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - API_HOST=${API_HOST:-0.0.0.0}
