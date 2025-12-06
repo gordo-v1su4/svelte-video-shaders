@@ -131,7 +131,12 @@ export class AudioAnalyzer {
 
     seekTo(time) {
         if (this.audioElement) {
-            this.audioElement.currentTime = Math.max(0, Math.min(time, this.getDuration()));
+            const duration = this.getDuration();
+            if (duration > 0 && !isNaN(duration) && isFinite(duration)) {
+                this.audioElement.currentTime = Math.max(0, Math.min(time, duration));
+            } else {
+                console.warn('[AudioAnalyzer] Cannot seek: invalid duration', duration);
+            }
         }
     }
 

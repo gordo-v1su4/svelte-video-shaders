@@ -32,8 +32,8 @@ export default [
 		files: ['**/*.svelte', '**/*.svelte.js', '**/*.svelte.ts'],
 		languageOptions: { parserOptions: { svelteConfig } },
 		rules: {
-			// Svelte 5: Warn about deprecated on:click syntax (compiler also warns)
-			'svelte/no-deprecated-script-tag': 'error'
+			// Svelte 5: Additional rules can be added here as needed
+			// Note: 'svelte/no-deprecated-script-tag' is not a valid rule in eslint-plugin-svelte
 		}
 	},
 

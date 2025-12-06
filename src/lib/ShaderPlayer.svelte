@@ -164,6 +164,9 @@
 				accumulatedTime -= framesToAdvance * FRAME_DURATION_MS;
 			}
 
+			// Clamp globalFrameIndex to valid range
+			globalFrameIndex = Math.max(0, Math.min(globalFrameIndex, frameBuffer.totalFrames - 1));
+			
 			// Get current frame from buffer
 			const bitmap = frameBuffer.getFrame(globalFrameIndex);
 			if (bitmap) {
@@ -272,11 +275,8 @@
 				try {
 					material.fragmentShader = newFragmentShader;
 					material.needsUpdate = true;
-					
-					// Force program recompilation
-					if (material.program) {
-						material.program.needsUpdate = true;
-					}
+					// Note: material.program.needsUpdate is not a standard Three.js API
+					// material.needsUpdate = true is sufficient to trigger recompilation
 					
 					console.log('[ShaderPlayer] Shader updated, length:', newFragmentShader.length);
 				} catch (error) {

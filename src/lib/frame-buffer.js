@@ -71,16 +71,23 @@ export class FrameBuffer {
 	 */
 	async decodeVideo(file, onProgress = () => {}) {
 		return new Promise((resolve, reject) => {
-			const frames = [];
+			// Use Map to track frame indices and ensure proper ordering
+			const frameMap = new Map(); // Map<frameIndex, ImageBitmap>
 			let totalSamples = 0;
 			let samplesSubmitted = 0;
 			let allSamplesExtracted = false;
+			let frameIndex = 0; // Track frame order
 			
 			const mp4boxfile = MP4Box.createFile();
 			let videoDecoder = null;
 
 			const checkComplete = () => {
-				if (allSamplesExtracted && frames.length >= totalSamples) {
+				if (allSamplesExtracted && frameMap.size >= totalSamples) {
+					// Convert Map to ordered array
+					const frames = [];
+					for (let i = 0; i < totalSamples; i++) {
+						frames.push(frameMap.get(i) || null);
+					}
 					videoDecoder?.close();
 					resolve(frames);
 				}
@@ -125,6 +132,9 @@ export class FrameBuffer {
 
 				videoDecoder = new VideoDecoder({
 					output: (frame) => {
+						// Capture frame index to ensure proper ordering
+						const currentFrameIndex = frameIndex++;
+						
 						// Synchronous frame handling to avoid race conditions
 						this.ctx.clearRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 						this.ctx.drawImage(frame, 0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
@@ -132,8 +142,9 @@ export class FrameBuffer {
 						// Use sync canvas copy instead of async createImageBitmap
 						const imageData = this.ctx.getImageData(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 						createImageBitmap(imageData).then(bitmap => {
-							frames.push(bitmap);
-							onProgress(frames.length / totalSamples);
+							// Store frame at correct index to maintain order
+							frameMap.set(currentFrameIndex, bitmap);
+							onProgress(frameMap.size / totalSamples);
 							checkComplete();
 						});
 						

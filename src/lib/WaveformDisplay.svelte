@@ -421,6 +421,10 @@
 		
 		try {
 			const audioContext = new AudioContext();
+			// Handle suspended state (browser autoplay policy)
+			if (audioContext.state === 'suspended') {
+				await audioContext.resume();
+			}
 			const arrayBuffer = await file.arrayBuffer();
 			const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 			
@@ -429,16 +433,22 @@
 			
 			// High-resolution waveform data
 			const targetSamples = 4000; // Enough for zooming
-			const samplesPerPixel = Math.floor(channelData.length / targetSamples);
+			// Ensure at least 1 sample per pixel to avoid division by zero
+			const samplesPerPixel = Math.max(1, Math.floor(channelData.length / targetSamples));
 			waveformData = new Float32Array(targetSamples);
 			
 			for (let i = 0; i < targetSamples; i++) {
 				let sum = 0;
 				const start = i * samplesPerPixel;
-				for (let j = 0; j < samplesPerPixel; j++) {
-					sum += Math.abs(channelData[start + j] || 0);
+				// Handle case where audio is shorter than targetSamples
+				const actualSamples = Math.min(samplesPerPixel, channelData.length - start);
+				for (let j = 0; j < actualSamples; j++) {
+					if (start + j < channelData.length) {
+						sum += Math.abs(channelData[start + j]);
+					}
 				}
-				waveformData[i] = sum / samplesPerPixel;
+				// Avoid division by zero - use actual sample count
+				waveformData[i] = actualSamples > 0 ? sum / actualSamples : 0;
 			}
 			
 			// Normalize
