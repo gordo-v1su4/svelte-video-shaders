@@ -207,9 +207,13 @@
 					OUTPUT_HEIGHT = frameBuffer.outputHeight;
 					textureCanvas.width = OUTPUT_WIDTH;
 					textureCanvas.height = OUTPUT_HEIGHT;
-					// Update resolution uniform if it exists
-					if (uniforms?.u_resolution) {
-						uniforms.u_resolution.value = [OUTPUT_WIDTH, OUTPUT_HEIGHT];
+					// Update resolution uniform directly on material (don't trigger bindable update)
+					if (material?.uniforms?.u_resolution) {
+						if (material.uniforms.u_resolution.value instanceof THREE.Vector2) {
+							material.uniforms.u_resolution.value.set(OUTPUT_WIDTH, OUTPUT_HEIGHT);
+						} else {
+							material.uniforms.u_resolution.value = [OUTPUT_WIDTH, OUTPUT_HEIGHT];
+						}
 					}
 				}
 			}
@@ -233,10 +237,13 @@
 				OUTPUT_HEIGHT = frameBuffer.outputHeight;
 				textureCanvas.width = OUTPUT_WIDTH;
 				textureCanvas.height = OUTPUT_HEIGHT;
-				// Update resolution uniform if it exists (using bindable, so this is safe)
-				if (uniforms?.u_resolution) {
-					uniforms.u_resolution.value[0] = OUTPUT_WIDTH;
-					uniforms.u_resolution.value[1] = OUTPUT_HEIGHT;
+				// Update resolution uniform directly on material (don't trigger bindable update)
+				if (material?.uniforms?.u_resolution) {
+					if (material.uniforms.u_resolution.value instanceof THREE.Vector2) {
+						material.uniforms.u_resolution.value.set(OUTPUT_WIDTH, OUTPUT_HEIGHT);
+					} else {
+						material.uniforms.u_resolution.value = [OUTPUT_WIDTH, OUTPUT_HEIGHT];
+					}
 				}
 			}
 			
@@ -310,35 +317,55 @@
 
 	// === Reactive Updates ===
 
+	// Track last uniform values to prevent infinite loops
+	let lastUniformValues = new Map();
+	
 	$effect(() => {
-		if (material?.uniforms) {
-			for (const key in uniforms) {
-				if (material.uniforms[key]) {
-					// Handle vec2/vec3 arrays properly
-					if (Array.isArray(uniforms[key].value)) {
-						if (uniforms[key].value.length === 2) {
-							material.uniforms[key].value.set(uniforms[key].value[0], uniforms[key].value[1]);
-						} else if (uniforms[key].value.length === 3) {
-							material.uniforms[key].value.set(uniforms[key].value[0], uniforms[key].value[1], uniforms[key].value[2]);
-						} else {
-							material.uniforms[key].value = uniforms[key].value;
-						}
+		if (!material?.uniforms || !uniforms) return;
+		
+		// Only update if uniforms object reference changed or values actually changed
+		for (const key in uniforms) {
+			const newValue = uniforms[key]?.value;
+			const lastValue = lastUniformValues.get(key);
+			
+			// Skip if value hasn't changed (prevent infinite loop)
+			if (lastValue === newValue) continue;
+			
+			// For arrays, do deep comparison
+			if (Array.isArray(newValue) && Array.isArray(lastValue)) {
+				if (newValue.length === lastValue.length && 
+				    newValue.every((v, i) => v === lastValue[i])) {
+					continue;
+				}
+			}
+			
+			lastUniformValues.set(key, Array.isArray(newValue) ? [...newValue] : newValue);
+			
+			if (material.uniforms[key]) {
+				// Update existing uniform
+				if (Array.isArray(newValue)) {
+					if (newValue.length === 2 && material.uniforms[key].value instanceof THREE.Vector2) {
+						material.uniforms[key].value.set(newValue[0], newValue[1]);
+					} else if (newValue.length === 3 && material.uniforms[key].value instanceof THREE.Vector3) {
+						material.uniforms[key].value.set(newValue[0], newValue[1], newValue[2]);
 					} else {
-						material.uniforms[key].value = uniforms[key].value;
+						material.uniforms[key].value = newValue;
 					}
 				} else {
-					// Create new uniform with proper type
-					if (Array.isArray(uniforms[key].value)) {
-						if (uniforms[key].value.length === 2) {
-							material.uniforms[key] = { value: new THREE.Vector2(uniforms[key].value[0], uniforms[key].value[1]) };
-						} else if (uniforms[key].value.length === 3) {
-							material.uniforms[key] = { value: new THREE.Vector3(uniforms[key].value[0], uniforms[key].value[1], uniforms[key].value[2]) };
-						} else {
-							material.uniforms[key] = { value: uniforms[key].value };
-						}
+					material.uniforms[key].value = newValue;
+				}
+			} else {
+				// Create new uniform with proper type
+				if (Array.isArray(newValue)) {
+					if (newValue.length === 2) {
+						material.uniforms[key] = { value: new THREE.Vector2(newValue[0], newValue[1]) };
+					} else if (newValue.length === 3) {
+						material.uniforms[key] = { value: new THREE.Vector3(newValue[0], newValue[1], newValue[2]) };
 					} else {
-						material.uniforms[key] = { value: uniforms[key].value };
+						material.uniforms[key] = { value: newValue };
 					}
+				} else {
+					material.uniforms[key] = { value: newValue };
 				}
 			}
 		}

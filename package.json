@@ -60,6 +60,7 @@
 		"svelte-tweakpane-ui": "^1.5.9",
 		"three": "^0.178.0",
 		"tweakpane": "^4.0.5",
+		"tweakpane-plugin-audio-player": "^0.0.2",
 		"tweakpane-plugin-file-import": "^1.1.1"
 	}
 }
