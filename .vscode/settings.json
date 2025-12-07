@@ -13,5 +13,13 @@
 	},
 	"files.associations": {
 		"**/api/**/*.py": "python"
-	}
+	},
+	"cursorpyright.analysis.autoImportCompletions": true,
+	"cursorpyright.analysis.diagnosticMode": "workspace",
+	"cursorpyright.analysis.diagnosticSeverityOverrides": {
+		"reportMissingImports": "none",
+		"reportMissingModuleSource": "none",
+		"reportMissingTypeStubs": "none"
+	},
+	"cursorpyright.analysis.typeCheckingMode": "basic"
 }

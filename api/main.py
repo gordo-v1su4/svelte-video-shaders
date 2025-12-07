@@ -77,54 +77,44 @@ async def analyze_audio(file: UploadFile = File(...)):
         frames = es.FrameGenerator(audio, frameSize=frame_size, hopSize=hop_size)
         window = es.Windowing(type='hann')
         spectrum = es.Spectrum()
-        onset_detector = es.OnsetRate()  # This gives us onset_rate
-        
-        # Get onset rate first
-        onset_result = onset_detector(audio)
+        # Get onset rate for metadata (OnsetRate only returns rate, not times)
         onset_rate = 0.0
-        onset_times_from_rate = []
-        
-        # OnsetRate returns (rate, onset_times) - extract both
-        if isinstance(onset_result, (tuple, list)) and len(onset_result) >= 2:
-            # Extract rate (first element)
-            rate_value = onset_result[0]
-            if isinstance(rate_value, np.ndarray):
-                onset_rate = float(rate_value.item() if rate_value.size == 1 else np.mean(rate_value))
-            elif hasattr(rate_value, '__len__') and len(rate_value) > 0:
-                onset_rate = float(rate_value[0] if len(rate_value) == 1 else np.mean(rate_value))
-            else:
-                onset_rate = float(rate_value)
-            
-            # Extract onset_times (second element) - these are the actual onset timestamps!
-            if len(onset_result) > 1:
-                times_value = onset_result[1]
-                if isinstance(times_value, np.ndarray):
-                    onset_times_from_rate = [float(t) for t in times_value.flatten()]
-                elif hasattr(times_value, '__len__'):
-                    onset_times_from_rate = [float(t) for t in times_value]
+        try:
+            onset_rate_detector = es.OnsetRate()
+            onset_result = onset_rate_detector(audio)
+            if isinstance(onset_result, (tuple, list)) and len(onset_result) > 0:
+                rate_value = onset_result[0]
+                if isinstance(rate_value, np.ndarray):
+                    if hasattr(rate_value, 'size') and rate_value.size == 1:
+                        onset_rate = float(rate_value.item())
+                    else:
+                        onset_rate = float(np.mean(rate_value))
+                elif isinstance(rate_value, (int, float)):
+                    onset_rate = float(rate_value)
                 else:
-                    onset_times_from_rate = [float(times_value)] if times_value is not None else []
-        elif isinstance(onset_result, (tuple, list)) and len(onset_result) == 1:
-            # Only rate returned
-            rate_value = onset_result[0]
-            if isinstance(rate_value, np.ndarray):
-                onset_rate = float(rate_value.item() if rate_value.size == 1 else np.mean(rate_value))
+                    onset_rate = 0.0
+            elif isinstance(onset_result, np.ndarray):
+                # Type checker: onset_result is confirmed to be np.ndarray here
+                try:
+                    if onset_result.size == 1:  # type: ignore[union-attr]
+                        onset_rate = float(onset_result.item())  # type: ignore[union-attr]
+                    else:
+                        onset_rate = float(np.mean(onset_result))
+                except (AttributeError, TypeError):
+                    onset_rate = float(np.mean(onset_result)) if len(onset_result) > 0 else 0.0
+            elif isinstance(onset_result, (int, float)):
+                onset_rate = float(onset_result)
             else:
-                onset_rate = float(rate_value)
-        else:
-            # Single value
-            if isinstance(onset_result, np.ndarray):
-                onset_rate = float(onset_result.item() if onset_result.size == 1 else np.mean(onset_result))
-            else:
-                onset_rate = float(onset_result) if onset_result is not None else 0.0
+                onset_rate = 0.0
+        except Exception as e:
+            print(f"[OnsetRate] Warning: Could not compute onset rate: {e}")
         
-        # Use OnsetDetector for more detailed onset detection
-        # This algorithm uses spectral flux and other features for better accuracy
+        # Use spectral flux for onset detection (OnsetRate doesn't return times, only rate)
+        # First pass: collect all flux values for adaptive thresholding
         onset_times = []
         frame_index = 0
-        
-        # Calculate spectral flux for each frame (better than simple energy)
         prev_spectrum = None
+        flux_values = []
         
         for frame in frames:
             windowed = window(frame)
@@ -132,33 +122,58 @@ async def analyze_audio(file: UploadFile = File(...)):
             
             if prev_spectrum is not None:
                 # Spectral flux: measure of change in spectral magnitude
-                # Positive flux indicates onset (sudden increase in energy)
                 flux = np.sum(np.maximum(0, np.abs(spec) - np.abs(prev_spectrum)))
-                
-                # Adaptive threshold based on local energy
-                local_energy = np.mean(np.abs(spec))
-                threshold = local_energy * 0.15  # Lower threshold for more onsets
+                flux_values.append(flux)
+            
+            prev_spectrum = spec
+            frame_index += 1
+        
+        # Calculate adaptive threshold based on flux statistics
+        if flux_values:
+            flux_mean = np.mean(flux_values)
+            flux_std = np.std(flux_values)
+            # Use mean + 0.3*std as threshold (more sensitive)
+            adaptive_threshold = flux_mean + (0.3 * flux_std)
+            # Ensure minimum threshold
+            min_threshold = flux_mean * 0.05
+            threshold = max(adaptive_threshold, min_threshold)
+            print(f"[OnsetDetection] Flux: mean={flux_mean:.6f}, std={flux_std:.6f}, threshold={threshold:.6f}")
+        else:
+            threshold = 0.001
+            print(f"[OnsetDetection] Warning: No flux values, using fallback threshold")
+        
+        # Second pass: detect onsets using adaptive threshold
+        frame_index = 0
+        prev_spectrum = None
+        flux_index = 0
+        
+        for frame in frames:
+            windowed = window(frame)
+            spec = spectrum(windowed)
+            
+            if prev_spectrum is not None and flux_index < len(flux_values):
+                flux = flux_values[flux_index]
                 
                 if flux > threshold:
                     time = (frame_index * hop_size) / actual_sample_rate
                     if 0 <= time < duration:
                         onset_times.append(time)
+                
+                flux_index += 1
             
             prev_spectrum = spec
             frame_index += 1
         
-        # Combine onset_times from OnsetRate (if available) with detected onsets
-        # Remove duplicates and sort
-        all_onset_times = list(set(onset_times_from_rate + onset_times))
-        all_onset_times.sort()
-        
-        # Filter out onsets that are too close together (within 10ms)
+        # Filter out onsets that are too close together (minimum 20ms apart)
         filtered_onsets = []
-        for onset in all_onset_times:
-            if not filtered_onsets or (onset - filtered_onsets[-1]) >= 0.01:
+        min_interval = 0.02  # 20ms
+        
+        for onset in sorted(onset_times):
+            if not filtered_onsets or (onset - filtered_onsets[-1]) >= min_interval:
                 filtered_onsets.append(onset)
         
         onset_times = filtered_onsets
+        print(f"[OnsetDetection] Detected {len(onset_times)} onsets")
         
         # Energy analysis (overall audio energy)
         energy_analyzer = es.Energy()
