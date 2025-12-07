@@ -28,6 +28,8 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 	import { toneMappingFragmentShader, toneMappingUniforms } from '$lib/shaders/tone-mapping-shader.js';
 	import { asciiFragmentShader, asciiUniforms } from '$lib/shaders/ascii-shader.js';
 	import { gridFragmentShader, gridUniforms } from '$lib/shaders/grid-shader.js';
+	import { lensFlareFragmentShader, lensFlareUniforms } from '$lib/shaders/lens-flare-shader.js';
+	import { crtFragmentShader, crtUniforms } from '$lib/shaders/crt-shader.js';
 	import { AudioAnalyzer } from '$lib/audio-utils.js';
 	import { EssentiaService } from '$lib/essentia-service.js';
 	import { frameBuffer } from '$lib/frame-buffer.js';
@@ -148,6 +150,10 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 
 		// Scanline uniforms
 		u_scanline_density: { value: 1.25 },
+		u_scanline_intensity: { value: 0.3 },
+		u_scanline_width: { value: 2.0 },
+		u_scanline_speed: { value: 0.0 },
+		u_scanline_offset: { value: 0.0 },
 
 		// Pixelation uniforms
 		u_granularity: { value: 20.0 },
@@ -182,7 +188,32 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 
 		// Grid uniforms
 		u_grid_scale: { value: 1.0 },
-		u_grid_lineWidth: { value: 0.0 }
+		u_grid_lineWidth: { value: 0.0 },
+
+		// Lens Flare uniforms
+		u_brightness: { value: 1.0 },
+		u_flareSize: { value: 0.005 },
+		u_flareSpeed: { value: 0.4 },
+		u_flareShape: { value: 0.1 },
+		u_ghostScale: { value: 0.1 },
+		u_haloScale: { value: 0.5 },
+		u_starBurst: { value: 1.0 },
+		u_sunPosition: { value: [0.5, 0.5, -1.0] },
+		u_anamorphic: { value: 0.0 },
+		u_colorGain: { value: [1.0, 0.8, 0.6] },
+		u_secondaryGhosts: { value: 1.0 },
+		u_additionalStreaks: { value: 1.0 },
+
+		// CRT uniforms
+		u_pixelSize: { value: 5.0 },
+		u_distortion: { value: 0.3 },
+		u_blur: { value: 0.3 },
+		u_aberration: { value: 0.05 },
+		u_scanlineIntensity: { value: 0.05 },
+		u_scanlineSpeed: { value: 100.0 },
+		u_gridIntensity: { value: 0.1 },
+		u_vignetteIntensity: { value: 1.0 },
+		u_dither: { value: 0.1 }
 	});
 	const fragmentShader = $derived.by(() => {
 		let shader;
@@ -209,6 +240,8 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 			case 'ToneMapping': shader = toneMappingFragmentShader; break;
 			case 'ASCII': shader = asciiFragmentShader; break;
 			case 'Grid': shader = gridFragmentShader; break;
+			case 'LensFlare': shader = lensFlareFragmentShader; break;
+			case 'CRT': shader = crtFragmentShader; break;
 			case 'Grayscale': shader = shaders.Grayscale; break;
 			default: shader = shaders.Vignette; break;
 		}
@@ -604,9 +637,11 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 						ColorAverage: 'Color Average',
 						TiltShift: 'Tilt Shift',
 						ToneMapping: 'Tone Mapping',
-						ASCII: 'ASCII',
-						Grid: 'Grid',
-						Grayscale: 'Grayscale'
+					ASCII: 'ASCII',
+					Grid: 'Grid',
+					LensFlare: 'Lens Flare',
+					CRT: 'CRT (More CRT-like)',
+					Grayscale: 'Grayscale'
 					}}
 				/>
 
@@ -1052,7 +1087,35 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 							bind:value={uniforms.u_scanline_density.value}
 							label="Density"
 							min={0.5}
-							max={5}
+							max={10}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_scanline_intensity.value}
+							label="Intensity"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_scanline_width.value}
+							label="Width/Sharpness"
+							min={0.5}
+							max={10}
+							step={0.1}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_scanline_speed.value}
+							label="Animation Speed"
+							min={-2}
+							max={2}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_scanline_offset.value}
+							label="Offset"
+							min={-1}
+							max={1}
 							step={0.01}
 						/>
 					</Tweakpane.Folder>
@@ -1224,6 +1287,181 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 							min={0}
 							max={0.1}
 							step={0.001}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'LensFlare'}
+					<Tweakpane.Folder title="Lens Flare Main" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_brightness.value}
+							label="Brightness"
+							min={0}
+							max={3}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_flareSize.value}
+							label="Flare Size"
+							min={0.001}
+							max={0.02}
+							step={0.001}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_flareSpeed.value}
+							label="Flare Speed"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_flareShape.value}
+							label="Flare Shape"
+							min={0.01}
+							max={2}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_sunPosition.value[0]}
+							label="Sun Position X"
+							min={-1}
+							max={2}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_sunPosition.value[1]}
+							label="Sun Position Y"
+							min={-1}
+							max={2}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+
+					<Tweakpane.Folder title="Lens Flare Advanced" expanded={false}>
+						<Tweakpane.Checkbox
+							bind:value={uniforms.u_anamorphic.value}
+							label="Anamorphic"
+						/>
+						<Tweakpane.Checkbox
+							bind:value={uniforms.u_secondaryGhosts.value}
+							label="Secondary Ghosts"
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_ghostScale.value}
+							label="Ghost Scale"
+							min={0.01}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Checkbox
+							bind:value={uniforms.u_additionalStreaks.value}
+							label="Additional Streaks"
+						/>
+						<Tweakpane.Checkbox
+							bind:value={uniforms.u_starBurst.value}
+							label="Star Burst"
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_haloScale.value}
+							label="Halo Scale"
+							min={0.1}
+							max={2}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_colorGain.value[0]}
+							label="Color Gain R"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_colorGain.value[1]}
+							label="Color Gain G"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_colorGain.value[2]}
+							label="Color Gain B"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'CRT'}
+					<Tweakpane.Folder title="CRT Main Effects" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_pixelSize.value}
+							label="Pixel Size"
+							min={1}
+							max={20}
+							step={0.5}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_distortion.value}
+							label="Distortion"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_blur.value}
+							label="Blur"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_aberration.value}
+							label="Chromatic Aberration"
+							min={0}
+							max={0.2}
+							step={0.001}
+						/>
+					</Tweakpane.Folder>
+
+					<Tweakpane.Folder title="CRT Scanlines & Grid" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_scanlineIntensity.value}
+							label="Scanline Intensity"
+							min={0}
+							max={0.2}
+							step={0.001}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_scanlineSpeed.value}
+							label="Scanline Speed"
+							min={0}
+							max={300}
+							step={1}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_gridIntensity.value}
+							label="Grid Intensity"
+							min={0}
+							max={0.5}
+							step={0.01}
+						/>
+					</Tweakpane.Folder>
+
+					<Tweakpane.Folder title="CRT Post Effects" expanded={false}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_vignetteIntensity.value}
+							label="Vignette Intensity"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_dither.value}
+							label="Dither"
+							min={0}
+							max={0.5}
+							step={0.01}
 						/>
 					</Tweakpane.Folder>
 				{/if}
