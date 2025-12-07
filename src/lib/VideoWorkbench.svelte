@@ -1281,6 +1281,7 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 					{audioFile}
 					beats={analysisData.beats || []}
 					onsets={analysisData.onsets || []}
+					utterances={analysisData.transcription?.utterances || []}
 					bpm={analysisData.bpm || 0}
 					currentTime={audioCurrentTime}
 					duration={audioDuration}

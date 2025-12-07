@@ -324,7 +324,8 @@ async def analyze_audio(file: UploadFile = File(...)):
             "transcription": {
                 "text": transcription,
                 "words": words,
-                "paragraphs": paragraphs
+                "paragraphs": paragraphs,
+                "utterances": utterances  # Phrases with timestamps for UI markers
             } if transcription else None
         }
     finally:

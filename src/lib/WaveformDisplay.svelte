@@ -5,6 +5,7 @@
 		audioFile = null,
 		beats = [],
 		onsets = [],
+		utterances = [],
 		bpm = 0,
 		currentTime = 0,
 		duration = 0,
@@ -33,6 +34,7 @@
 	let timeDisplayMode = $state('time'); // 'time', 'frames', 'beats'
 	let showBeats = $state(true);
 	let showOnsets = $state(true);
+	let showUtterances = $state(true);
 	let snapToBeats = $state(false);
 	let zoom = $state(1);
 	let scrollOffset = $state(0);
@@ -325,6 +327,44 @@
 				ctx.moveTo(x, 0);
 				ctx.lineTo(x, height);
 				ctx.stroke();
+			}
+		}
+
+		// Draw utterance/phrase regions
+		if (showUtterances && utterances && utterances.length > 0) {
+			for (const utterance of utterances) {
+				const startX = timeToX(utterance.start);
+				const endX = timeToX(utterance.end);
+				
+				// Only draw if visible
+				if (endX < 0 || startX > width) continue;
+				
+				const regionStart = Math.max(0, startX);
+				const regionEnd = Math.min(width, endX);
+				const regionWidth = regionEnd - regionStart;
+				
+				// Utterance region background (green/cyan)
+				ctx.fillStyle = 'rgba(100, 255, 200, 0.15)';
+				ctx.fillRect(regionStart, 0, regionWidth, height);
+				
+				// Utterance boundaries
+				ctx.strokeStyle = 'rgba(100, 255, 200, 0.6)';
+				ctx.lineWidth = 2;
+				ctx.beginPath();
+				ctx.moveTo(regionStart, 0);
+				ctx.lineTo(regionStart, height);
+				ctx.moveTo(regionEnd, 0);
+				ctx.lineTo(regionEnd, height);
+				ctx.stroke();
+				
+				// Utterance label (if there's space)
+				if (regionWidth > 40 && utterance.text) {
+					ctx.fillStyle = 'rgba(100, 255, 200, 0.9)';
+					ctx.font = '9px -apple-system, sans-serif';
+					ctx.textAlign = 'left';
+					const text = utterance.text.length > 20 ? utterance.text.substring(0, 20) + '...' : utterance.text;
+					ctx.fillText(text, regionStart + 2, 12);
+				}
 			}
 		}
 
@@ -654,7 +694,7 @@
 
 	// Effects
 	$effect(() => {
-		if (beats || currentTime || segments) {
+		if (beats || onsets || utterances || currentTime || segments) {
 			drawAll();
 		}
 	});
@@ -694,6 +734,9 @@
 			{#if onsets && onsets.length > 0}
 				<span class="onsets-badge">{onsets.length} onsets</span>
 			{/if}
+			{#if utterances && utterances.length > 0}
+				<span class="utterances-badge">{utterances.length} phrases</span>
+			{/if}
 		</div>
 		
 		<div class="header-center">
@@ -724,6 +767,12 @@
 				<label class="toggle-option">
 					<input type="checkbox" bind:checked={showOnsets} />
 					<span>Onsets</span>
+				</label>
+			{/if}
+			{#if utterances && utterances.length > 0}
+				<label class="toggle-option">
+					<input type="checkbox" bind:checked={showUtterances} />
+					<span>Phrases</span>
 				</label>
 			{/if}
 			<label class="toggle-option">
@@ -861,6 +910,14 @@
 	.onsets-badge {
 		background: rgba(255, 150, 100, 0.15);
 		color: #ff9664;
+		padding: 2px 8px;
+		border-radius: 10px;
+		font-size: 10px;
+	}
+
+	.utterances-badge {
+		background: rgba(100, 255, 200, 0.15);
+		color: #64ffc8;
 		padding: 2px 8px;
 		border-radius: 10px;
 		font-size: 10px;
