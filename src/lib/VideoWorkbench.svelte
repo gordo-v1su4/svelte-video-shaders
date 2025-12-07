@@ -290,12 +290,19 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 		const file = event.currentTarget.files?.[0];
 		if (!file) return;
 
+		// Prevent duplicate calls if already analyzing
+		if (isAnalyzingAudio) {
+			console.warn("[VideoWorkbench] ⚠️ Already analyzing audio, skipping duplicate call");
+			return;
+		}
+
 		audioFile = file;
 		isAnalyzingAudio = true;
 		
 		// Initialize Essentia API FIRST (one-time analysis, no ongoing connection)
 		// This sends the file to the server, gets results, then disconnects
 		console.log("[VideoWorkbench] 📡 Starting Essentia API analysis (one-time request, no ongoing connection)...");
+		console.log("[VideoWorkbench] File:", file.name, "Size:", (file.size / 1024).toFixed(2), "KB");
 		
 		// Initialize audio analyzer for playback/FFT (local Web Audio API, not server)
 		if (audioAnalyzer) {
@@ -322,8 +329,9 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 			console.log("[VideoWorkbench] Analysis complete:", result);
 			console.log("[VideoWorkbench] 📡 API connection closed (one-time request completed)");
 			
-			if (result && (result.bpm > 0 || result.beats?.length > 0)) {
-			analysisData = result;
+			// Set analysisData if we have any useful data (beats, onsets, or BPM)
+			if (result && (result.bpm > 0 || result.beats?.length > 0 || result.onsets?.length > 0)) {
+				analysisData = result;
 				console.log("[VideoWorkbench] ✅ Analysis data set:", {
 					bpm: result.bpm,
 					beatsCount: result.beats?.length || 0,
@@ -331,15 +339,26 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 					confidence: result.confidence,
 					duration: result.duration
 				});
+				if (result.onsets && result.onsets.length > 0) {
+					console.log("[VideoWorkbench] 🎯 Onsets detected:", result.onsets.length, "onsets");
+					console.log("[VideoWorkbench] First 5 onsets:", result.onsets.slice(0, 5));
+				} else {
+					console.warn("[VideoWorkbench] ⚠️ No onsets detected in API response");
+				}
 				console.log("[VideoWorkbench] ℹ️ Note: 'Playing audio, analyzer state' messages are from LOCAL Web Audio API (not server)");
 			} else {
 				console.warn("[VideoWorkbench] ⚠️ Analysis returned empty data, API may not have processed the file");
+				console.warn("[VideoWorkbench] Result:", result);
 			}
 		} catch (err) {
 			console.error("[VideoWorkbench] ❌ Essentia analysis failed:", err);
 			console.error("[VideoWorkbench] Error details:", err.stack);
 		} finally {
 			isAnalyzingAudio = false;
+			// Reset file input to allow re-selecting the same file
+			if (audioInput) {
+				audioInput.value = '';
+			}
 		}
 		
 	if (success) {

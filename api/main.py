@@ -110,11 +110,11 @@ async def analyze_audio(file: UploadFile = File(...)):
             print(f"[OnsetRate] Warning: Could not compute onset rate: {e}")
         
         # Use spectral flux for onset detection (OnsetRate doesn't return times, only rate)
-        # First pass: collect all flux values for adaptive thresholding
+        # Single pass: collect flux values and detect onsets
         onset_times = []
-        frame_index = 0
         prev_spectrum = None
         flux_values = []
+        frame_count = 0
         
         for frame in frames:
             windowed = window(frame)
@@ -122,47 +122,68 @@ async def analyze_audio(file: UploadFile = File(...)):
             
             if prev_spectrum is not None:
                 # Spectral flux: measure of change in spectral magnitude
+                # Positive flux indicates onset (sudden increase in energy)
                 flux = np.sum(np.maximum(0, np.abs(spec) - np.abs(prev_spectrum)))
                 flux_values.append(flux)
+            else:
+                # First frame has no previous spectrum, add zero flux
+                flux_values.append(0.0)
             
             prev_spectrum = spec
-            frame_index += 1
+            frame_count += 1
         
         # Calculate adaptive threshold based on flux statistics
-        if flux_values:
-            flux_mean = np.mean(flux_values)
-            flux_std = np.std(flux_values)
-            # Use mean + 0.3*std as threshold (more sensitive)
-            adaptive_threshold = flux_mean + (0.3 * flux_std)
-            # Ensure minimum threshold
-            min_threshold = flux_mean * 0.05
-            threshold = max(adaptive_threshold, min_threshold)
-            print(f"[OnsetDetection] Flux: mean={flux_mean:.6f}, std={flux_std:.6f}, threshold={threshold:.6f}")
+        if flux_values and len(flux_values) > 1:
+            # Remove zero values for threshold calculation
+            non_zero_flux = [f for f in flux_values if f > 0]
+            if non_zero_flux and len(non_zero_flux) > 10:
+                flux_mean = np.mean(non_zero_flux)
+                flux_std = np.std(non_zero_flux)
+                flux_median = np.median(non_zero_flux)
+                flux_75th = np.percentile(non_zero_flux, 75)
+                
+                # Try multiple threshold methods and use the most sensitive one
+                # Method 1: Mean + small std
+                method1_threshold = flux_mean + (0.15 * flux_std)
+                # Method 2: 75th percentile (more sensitive)
+                method2_threshold = flux_75th
+                # Method 3: Median + small offset
+                method3_threshold = flux_median + (flux_median * 0.1)
+                
+                # Use the lowest (most sensitive) threshold
+                threshold = min(method1_threshold, method2_threshold, method3_threshold)
+                
+                # Ensure minimum threshold
+                min_threshold = flux_mean * 0.01
+                threshold = max(threshold, min_threshold)
+                
+                print(f"[OnsetDetection] Flux stats: mean={flux_mean:.6f}, std={flux_std:.6f}, median={flux_median:.6f}")
+                print(f"[OnsetDetection] Flux range: min={min(non_zero_flux):.6f}, max={max(non_zero_flux):.6f}, 75th={flux_75th:.6f}")
+                print(f"[OnsetDetection] Using threshold: {threshold:.6f} (methods: {method1_threshold:.6f}, {method2_threshold:.6f}, {method3_threshold:.6f})")
+            elif non_zero_flux:
+                # Few flux values, use simple mean-based threshold
+                flux_mean = np.mean(non_zero_flux)
+                threshold = flux_mean * 0.5  # Very sensitive for small datasets
+                print(f"[OnsetDetection] Few flux values, using simple threshold: {threshold:.6f}")
+            else:
+                threshold = 0.0001
+                print(f"[OnsetDetection] Warning: All flux values are zero, using very low threshold")
         else:
-            threshold = 0.001
+            threshold = 0.0001
             print(f"[OnsetDetection] Warning: No flux values, using fallback threshold")
         
-        # Second pass: detect onsets using adaptive threshold
-        frame_index = 0
-        prev_spectrum = None
-        flux_index = 0
+        # Detect onsets using adaptive threshold
+        # flux_values[0] is the transition from frame 0 to frame 1
+        # So flux_index 0 corresponds to time = 1 * hop_size / sample_rate
+        for flux_index, flux in enumerate(flux_values):
+            if flux > threshold:
+                # Calculate time: each flux value represents transition at the END of frame flux_index
+                # Time = (flux_index + 1) * hop_size / sample_rate
+                time = ((flux_index + 1) * hop_size) / actual_sample_rate
+                if 0 <= time < duration:
+                    onset_times.append(time)
         
-        for frame in frames:
-            windowed = window(frame)
-            spec = spectrum(windowed)
-            
-            if prev_spectrum is not None and flux_index < len(flux_values):
-                flux = flux_values[flux_index]
-                
-                if flux > threshold:
-                    time = (frame_index * hop_size) / actual_sample_rate
-                    if 0 <= time < duration:
-                        onset_times.append(time)
-                
-                flux_index += 1
-            
-            prev_spectrum = spec
-            frame_index += 1
+        print(f"[OnsetDetection] Found {len(onset_times)} onsets before filtering (threshold={threshold:.6f})")
         
         # Filter out onsets that are too close together (minimum 20ms apart)
         filtered_onsets = []

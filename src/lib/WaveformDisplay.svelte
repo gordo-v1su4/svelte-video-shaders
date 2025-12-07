@@ -994,8 +994,9 @@
 				</label>
 				{#if showOnsets}
 					<div class="onset-density-control">
-						<label class="density-label">Density</label>
+						<label class="density-label" for="onset-density-slider">Density</label>
 						<input 
+							id="onset-density-slider"
 							type="range" 
 							min="0.1" 
 							max="1.0" 
