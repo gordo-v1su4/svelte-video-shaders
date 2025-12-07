@@ -19,9 +19,11 @@
 	let rulerCanvas;
 	let waveformCanvas;
 	let segmentCanvas;
+	let overviewCanvas;
 	let rulerCtx;
 	let waveformCtx;
 	let segmentCtx;
+	let overviewCtx;
 	
 	// Container ref for width
 	let container;
@@ -34,6 +36,7 @@
 	let timeDisplayMode = $state('time'); // 'time', 'frames', 'beats'
 	let showBeats = $state(true);
 	let showOnsets = $state(true);
+	let onsetDensity = $state(1.0); // 0.0 to 1.0, controls how many onsets are displayed
 	let showUtterances = $state(true);
 	let snapToBeats = $state(false);
 	let zoom = $state(1);
@@ -51,13 +54,16 @@
 
 	// Dragging state
 	let isDragging = $state(false);
-	let dragType = $state(null); // 'playhead', 'segment-start', 'segment-end', 'scroll'
+	let dragType = $state(null); // 'playhead', 'segment-start', 'segment-end', 'scroll', 'overview'
 	let dragTarget = $state(null);
+	let overviewDragStartX = $state(0);
+	let overviewDragStartOffset = $state(0);
 
 	// Dimensions
 	const RULER_HEIGHT = 24;
 	const WAVEFORM_HEIGHT = 80;
 	const SEGMENT_HEIGHT = 32;
+	const OVERVIEW_HEIGHT = 60;
 	$effect(() => {
 		if (container) {
 			const observer = new ResizeObserver(entries => {
@@ -68,7 +74,7 @@
 			return () => observer.disconnect();
 		}
 	});
-
+	
 	function initCanvases() {
 		if (!containerWidth) return;
 		
@@ -86,6 +92,11 @@
 			segmentCtx = segmentCanvas.getContext('2d');
 			segmentCanvas.width = containerWidth;
 			segmentCanvas.height = SEGMENT_HEIGHT;
+		}
+		if (overviewCanvas) {
+			overviewCtx = overviewCanvas.getContext('2d');
+			overviewCanvas.width = containerWidth;
+			overviewCanvas.height = OVERVIEW_HEIGHT;
 		}
 		
 		drawAll();
@@ -133,6 +144,7 @@
 		drawRuler();
 		drawWaveform();
 		drawSegments();
+		drawOverview();
 	}
 
 	function drawRuler() {
@@ -310,19 +322,35 @@
 			}
 		}
 
-		// Draw onset markers (transients)
+		// Draw onset markers (transients) - draw onsets based on density setting
 		if (showOnsets && onsets && onsets.length > 0) {
-			for (const onset of onsets) {
+			ctx.strokeStyle = 'rgba(255, 150, 100, 0.7)';
+			ctx.lineWidth = 1;
+			ctx.fillStyle = 'rgba(255, 100, 100, 0.1)';
+			
+			// Filter onsets based on density (0.0 = none, 1.0 = all)
+			const filteredOnsets = onsetDensity < 1.0 
+				? onsets.filter((_, index) => {
+					// Thin out onsets based on density
+					// At density 0.5, show every other onset; at 0.25, show every 4th, etc.
+					const step = Math.max(1, Math.round(1 / onsetDensity));
+					return index % step === 0;
+				})
+				: onsets;
+			
+			for (const onset of filteredOnsets) {
+				// Ensure onset is within valid time range
+				if (onset < 0 || onset > effectiveDuration) continue;
+				
 				const x = timeToX(onset);
-				if (x < 0 || x > width) continue;
+				// Draw if x is within canvas bounds (with margin for lines that extend slightly)
+				// This ensures we draw all onsets that could be visible, even if slightly off-screen
+				if (x < -10 || x > width + 10) continue;
 				
 				// Onset highlight (different color - orange/red)
-				ctx.fillStyle = 'rgba(255, 100, 100, 0.1)';
 				ctx.fillRect(x - 0.5, 0, 1, height);
 				
-				// Onset line (thinner, different color)
-				ctx.strokeStyle = 'rgba(255, 150, 100, 0.5)';
-				ctx.lineWidth = 1;
+				// Onset line (thinner, different color) - 70% opacity
 				ctx.beginPath();
 				ctx.moveTo(x, 0);
 				ctx.lineTo(x, height);
@@ -474,6 +502,103 @@
 			ctx.stroke();
 		}
 	}
+	
+	function drawOverview() {
+		if (!overviewCtx || !containerWidth) return;
+		const ctx = overviewCtx;
+		const width = containerWidth;
+		const height = OVERVIEW_HEIGHT;
+		
+		// Background
+		ctx.fillStyle = '#0a0a0a';
+		ctx.fillRect(0, 0, width, height);
+		
+		if (!waveformData) return;
+		
+		// Draw full waveform (always at zoom 1x for overview)
+		const centerY = height / 2;
+		ctx.fillStyle = '#5a5a5e';
+		
+		for (let px = 0; px < width; px++) {
+			const time = (px / width) * effectiveDuration;
+			const sampleIndex = Math.floor((time / effectiveDuration) * waveformData.length);
+			if (sampleIndex < 0 || sampleIndex >= waveformData.length) continue;
+			
+			const amplitude = waveformData[sampleIndex] * (height / 2 - 4);
+			ctx.fillRect(px, centerY - amplitude, 1, amplitude * 2);
+		}
+		
+		// Draw visible region indicator (semi-transparent overlay)
+		const visibleStartX = (scrollOffset / effectiveDuration) * width;
+		const visibleEndX = ((scrollOffset + visibleDuration) / effectiveDuration) * width;
+		const visibleWidth = visibleEndX - visibleStartX;
+		
+		ctx.fillStyle = 'rgba(168, 130, 255, 0.2)';
+		ctx.fillRect(visibleStartX, 0, visibleWidth, height);
+		
+		ctx.strokeStyle = 'rgba(168, 130, 255, 0.6)';
+		ctx.lineWidth = 2;
+		ctx.strokeRect(visibleStartX, 0, visibleWidth, height);
+		
+		// Draw beats in overview
+		if (showBeats && beats.length > 0) {
+			ctx.strokeStyle = 'rgba(168, 130, 255, 0.3)';
+			ctx.lineWidth = 1;
+			for (const beat of beats) {
+				const x = (beat / effectiveDuration) * width;
+				if (x < 0 || x > width) continue;
+				ctx.beginPath();
+				ctx.moveTo(x, 0);
+				ctx.lineTo(x, height);
+				ctx.stroke();
+			}
+		}
+		
+		// Draw onsets in overview (also filtered by density)
+		if (showOnsets && onsets && onsets.length > 0) {
+			ctx.strokeStyle = 'rgba(255, 150, 100, 0.7)';
+			ctx.lineWidth = 1;
+			
+			// Filter onsets based on density
+			const filteredOnsets = onsetDensity < 1.0 
+				? onsets.filter((_, index) => {
+					const step = Math.max(1, Math.round(1 / onsetDensity));
+					return index % step === 0;
+				})
+				: onsets;
+			
+			for (const onset of filteredOnsets) {
+				const x = (onset / effectiveDuration) * width;
+				if (x < 0 || x > width) continue;
+				ctx.beginPath();
+				ctx.moveTo(x, 0);
+				ctx.lineTo(x, height);
+				ctx.stroke();
+			}
+		}
+		
+		// Draw playhead in overview
+		const playheadX = (currentTime / effectiveDuration) * width;
+		if (playheadX >= 0 && playheadX <= width) {
+			ctx.strokeStyle = '#ffffff';
+			ctx.lineWidth = 2;
+			ctx.beginPath();
+			ctx.moveTo(playheadX, 0);
+			ctx.lineTo(playheadX, height);
+			ctx.stroke();
+		}
+		
+		// Draw timeline markers
+		ctx.fillStyle = '#6a6a6e';
+		ctx.font = '10px -apple-system, sans-serif';
+		ctx.textAlign = 'center';
+		const markerInterval = effectiveDuration > 60 ? 10 : 5; // Every 10s if > 1min, else every 5s
+		for (let t = 0; t <= effectiveDuration; t += markerInterval) {
+			const x = (t / effectiveDuration) * width;
+			ctx.fillRect(x - 0.5, height - 8, 1, 8);
+			ctx.fillText(formatTimeShort(t), x, height - 2);
+		}
+	}
 
 	// Waveform loading
 	async function loadWaveform(file) {
@@ -599,14 +724,24 @@
 		
 		isCreatingSegment = false;
 		segmentStart = null;
-		isDragging = false;
-		dragType = null;
-		dragTarget = null;
+		if (dragType !== 'overview') {
+			isDragging = false;
+			dragType = null;
+			dragTarget = null;
+		}
 		drawSegments();
 	}
 
 	function handleMouseMove(e) {
-		if (!isDragging || dragTarget === null) return;
+		if (!isDragging) return;
+		
+		// Handle overview dragging
+		if (dragType === 'overview') {
+			handleOverviewMouseMove(e);
+			return;
+		}
+		
+		if (dragTarget === null) return;
 		
 		const rect = segmentCanvas.getBoundingClientRect();
 		const x = e.clientX - rect.left;
@@ -623,6 +758,28 @@
 		drawSegments();
 	}
 
+	function zoomIn() {
+		const newZoom = Math.min(zoom * 1.5, 50);
+		zoom = newZoom;
+		// Keep scroll offset within bounds
+		const maxOffset = Math.max(0, effectiveDuration - visibleDuration);
+		if (scrollOffset > maxOffset) {
+			scrollOffset = maxOffset;
+		}
+		drawAll();
+	}
+	
+	function zoomOut() {
+		const newZoom = Math.max(zoom / 1.5, 1);
+		zoom = newZoom;
+		// Keep scroll offset within bounds
+		const maxOffset = Math.max(0, effectiveDuration - visibleDuration);
+		if (scrollOffset > maxOffset) {
+			scrollOffset = maxOffset;
+		}
+		drawAll();
+	}
+	
 	function handleWheel(e) {
 		e.preventDefault();
 		
@@ -660,6 +817,47 @@
 		drawWaveform();
 	}
 
+	function handleOverviewMouseDown(e) {
+		const rect = overviewCanvas.getBoundingClientRect();
+		const x = e.clientX - rect.left;
+		const visibleStartX = (scrollOffset / effectiveDuration) * containerWidth;
+		const visibleEndX = ((scrollOffset + visibleDuration) / effectiveDuration) * containerWidth;
+		
+		// Check if clicking on the visible region (allow dragging)
+		if (x >= visibleStartX && x <= visibleEndX) {
+			isDragging = true;
+			dragType = 'overview';
+			overviewDragStartX = x;
+			overviewDragStartOffset = scrollOffset;
+		} else {
+			// Click outside visible region - seek to that position
+			const time = (x / containerWidth) * effectiveDuration;
+			if (onSeek) onSeek(time);
+		}
+	}
+	
+	function handleOverviewMouseMove(e) {
+		if (!isDragging || dragType !== 'overview') return;
+		
+		const rect = overviewCanvas.getBoundingClientRect();
+		const x = e.clientX - rect.left;
+		const deltaX = x - overviewDragStartX;
+		const deltaTime = (deltaX / containerWidth) * effectiveDuration;
+		
+		// Update scroll offset
+		const newOffset = overviewDragStartOffset + deltaTime;
+		scrollOffset = Math.max(0, Math.min(newOffset, effectiveDuration - visibleDuration));
+		
+		drawAll();
+	}
+	
+	function handleOverviewMouseUp(e) {
+		if (dragType === 'overview') {
+			isDragging = false;
+			dragType = null;
+		}
+	}
+	
 	function handleKeyDown(e) {
 		if (e.key === 'Delete' || e.key === 'Backspace') {
 			deleteSelectedSegment();
@@ -759,6 +957,32 @@
 		</div>
 		
 		<div class="header-right">
+			<!-- Zoom controls -->
+			<div class="zoom-controls">
+				<button 
+					class="zoom-btn" 
+					onclick={zoomIn}
+					title="Zoom in"
+					disabled={zoom >= 50}
+				>
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+						<line x1="8" y1="3" x2="8" y2="13"/>
+						<line x1="3" y1="8" x2="13" y2="8"/>
+					</svg>
+				</button>
+				<button 
+					class="zoom-btn" 
+					onclick={zoomOut}
+					title="Zoom out"
+					disabled={zoom <= 1}
+				>
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+						<line x1="3" y1="8" x2="13" y2="8"/>
+					</svg>
+				</button>
+				<span class="zoom-value">{zoom.toFixed(1)}x</span>
+			</div>
+			
 			<label class="toggle-option">
 				<input type="checkbox" bind:checked={showBeats} />
 				<span>Beats</span>
@@ -768,6 +992,20 @@
 					<input type="checkbox" bind:checked={showOnsets} />
 					<span>Onsets</span>
 				</label>
+				{#if showOnsets}
+					<div class="onset-density-control">
+						<label class="density-label">Density</label>
+						<input 
+							type="range" 
+							min="0.1" 
+							max="1.0" 
+							step="0.1"
+							bind:value={onsetDensity}
+							class="density-slider"
+						/>
+						<span class="density-value">{(onsetDensity * 100).toFixed(0)}%</span>
+					</div>
+				{/if}
 			{/if}
 			{#if utterances && utterances.length > 0}
 				<label class="toggle-option">
@@ -835,10 +1073,16 @@
 		</div>
 	{/if}
 
-	<!-- Zoom indicator -->
-	<div class="zoom-info">
-		<span>Zoom: {zoom.toFixed(1)}x</span>
-		<span class="hint">Ctrl+Scroll to zoom</span>
+	<!-- Overview timeline -->
+	<div class="overview-section">
+		<canvas 
+			bind:this={overviewCanvas}
+			class="overview-canvas"
+			onmousedown={handleOverviewMouseDown}
+			onmousemove={handleOverviewMouseMove}
+			onmouseup={handleOverviewMouseUp}
+			onmouseleave={handleOverviewMouseUp}
+		></canvas>
 	</div>
 
 	<!-- Instructions -->
@@ -846,6 +1090,7 @@
 		<span>Click to seek</span>
 		<span>Shift+drag to create segment</span>
 		<span>M to add marker</span>
+		<span>Ctrl+Scroll to zoom</span>
 	</div>
 </div>
 
@@ -1112,19 +1357,97 @@
 		to { transform: rotate(360deg); }
 	}
 
-	/* Footer info */
-	.zoom-info {
+	/* Onset density control */
+	.onset-density-control {
 		display: flex;
-		justify-content: space-between;
-		padding: 6px 12px;
-		background: #0d0d0f;
-		border-top: 1px solid #1a1a1e;
-		font-size: 9px;
-		color: #4a4a4e;
+		align-items: center;
+		gap: 6px;
+		margin-left: 8px;
+		padding: 4px 8px;
+		background: #1a1a1e;
+		border-radius: 4px;
+		border: 1px solid #2a2a2e;
 	}
 
-	.zoom-info .hint {
-		color: #3a3a3e;
+	.density-label {
+		font-size: 10px;
+		color: #6a6a6e;
+		white-space: nowrap;
+	}
+
+	.density-slider {
+		width: 60px;
+		height: 4px;
+		accent-color: #a882ff;
+		cursor: pointer;
+	}
+
+	.density-value {
+		font-size: 10px;
+		color: #a882ff;
+		min-width: 30px;
+		text-align: right;
+	}
+
+	/* Zoom controls */
+	.zoom-controls {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		margin-right: 8px;
+		padding-right: 8px;
+		border-right: 1px solid #2a2a2e;
+	}
+
+	.zoom-btn {
+		background: #1a1a1e;
+		border: 1px solid #2a2a2e;
+		border-radius: 4px;
+		padding: 4px 6px;
+		cursor: pointer;
+		color: #8a8a8e;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: all 0.2s;
+		width: 28px;
+		height: 28px;
+	}
+
+	.zoom-btn:hover:not(:disabled) {
+		background: #2a2a2e;
+		border-color: #3a3a3e;
+		color: #ffffff;
+	}
+
+	.zoom-btn:disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
+	}
+
+	.zoom-value {
+		font-size: 11px;
+		color: #6a6a6e;
+		margin-left: 4px;
+		min-width: 40px;
+		text-align: center;
+	}
+
+	/* Overview timeline */
+	.overview-section {
+		margin-top: 8px;
+		border-top: 1px solid #1a1a1e;
+		padding-top: 8px;
+	}
+
+	.overview-canvas {
+		display: block;
+		width: 100%;
+		height: 60px;
+		background: #0a0a0a;
+		cursor: pointer;
+		border-radius: 4px;
+		border: 1px solid #1a1a1e;
 	}
 
 	.instructions {

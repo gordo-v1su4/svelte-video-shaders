@@ -357,14 +357,23 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 		if (!audioAnalyzer) return;
 		
 		function updateAudioUniforms() {
+			// Always update playhead time when audio element exists and is playing
+			if (audioAnalyzer && audioAnalyzer.audioElement) {
+				const isPlaying = !audioAnalyzer.audioElement.paused && 
+				                  audioAnalyzer.audioElement.currentTime > 0 && 
+				                  !audioAnalyzer.audioElement.ended;
+				
+				if (isPlaying || audioAnalyzer.isAnalyzing) {
+					// Update playhead time for waveform (always update when playing)
+					audioCurrentTime = audioAnalyzer.getCurrentTime?.() || 0;
+					if (!audioDuration && audioAnalyzer.getDuration?.()) {
+						audioDuration = audioAnalyzer.getDuration();
+					}
+				}
+			}
+			
 			if (audioAnalyzer && audioAnalyzer.isAnalyzing) {
 				const audioData = audioAnalyzer.getAudioData();
-				
-				// Update playhead time for waveform
-				audioCurrentTime = audioAnalyzer.getCurrentTime?.() || 0;
-				if (!audioDuration && audioAnalyzer.getDuration?.()) {
-					audioDuration = audioAnalyzer.getDuration();
-				}
 				
 				uniforms.u_audioLevel.value = audioData.audioLevel;
 				uniforms.u_bassLevel.value = audioData.bassLevel;
@@ -679,7 +688,7 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 				</Tweakpane.Folder>
 
 				<!-- Audio Controls -->
-				<Tweakpane.Folder title="Audio Controls" expanded={selectedShaderName === 'XlsczN'}>
+				<Tweakpane.Folder title="Audio Controls" expanded={true}>
 					<Button title="Upload Audio" on:click={handleAudioUploadClick} />
 					
 					{#if audioFile}
