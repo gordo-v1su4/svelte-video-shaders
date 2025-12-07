@@ -25,3 +25,6 @@ vite.config.ts.timestamp-*
 *storybook.log
 storybook-static
 mediabunny/
+
+# Essentia models (large files, downloaded separately)
+api/models/
