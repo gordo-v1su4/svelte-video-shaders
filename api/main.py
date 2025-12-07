@@ -29,11 +29,13 @@ app = FastAPI(title="Audio Analysis API", version="1.0.0")
 
 # CORS configuration (supports multiple origins via comma-separated env var)
 # Note: When allow_credentials=True, you cannot use "*" - must specify exact origins
-cors_origins = CORS_ORIGINS if "*" not in CORS_ORIGINS else ["*"]
+# Check if "*" is in the list of origins
+use_wildcard = "*" in CORS_ORIGINS
+cors_origins = CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_credentials=True if "*" not in CORS_ORIGINS else False,  # Can't use credentials with "*"
+    allow_credentials=not use_wildcard,  # Can't use credentials with "*" (browser security)
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -55,43 +57,9 @@ async def analyze_audio(file: UploadFile = File(...)):
         audio = es.MonoLoader(filename=tmp_path, sampleRate=44100)()
         duration = float(len(audio) / 44100)
         
-        # Mood/Emotion and Genre classification using TensorFlow models
+        # Mood/Emotion and Genre classification (removed - not implemented yet)
         mood_classification = {}
         genre_classification = {}
-        
-        # Try to use TensorFlow models for classification
-        # Models are downloaded to /app/models (effnetdiscogs, musicnn, classification_heads)
-        # Note: Full TensorFlow model integration requires proper feature extraction pipelines
-        # This is a placeholder that acknowledges models are present
-        try:
-            models_path = os.getenv("ESSENTIA_MODELS_PATH", "/app/models")
-            
-            if os.path.exists(models_path):
-                effnet_path = os.path.join(models_path, "effnetdiscogs")
-                musicnn_path = os.path.join(models_path, "musicnn")
-                classification_path = os.path.join(models_path, "classification_heads")
-                
-                models_found = []
-                if os.path.exists(effnet_path):
-                    models_found.append("effnetdiscogs (genre classification)")
-                if os.path.exists(musicnn_path):
-                    models_found.append("musicnn (auto-tagging)")
-                if os.path.exists(classification_path):
-                    models_found.append("classification_heads (mood/emotion)")
-                
-                if models_found:
-                    print(f"✅ TensorFlow models found: {', '.join(models_found)}")
-                    print("⚠️  Note: TensorFlow model inference requires proper feature extraction pipeline")
-                    print("   Models are available but full classification needs implementation")
-                    print("   For now, returning empty classifications - models ready for integration")
-                else:
-                    print("⚠️  Models directory exists but no model subdirectories found")
-                    
-        except Exception as e:
-            # Models not available or error during classification
-            print(f"TensorFlow model check error: {e}")
-            import traceback
-            traceback.print_exc()
         
         # Beat detection using RhythmExtractor2013
         rhythm_extractor = es.RhythmExtractor2013(method="multifeature")
@@ -136,17 +104,23 @@ async def analyze_audio(file: UploadFile = File(...)):
         energy_mean = float(np.mean(energy) if hasattr(energy, '__len__') else energy)
         energy_std = float(np.std(energy) if hasattr(energy, '__len__') and len(energy) > 1 else 0.0)
         
-        # Spectral centroid (brightness/timbre)
+        # Spectral centroid (brightness/timbre) - calculate manually
         spectral_centroids = []
         frames_centroid = es.FrameGenerator(audio, frameSize=2048, hopSize=512)
         window_centroid = es.Windowing(type='hann')
         spectrum_centroid = es.Spectrum()
-        spectral_centroid_alg = es.SpectralCentroid()
         
         for frame in frames_centroid:
             windowed = window_centroid(frame)
             spec = spectrum_centroid(windowed)
-            centroid_val = spectral_centroid_alg(spec)
+            # Calculate spectral centroid manually: weighted mean of frequencies
+            # Centroid = sum(frequency * magnitude) / sum(magnitude)
+            frequencies = np.arange(len(spec)) * (44100.0 / (2.0 * len(spec)))
+            magnitude = np.abs(spec)
+            if np.sum(magnitude) > 0:
+                centroid_val = np.sum(frequencies * magnitude) / np.sum(magnitude)
+            else:
+                centroid_val = 0.0
             spectral_centroids.append(centroid_val)
         
         mean_spectral_centroid = float(np.mean(spectral_centroids)) if spectral_centroids else 0.0
@@ -171,18 +145,23 @@ async def analyze_audio(file: UploadFile = File(...)):
                 frame_energy = np.sum(frame_audio ** 2) / len(frame_audio)
                 energy_per_frame.append(frame_energy)
                 
-                # Spectral centroid for this frame
+                # Spectral centroid for this frame (calculate manually)
                 if len(frame_audio) >= 2048:
                     frame_frames = es.FrameGenerator(frame_audio, frameSize=2048, hopSize=512)
                     frame_window = es.Windowing(type='hann')
                     frame_spectrum = es.Spectrum()
-                    frame_centroid_alg = es.SpectralCentroid()
                     
                     frame_centroids = []
                     for f in frame_frames:
                         w = frame_window(f)
                         s = frame_spectrum(w)
-                        c = frame_centroid_alg(s)
+                        # Calculate spectral centroid manually
+                        frequencies = np.arange(len(s)) * (44100.0 / (2.0 * len(s)))
+                        magnitude = np.abs(s)
+                        if np.sum(magnitude) > 0:
+                            c = np.sum(frequencies * magnitude) / np.sum(magnitude)
+                        else:
+                            c = 0.0
                         frame_centroids.append(c)
                     
                     if frame_centroids:
