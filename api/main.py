@@ -9,11 +9,18 @@ import essentia.standard as es
 import numpy as np
 import tempfile
 import os
+from deepgram import DeepgramClient
 
 # Environment variables for configuration
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+
+# Initialize Deepgram client if API key is provided
+deepgram_client = None
+if DEEPGRAM_API_KEY:
+    deepgram_client = DeepgramClient(api_key=DEEPGRAM_API_KEY)
 
 app = FastAPI(title="Audio Analysis API", version="1.0.0")
 
@@ -101,6 +108,202 @@ async def analyze_audio(file: UploadFile = File(...)):
         
         mean_spectral_centroid = float(np.mean(spectral_centroids)) if spectral_centroids else 0.0
         
+        # Structural segmentation - detect section boundaries
+        # Using energy and spectral features to identify structural changes
+        frame_time = 0.5  # Analyze every 0.5 seconds
+        frame_samples = int(44100 * frame_time)
+        num_frames = int(len(audio) / frame_samples)
+        
+        energy_per_frame = []
+        centroid_per_frame = []
+        frame_times = []
+        
+        for i in range(num_frames):
+            start = i * frame_samples
+            end = min(start + frame_samples, len(audio))
+            frame_audio = audio[start:end]
+            
+            if len(frame_audio) > 0:
+                # Energy for this frame
+                frame_energy = np.sum(frame_audio ** 2) / len(frame_audio)
+                energy_per_frame.append(frame_energy)
+                
+                # Spectral centroid for this frame
+                if len(frame_audio) >= 2048:
+                    frame_frames = es.FrameGenerator(frame_audio, frameSize=2048, hopSize=512)
+                    frame_window = es.Windowing(type='hann')
+                    frame_spectrum = es.Spectrum()
+                    frame_centroid_alg = es.SpectralCentroid()
+                    
+                    frame_centroids = []
+                    for f in frame_frames:
+                        w = frame_window(f)
+                        s = frame_spectrum(w)
+                        c = frame_centroid_alg(s)
+                        frame_centroids.append(c)
+                    
+                    if frame_centroids:
+                        centroid_per_frame.append(np.mean(frame_centroids))
+                    else:
+                        centroid_per_frame.append(0.0)
+                else:
+                    centroid_per_frame.append(0.0)
+                
+                frame_times.append(i * frame_time)
+        
+        # Detect structural boundaries (significant changes in energy/spectral features)
+        boundaries = []
+        if len(energy_per_frame) > 1:
+            energy_threshold = np.std(energy_per_frame) * 1.5
+            centroid_threshold = np.std(centroid_per_frame) * 1.5 if len(centroid_per_frame) > 1 else 0
+            
+            for i in range(1, len(energy_per_frame)):
+                energy_change = abs(energy_per_frame[i] - energy_per_frame[i-1])
+                centroid_change = abs(centroid_per_frame[i] - centroid_per_frame[i-1]) if i < len(centroid_per_frame) else 0
+                
+                # Significant change indicates a structural boundary
+                if energy_change > energy_threshold or centroid_change > centroid_threshold:
+                    boundary_time = frame_times[i]
+                    if boundary_time > 0 and boundary_time < duration:
+                        boundaries.append(boundary_time)
+        
+        # Basic structure labeling (heuristic-based)
+        # This is a simplified approach - for accurate labeling, ML models are needed
+        sections = []
+        if boundaries:
+            # Add start and end
+            all_boundaries = [0.0] + sorted(set(boundaries)) + [duration]
+            
+            # Heuristic labeling based on position and energy
+            for i in range(len(all_boundaries) - 1):
+                start = all_boundaries[i]
+                end = all_boundaries[i + 1]
+                section_duration = end - start
+                
+                # Get average energy for this section
+                start_frame = int(start / frame_time)
+                end_frame = int(end / frame_time)
+                if start_frame < len(energy_per_frame) and end_frame <= len(energy_per_frame):
+                    section_energy = np.mean(energy_per_frame[start_frame:end_frame]) if end_frame > start_frame else 0
+                else:
+                    section_energy = energy_mean
+                
+                # Simple heuristic labeling
+                label = "section"
+                if i == 0:
+                    label = "intro"
+                elif i == len(all_boundaries) - 2:
+                    label = "outro"
+                elif section_energy > energy_mean * 1.2:
+                    # Higher energy likely indicates chorus
+                    label = "chorus"
+                elif section_energy < energy_mean * 0.8:
+                    # Lower energy likely indicates verse
+                    label = "verse"
+                else:
+                    # Medium energy could be bridge or transition
+                    if section_duration < duration * 0.1:
+                        label = "bridge"
+                    else:
+                        label = "verse"
+                
+                sections.append({
+                    "start": float(start),
+                    "end": float(end),
+                    "duration": float(section_duration),
+                    "label": label,
+                    "energy": float(section_energy)
+                })
+        else:
+            # No boundaries detected, treat as single section
+            sections.append({
+                "start": 0.0,
+                "end": duration,
+                "duration": duration,
+                "label": "song",
+                "energy": energy_mean
+            })
+        
+        # Deepgram transcription (if API key is configured)
+        transcription = None
+        words = []
+        paragraphs = []
+        utterances = []  # Phrases/utterances with timestamps
+        if deepgram_client:
+            try:
+                # Use transcribe_file for local file (new SDK syntax)
+                with open(tmp_path, 'rb') as audio_file:
+                    response = deepgram_client.listen.v1.media.transcribe_file(
+                        audio_file,
+                        model="nova-3",
+                        language="en",
+                        summarize="v2",
+                        topics=True,
+                        intents=True,
+                        sentiment=True,
+                        smart_format=True,
+                        punctuate=True,
+                        paragraphs=True,
+                        utterances=True,
+                        utt_split=0.7,
+                    )
+                    
+                    if response and hasattr(response, 'results'):
+                        channels = response.results.channels
+                        if channels and len(channels) > 0:
+                            alternatives = channels[0].alternatives
+                            if alternatives and len(alternatives) > 0:
+                                alt = alternatives[0]
+                                transcription = alt.transcript if hasattr(alt, 'transcript') else ''
+                                
+                                # Extract words with timestamps
+                                if hasattr(alt, 'words') and alt.words:
+                                    for word_info in alt.words:
+                                        words.append({
+                                            "word": word_info.word if hasattr(word_info, 'word') else str(word_info),
+                                            "start": word_info.start if hasattr(word_info, 'start') else 0.0,
+                                            "end": word_info.end if hasattr(word_info, 'end') else 0.0,
+                                            "confidence": word_info.confidence if hasattr(word_info, 'confidence') else 0.0
+                                        })
+                                
+                                # Extract paragraphs if available
+                                if hasattr(alt, 'paragraphs') and alt.paragraphs:
+                                    for para_info in alt.paragraphs:
+                                        para_text = ''
+                                        if hasattr(para_info, 'sentences') and para_info.sentences:
+                                            para_text = ' '.join([s.text for s in para_info.sentences if hasattr(s, 'text')])
+                                        
+                                        paragraphs.append({
+                                            "text": para_text,
+                                            "start": para_info.start if hasattr(para_info, 'start') else 0.0,
+                                            "end": para_info.end if hasattr(para_info, 'end') else 0.0
+                                        })
+                                
+                                # Extract utterances/phrases (this is what we want for phrase markers)
+                                # Utterances are typically at the channel level
+                                if hasattr(channels[0], 'utterances') and channels[0].utterances:
+                                    for utt_info in channels[0].utterances:
+                                        utterances.append({
+                                            "text": utt_info.transcript if hasattr(utt_info, 'transcript') else '',
+                                            "start": utt_info.start if hasattr(utt_info, 'start') else 0.0,
+                                            "end": utt_info.end if hasattr(utt_info, 'end') else 0.0,
+                                            "confidence": utt_info.confidence if hasattr(utt_info, 'confidence') else 0.0
+                                        })
+                                # Also check if utterances are in the response directly
+                                elif hasattr(response.results, 'utterances') and response.results.utterances:
+                                    for utt_info in response.results.utterances:
+                                        utterances.append({
+                                            "text": utt_info.transcript if hasattr(utt_info, 'transcript') else '',
+                                            "start": utt_info.start if hasattr(utt_info, 'start') else 0.0,
+                                            "end": utt_info.end if hasattr(utt_info, 'end') else 0.0,
+                                            "confidence": utt_info.confidence if hasattr(utt_info, 'confidence') else 0.0
+                                        })
+            except Exception as e:
+                print(f"Deepgram transcription error: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue without transcription if Deepgram fails
+        
         return {
             "bpm": float(bpm),
             "beats": [float(b) for b in beats],  # Beat positions in seconds
@@ -113,7 +316,16 @@ async def analyze_audio(file: UploadFile = File(...)):
                 "mean": energy_mean,
                 "std": energy_std
             },
-            "spectral_centroid": mean_spectral_centroid
+            "spectral_centroid": mean_spectral_centroid,
+            "structure": {
+                "sections": sections,
+                "boundaries": sorted(set(boundaries)) if boundaries else []
+            },
+            "transcription": {
+                "text": transcription,
+                "words": words,
+                "paragraphs": paragraphs
+            } if transcription else None
         }
     finally:
         # Cleanup temp file
