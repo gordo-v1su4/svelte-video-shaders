@@ -63,7 +63,7 @@ export class EssentiaService {
             });
 
             const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-            
+
             if (!response.ok) {
                 const errorText = await response.text();
                 console.error(`[EssentiaService] ❌ API error (${response.status}):`, errorText);

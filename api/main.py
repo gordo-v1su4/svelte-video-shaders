@@ -71,9 +71,20 @@ async def analyze_audio(file: UploadFile = File(...)):
         onset_result = onset_detector(audio)
         # Handle both tuple and single value returns
         if isinstance(onset_result, (tuple, list)) and len(onset_result) > 0:
-            onset_rate = float(onset_result[0])  # Extract rate from tuple
+            # onset_result[0] might be a numpy array, convert to scalar first
+            rate_value = onset_result[0]
+            if hasattr(rate_value, 'item'):  # numpy array/scalar
+                onset_rate = float(rate_value.item())
+            elif isinstance(rate_value, (list, np.ndarray)) and len(rate_value) > 0:
+                onset_rate = float(rate_value[0])
+            else:
+                onset_rate = float(rate_value)
         else:
-            onset_rate = float(onset_result) if onset_result is not None else 0.0
+            rate_value = onset_result
+            if hasattr(rate_value, 'item'):  # numpy array/scalar
+                onset_rate = float(rate_value.item())
+            else:
+                onset_rate = float(rate_value) if rate_value is not None else 0.0
         
         # For more detailed onset times, use frame-based onset detection
         frame_size = 2048
