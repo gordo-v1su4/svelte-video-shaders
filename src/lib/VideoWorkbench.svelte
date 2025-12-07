@@ -562,19 +562,6 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 
 				<Tweakpane.Separator />
 
-				<!-- All UI components are now direct children of the Pane -->
-				<Button title="Upload Video" on:click={handleUploadClick} />
-
-				<Tweakpane.Separator />
-
-				{#if $activeVideo}
-					<div class="playback-controls">
-						<Button title="Play" on:click={() => shaderPlayerRef?.play()} />
-						<Button title="Pause" on:click={() => shaderPlayerRef?.pause()} />
-					</div>
-					<Tweakpane.Separator />
-				{/if}
-
 				<div class="thumbnail-gallery">
 					{#each $videoAssets as asset (asset.id)}
 						<button
