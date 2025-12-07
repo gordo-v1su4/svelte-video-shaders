@@ -71,18 +71,30 @@ async def analyze_audio(file: UploadFile = File(...)):
         onset_result = onset_detector(audio)
         # Handle both tuple and single value returns
         if isinstance(onset_result, (tuple, list)) and len(onset_result) > 0:
-            # onset_result[0] might be a numpy array, convert to scalar first
+            # onset_result[0] might be a numpy array, get mean or first value
             rate_value = onset_result[0]
-            if hasattr(rate_value, 'item'):  # numpy array/scalar
-                onset_rate = float(rate_value.item())
-            elif isinstance(rate_value, (list, np.ndarray)) and len(rate_value) > 0:
-                onset_rate = float(rate_value[0])
+            if isinstance(rate_value, np.ndarray):
+                # If it's an array, use mean or first element
+                if rate_value.size == 1:
+                    onset_rate = float(rate_value.item())
+                else:
+                    # Use mean if multiple values, or first element
+                    onset_rate = float(np.mean(rate_value))
+            elif hasattr(rate_value, '__len__') and len(rate_value) > 0:
+                # List or other sequence
+                onset_rate = float(rate_value[0]) if len(rate_value) == 1 else float(np.mean(rate_value))
             else:
+                # Scalar value
                 onset_rate = float(rate_value)
         else:
             rate_value = onset_result
-            if hasattr(rate_value, 'item'):  # numpy array/scalar
-                onset_rate = float(rate_value.item())
+            if isinstance(rate_value, np.ndarray):
+                if rate_value.size == 1:
+                    onset_rate = float(rate_value.item())
+                else:
+                    onset_rate = float(np.mean(rate_value))
+            elif hasattr(rate_value, '__len__') and len(rate_value) > 0:
+                onset_rate = float(rate_value[0]) if len(rate_value) == 1 else float(np.mean(rate_value))
             else:
                 onset_rate = float(rate_value) if rate_value is not None else 0.0
         
