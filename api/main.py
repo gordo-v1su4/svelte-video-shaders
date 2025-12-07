@@ -50,46 +50,43 @@ async def analyze_audio(file: UploadFile = File(...)):
         audio = es.MonoLoader(filename=tmp_path, sampleRate=44100)()
         duration = float(len(audio) / 44100)
         
-        # Mood/Emotion classification using MusicExtractorSVM (if models are available)
+        # Mood/Emotion and Genre classification using TensorFlow models
         mood_classification = {}
         genre_classification = {}
         
-        # Try to use MusicExtractorSVM for mood/genre classification
-        # Models need to be downloaded separately from Essentia's model repository
+        # Try to use TensorFlow models for classification
+        # Models are downloaded to /app/models (effnetdiscogs, musicnn, classification_heads)
+        # Note: Full TensorFlow model integration requires proper feature extraction pipelines
+        # This is a placeholder that acknowledges models are present
         try:
-            # Check if models directory exists (default location)
-            # In Docker, this is /app/models (mounted volume)
-            # Locally, can be set via ESSENTIA_MODELS_PATH env var
             models_path = os.getenv("ESSENTIA_MODELS_PATH", "/app/models")
             
             if os.path.exists(models_path):
-                extractor = es.MusicExtractorSVM(svm_models_path=models_path)
-                features = extractor(audio)
+                effnet_path = os.path.join(models_path, "effnetdiscogs")
+                musicnn_path = os.path.join(models_path, "musicnn")
+                classification_path = os.path.join(models_path, "classification_heads")
                 
-                # Extract mood predictions
-                if 'mood_party' in features:
-                    mood_classification['party'] = float(features['mood_party'])
-                if 'mood_relaxed' in features:
-                    mood_classification['relaxed'] = float(features['mood_relaxed'])
-                if 'mood_sad' in features:
-                    mood_classification['sad'] = float(features['mood_sad'])
-                if 'mood_aggressive' in features:
-                    mood_classification['aggressive'] = float(features['mood_aggressive'])
-                if 'mood_happy' in features:
-                    mood_classification['happy'] = float(features['mood_happy'])
-                if 'danceability' in features:
-                    mood_classification['danceability'] = float(features['danceability'])
+                models_found = []
+                if os.path.exists(effnet_path):
+                    models_found.append("effnetdiscogs (genre classification)")
+                if os.path.exists(musicnn_path):
+                    models_found.append("musicnn (auto-tagging)")
+                if os.path.exists(classification_path):
+                    models_found.append("classification_heads (mood/emotion)")
                 
-                # Extract genre predictions (including electronic music genres)
-                genre_keys = [k for k in features.keys() if k.startswith('genre_')]
-                for genre_key in genre_keys:
-                    genre_name = genre_key.replace('genre_', '')
-                    genre_classification[genre_name] = float(features[genre_key])
+                if models_found:
+                    print(f"✅ TensorFlow models found: {', '.join(models_found)}")
+                    print("⚠️  Note: TensorFlow model inference requires proper feature extraction pipeline")
+                    print("   Models are available but full classification needs implementation")
+                    print("   For now, returning empty classifications - models ready for integration")
+                else:
+                    print("⚠️  Models directory exists but no model subdirectories found")
+                    
         except Exception as e:
-            # Models not available or not configured - this is expected if models aren't installed
-            print(f"MusicExtractorSVM models not available: {e}")
-            print("To enable mood/genre classification, download models from:")
-            print("https://essentia.upf.edu/models/")
+            # Models not available or error during classification
+            print(f"TensorFlow model check error: {e}")
+            import traceback
+            traceback.print_exc()
         
         # Beat detection using RhythmExtractor2013
         rhythm_extractor = es.RhythmExtractor2013(method="multifeature")
