@@ -112,30 +112,35 @@ async def analyze_audio(file: UploadFile = File(...)):
         # Use spectral flux for onset detection (OnsetRate doesn't return times, only rate)
         # Single pass: collect flux values and detect onsets
         onset_times = []
-        prev_spectrum = None
-        flux_values = []
-        frame_count = 0
-        
-        for frame in frames:
-            windowed = window(frame)
-            spec = spectrum(windowed)
+        try:
+            prev_spectrum = None
+            flux_values = []
+            frame_count = 0
             
-            if prev_spectrum is not None:
-                # Spectral flux: measure of change in spectral magnitude
-                # Positive flux indicates onset (sudden increase in energy)
-                flux = np.sum(np.maximum(0, np.abs(spec) - np.abs(prev_spectrum)))
-                flux_values.append(flux)
-            else:
-                # First frame has no previous spectrum, add zero flux
-                flux_values.append(0.0)
+            print(f"[OnsetDetection] Starting detection: duration={duration:.2f}s, sample_rate={actual_sample_rate:.0f}")
             
-            prev_spectrum = spec
-            frame_count += 1
-        
-        # Calculate adaptive threshold based on flux statistics
-        if flux_values and len(flux_values) > 1:
-            # Remove zero values for threshold calculation
-            non_zero_flux = [f for f in flux_values if f > 0]
+            for frame in frames:
+                windowed = window(frame)
+                spec = spectrum(windowed)
+                
+                if prev_spectrum is not None:
+                    # Spectral flux: measure of change in spectral magnitude
+                    # Positive flux indicates onset (sudden increase in energy)
+                    flux = np.sum(np.maximum(0, np.abs(spec) - np.abs(prev_spectrum)))
+                    flux_values.append(flux)
+                else:
+                    # First frame has no previous spectrum, add zero flux
+                    flux_values.append(0.0)
+                
+                prev_spectrum = spec
+                frame_count += 1
+            
+            print(f"[OnsetDetection] Processed {frame_count} frames, collected {len(flux_values)} flux values")
+            
+            # Calculate adaptive threshold based on flux statistics
+            if flux_values and len(flux_values) > 1:
+                # Remove zero values for threshold calculation
+                non_zero_flux = [f for f in flux_values if f > 0]
             if non_zero_flux and len(non_zero_flux) > 10:
                 flux_mean = np.mean(non_zero_flux)
                 flux_std = np.std(non_zero_flux)
@@ -172,29 +177,34 @@ async def analyze_audio(file: UploadFile = File(...)):
             threshold = 0.0001
             print(f"[OnsetDetection] Warning: No flux values, using fallback threshold")
         
-        # Detect onsets using adaptive threshold
-        # flux_values[0] is the transition from frame 0 to frame 1
-        # So flux_index 0 corresponds to time = 1 * hop_size / sample_rate
-        for flux_index, flux in enumerate(flux_values):
-            if flux > threshold:
-                # Calculate time: each flux value represents transition at the END of frame flux_index
-                # Time = (flux_index + 1) * hop_size / sample_rate
-                time = ((flux_index + 1) * hop_size) / actual_sample_rate
-                if 0 <= time < duration:
-                    onset_times.append(time)
-        
-        print(f"[OnsetDetection] Found {len(onset_times)} onsets before filtering (threshold={threshold:.6f})")
-        
-        # Filter out onsets that are too close together (minimum 20ms apart)
-        filtered_onsets = []
-        min_interval = 0.02  # 20ms
-        
-        for onset in sorted(onset_times):
-            if not filtered_onsets or (onset - filtered_onsets[-1]) >= min_interval:
-                filtered_onsets.append(onset)
-        
-        onset_times = filtered_onsets
-        print(f"[OnsetDetection] Detected {len(onset_times)} onsets")
+            # Detect onsets using adaptive threshold
+            # flux_values[0] is the transition from frame 0 to frame 1
+            # So flux_index 0 corresponds to time = 1 * hop_size / sample_rate
+            for flux_index, flux in enumerate(flux_values):
+                if flux > threshold:
+                    # Calculate time: each flux value represents transition at the END of frame flux_index
+                    # Time = (flux_index + 1) * hop_size / sample_rate
+                    time = ((flux_index + 1) * hop_size) / actual_sample_rate
+                    if 0 <= time < duration:
+                        onset_times.append(time)
+            
+            print(f"[OnsetDetection] Found {len(onset_times)} onsets before filtering (threshold={threshold:.6f})")
+            
+            # Filter out onsets that are too close together (minimum 20ms apart)
+            filtered_onsets = []
+            min_interval = 0.02  # 20ms
+            
+            for onset in sorted(onset_times):
+                if not filtered_onsets or (onset - filtered_onsets[-1]) >= min_interval:
+                    filtered_onsets.append(onset)
+            
+            onset_times = filtered_onsets
+            print(f"[OnsetDetection] ✅ Detected {len(onset_times)} onsets after filtering")
+        except Exception as e:
+            print(f"[OnsetDetection] ❌ ERROR in onset detection: {e}")
+            import traceback
+            print(traceback.format_exc())
+            onset_times = []  # Return empty list on error
         
         # Energy analysis (overall audio energy)
         energy_analyzer = es.Energy()
