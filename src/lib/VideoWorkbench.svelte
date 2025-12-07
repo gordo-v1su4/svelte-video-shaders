@@ -75,6 +75,7 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 	let audioReactivePlayback = $state(false);
 	let beatSensitivity = $state(0.3);
 	let audioFilterIntensity = $state(1.0);
+	let enableLooping = $state(true); // Loop/auto-cycle within playback
 	let uniforms = $state({
 		// VHS shader uniforms
 		u_time: { value: 0.0 },
@@ -191,7 +192,7 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 		u_grid_lineWidth: { value: 0.0 },
 
 		// Lens Flare uniforms
-		u_brightness: { value: 1.0 },
+		u_flareBrightness: { value: 1.0 },
 		u_flareSize: { value: 0.005 },
 		u_flareSpeed: { value: 0.4 },
 		u_flareShape: { value: 0.1 },
@@ -322,7 +323,7 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 			console.log("[VideoWorkbench] 📡 API connection closed (one-time request completed)");
 			
 			if (result && (result.bpm > 0 || result.beats?.length > 0)) {
-				analysisData = result;
+			analysisData = result;
 				console.log("[VideoWorkbench] ✅ Analysis data set:", {
 					bpm: result.bpm,
 					beatsCount: result.beats?.length || 0,
@@ -637,11 +638,11 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 						ColorAverage: 'Color Average',
 						TiltShift: 'Tilt Shift',
 						ToneMapping: 'Tone Mapping',
-					ASCII: 'ASCII',
-					Grid: 'Grid',
+						ASCII: 'ASCII',
+						Grid: 'Grid',
 					LensFlare: 'Lens Flare',
 					CRT: 'CRT (More CRT-like)',
-					Grayscale: 'Grayscale'
+						Grayscale: 'Grayscale'
 					}}
 				/>
 
@@ -668,6 +669,10 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 						<Tweakpane.Checkbox
 							bind:value={enableVideoCycling}
 							label="Auto Cycle Videos"
+						/>
+						<Tweakpane.Checkbox
+							bind:value={enableLooping}
+							label="Loop Playback"
 						/>
 						<!-- Removed slider since cycling is now sequential -->
 					{/if}
@@ -1294,7 +1299,7 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 				{#if selectedShaderName === 'LensFlare'}
 					<Tweakpane.Folder title="Lens Flare Main" expanded={true}>
 						<Tweakpane.Slider
-							bind:value={uniforms.u_brightness.value}
+							bind:value={uniforms.u_flareBrightness.value}
 							label="Brightness"
 							min={0}
 							max={3}
@@ -1487,10 +1492,11 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 				bind:this={shaderPlayerRef}
 				{frameBuffer}
 				{fragmentShader}
-				{uniforms}
+				bind:uniforms={uniforms}
 				{filtersEnabled}
 				{audioReactivePlayback}
 				{analysisData}
+				{enableLooping}
 			/>
 			{:else}
 				<div class="placeholder">
@@ -1502,16 +1508,16 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 
 		{#if audioFile}
 			<div class="waveform-wrapper">
-				<WaveformDisplay
-					{audioFile}
+			<WaveformDisplay
+				{audioFile}
 					beats={analysisData.beats || []}
 					onsets={analysisData.onsets || []}
 					utterances={analysisData.transcription?.utterances || []}
 					bpm={analysisData.bpm || 0}
-					currentTime={audioCurrentTime}
-					duration={audioDuration}
-					onSeek={(time) => audioAnalyzer?.seekTo?.(time)}
-				/>
+				currentTime={audioCurrentTime}
+				duration={audioDuration}
+				onSeek={(time) => audioAnalyzer?.seekTo?.(time)}
+			/>
 			</div>
 		{/if}
 	</main>

@@ -5,15 +5,16 @@
 	let {
 		frameBuffer = null,
 		fragmentShader,
-		uniforms = {},
+		uniforms = $bindable({}),
 		filtersEnabled = true,
 		audioReactivePlayback = false,
-		analysisData = { beats: [], bpm: 0 }
+		analysisData = { beats: [], bpm: 0 },
+		enableLooping = true
 	} = $props();
 
-	// Fixed output dimensions
-	const OUTPUT_WIDTH = 1920;
-	const OUTPUT_HEIGHT = 1080;
+	// Output dimensions (will match frame buffer)
+	let OUTPUT_WIDTH = 1920;
+	let OUTPUT_HEIGHT = 1080;
 	const TARGET_FPS = 24;
 	const FRAME_DURATION_MS = 1000 / TARGET_FPS;
 
@@ -70,7 +71,18 @@
 		const materialUniforms = { u_texture: { value: null } };
 		if (uniforms) {
 			for (const key in uniforms) {
-				materialUniforms[key] = { value: uniforms[key].value };
+				// Handle vec2/vec3 arrays properly for Three.js
+				if (Array.isArray(uniforms[key].value)) {
+					if (uniforms[key].value.length === 2) {
+						materialUniforms[key] = { value: new THREE.Vector2(uniforms[key].value[0], uniforms[key].value[1]) };
+					} else if (uniforms[key].value.length === 3) {
+						materialUniforms[key] = { value: new THREE.Vector3(uniforms[key].value[0], uniforms[key].value[1], uniforms[key].value[2]) };
+					} else {
+						materialUniforms[key] = { value: uniforms[key].value };
+					}
+				} else {
+					materialUniforms[key] = { value: uniforms[key].value };
+				}
 			}
 		}
 
@@ -164,17 +176,70 @@
 				accumulatedTime -= framesToAdvance * FRAME_DURATION_MS;
 			}
 
-			// Clamp globalFrameIndex to valid range
-			globalFrameIndex = Math.max(0, Math.min(globalFrameIndex, frameBuffer.totalFrames - 1));
+			// Handle looping or stopping at end
+			if (frameBuffer.totalFrames > 0) {
+				if (enableLooping) {
+					// Wrap globalFrameIndex for seamless looping
+					// Use modulo for positive wrapping (seamless loop)
+					globalFrameIndex = globalFrameIndex % frameBuffer.totalFrames;
+					// Handle negative indices (for reverse playback or glitch effects)
+					if (globalFrameIndex < 0) {
+						globalFrameIndex = globalFrameIndex + frameBuffer.totalFrames;
+					}
+				} else {
+					// No looping - clamp to valid range and stop at end
+					if (globalFrameIndex >= frameBuffer.totalFrames) {
+						globalFrameIndex = frameBuffer.totalFrames - 1;
+						// Stop playback when reaching the end
+						if (isPlaying) {
+							isPlaying = false;
+						}
+					} else if (globalFrameIndex < 0) {
+						globalFrameIndex = 0;
+					}
+				}
+			}
+			
+			// Update output dimensions from frame buffer if changed
+			if (frameBuffer.outputWidth && frameBuffer.outputHeight) {
+				if (OUTPUT_WIDTH !== frameBuffer.outputWidth || OUTPUT_HEIGHT !== frameBuffer.outputHeight) {
+					OUTPUT_WIDTH = frameBuffer.outputWidth;
+					OUTPUT_HEIGHT = frameBuffer.outputHeight;
+					textureCanvas.width = OUTPUT_WIDTH;
+					textureCanvas.height = OUTPUT_HEIGHT;
+					// Update resolution uniform if it exists
+					if (uniforms?.u_resolution) {
+						uniforms.u_resolution.value = [OUTPUT_WIDTH, OUTPUT_HEIGHT];
+					}
+				}
+			}
 			
 			// Get current frame from buffer
 			const bitmap = frameBuffer.getFrame(globalFrameIndex);
 			if (bitmap) {
 				textureContext.drawImage(bitmap, 0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 				texture.needsUpdate = true;
+			} else if (bitmap === null && frameBuffer.totalFrames > 0) {
+				// Frame failed to allocate - skip to next frame or show black
+				textureContext.fillStyle = '#000000';
+				textureContext.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+				texture.needsUpdate = true;
 			}
 		} else if (frameBuffer && frameBuffer.totalFrames > 0 && !isReady) {
 			// Not playing but buffer ready - show first frame
+			// Update output dimensions from frame buffer
+			if (frameBuffer.outputWidth && frameBuffer.outputHeight) {
+				OUTPUT_WIDTH = frameBuffer.outputWidth;
+				OUTPUT_HEIGHT = frameBuffer.outputHeight;
+				textureCanvas.width = OUTPUT_WIDTH;
+				textureCanvas.height = OUTPUT_HEIGHT;
+				// Update resolution uniform if it exists (using bindable, so this is safe)
+				if (uniforms?.u_resolution) {
+					uniforms.u_resolution.value[0] = OUTPUT_WIDTH;
+					uniforms.u_resolution.value[1] = OUTPUT_HEIGHT;
+				}
+			}
+			
 			const bitmap = frameBuffer.getFrame(0);
 			if (bitmap) {
 				textureContext.drawImage(bitmap, 0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
@@ -249,9 +314,31 @@
 		if (material?.uniforms) {
 			for (const key in uniforms) {
 				if (material.uniforms[key]) {
-					material.uniforms[key].value = uniforms[key].value;
+					// Handle vec2/vec3 arrays properly
+					if (Array.isArray(uniforms[key].value)) {
+						if (uniforms[key].value.length === 2) {
+							material.uniforms[key].value.set(uniforms[key].value[0], uniforms[key].value[1]);
+						} else if (uniforms[key].value.length === 3) {
+							material.uniforms[key].value.set(uniforms[key].value[0], uniforms[key].value[1], uniforms[key].value[2]);
+						} else {
+							material.uniforms[key].value = uniforms[key].value;
+						}
+					} else {
+						material.uniforms[key].value = uniforms[key].value;
+					}
 				} else {
-					material.uniforms[key] = { value: uniforms[key].value };
+					// Create new uniform with proper type
+					if (Array.isArray(uniforms[key].value)) {
+						if (uniforms[key].value.length === 2) {
+							material.uniforms[key] = { value: new THREE.Vector2(uniforms[key].value[0], uniforms[key].value[1]) };
+						} else if (uniforms[key].value.length === 3) {
+							material.uniforms[key] = { value: new THREE.Vector3(uniforms[key].value[0], uniforms[key].value[1], uniforms[key].value[2]) };
+						} else {
+							material.uniforms[key] = { value: uniforms[key].value };
+						}
+					} else {
+						material.uniforms[key] = { value: uniforms[key].value };
+					}
 				}
 			}
 		}
@@ -263,7 +350,18 @@
 			// This prevents shader compilation errors from missing uniforms
 			for (const key in uniforms) {
 				if (!material.uniforms[key]) {
-					material.uniforms[key] = { value: uniforms[key].value };
+					// Handle vec2/vec3 arrays properly
+					if (Array.isArray(uniforms[key].value)) {
+						if (uniforms[key].value.length === 2) {
+							material.uniforms[key] = { value: new THREE.Vector2(uniforms[key].value[0], uniforms[key].value[1]) };
+						} else if (uniforms[key].value.length === 3) {
+							material.uniforms[key] = { value: new THREE.Vector3(uniforms[key].value[0], uniforms[key].value[1], uniforms[key].value[2]) };
+						} else {
+							material.uniforms[key] = { value: uniforms[key].value };
+						}
+					} else {
+						material.uniforms[key] = { value: uniforms[key].value };
+					}
 				}
 			}
 			
@@ -275,13 +373,14 @@
 				try {
 					material.fragmentShader = newFragmentShader;
 					material.needsUpdate = true;
-					// Note: material.program.needsUpdate is not a standard Three.js API
-					// material.needsUpdate = true is sufficient to trigger recompilation
 					
 					console.log('[ShaderPlayer] Shader updated, length:', newFragmentShader.length);
 				} catch (error) {
 					console.error('[ShaderPlayer] Error updating shader:', error);
-					// Fallback to default shader on error
+					console.error('[ShaderPlayer] Shader preview:', newFragmentShader.substring(0, 200));
+					
+					// Fallback to default shader on error - don't stop video playback
+					console.warn('[ShaderPlayer] Falling back to default shader to prevent video stop');
 					material.fragmentShader = defaultFragmentShader;
 					material.needsUpdate = true;
 				}

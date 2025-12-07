@@ -2,14 +2,14 @@ export const lensFlareFragmentShader = `
     varying vec2 v_uv;
     uniform sampler2D u_texture;
     uniform float u_time;
-    uniform float u_brightness;
+    uniform float u_flareBrightness;
     uniform float u_flareSize;
     uniform float u_flareSpeed;
     uniform float u_flareShape;
     uniform float u_ghostScale;
     uniform float u_haloScale;
     uniform float u_starBurst;
-    uniform vec2 u_sunPosition;
+    uniform vec3 u_sunPosition;
     uniform float u_anamorphic;
     uniform vec3 u_colorGain; // RGB color gain
     uniform float u_secondaryGhosts;
@@ -112,7 +112,7 @@ export const lensFlareFragmentShader = `
         }
         
         // Combine all flare effects
-        float totalFlare = (flare + ghostFlare + streaks + star) * u_brightness;
+        float totalFlare = (flare + ghostFlare + streaks + star) * u_flareBrightness;
         
         // Apply color gain
         vec3 flareColor = totalFlare * u_colorGain;
@@ -129,7 +129,7 @@ export const lensFlareFragmentShader = `
 
 export const lensFlareUniforms = {
     u_time: { value: 0.0 },
-    u_brightness: { value: 1.0 },
+    u_flareBrightness: { value: 1.0 },
     u_flareSize: { value: 0.005 },
     u_flareSpeed: { value: 0.4 },
     u_flareShape: { value: 0.1 },

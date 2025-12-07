@@ -44,7 +44,8 @@ export const bloomFragmentShader = `
         // Combine original with bloom
         color.rgb += bloom.rgb * u_intensity_bloom;
         
-        gl_FragColor = color;
+        // Clamp to prevent overflow
+        gl_FragColor = clamp(color, 0.0, 1.0);
     }
 `;
 

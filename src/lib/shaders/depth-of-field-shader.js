@@ -51,10 +51,10 @@ export const depthOfFieldFragmentShader = `
         // Apply blur if needed
         if (blurAmount > 0.01) {
             vec4 blurred = gaussianBlur(u_texture, uv, u_resolution, blurAmount * 10.0);
-            color = mix(color, blurred, blurAmount);
+            color = mix(color, blurred, min(blurAmount, 1.0));
         }
         
-        gl_FragColor = color;
+        gl_FragColor = clamp(color, 0.0, 1.0);
     }
 `;
 

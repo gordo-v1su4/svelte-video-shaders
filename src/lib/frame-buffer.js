@@ -4,8 +4,43 @@
  */
 import * as MP4Box from 'mp4box';
 
-const OUTPUT_WIDTH = 1920;
-const OUTPUT_HEIGHT = 1080;
+// Calculate optimal output size based on screen/viewport
+function calculateOutputSize(videoWidth, videoHeight, maxWidth = null, maxHeight = null) {
+	// Default to screen size if not specified
+	if (!maxWidth) maxWidth = window.innerWidth || 1920;
+	if (!maxHeight) maxHeight = window.innerHeight || 1080;
+	
+	// Use video's native resolution if it's smaller than screen
+	// Otherwise, scale down to fit screen while maintaining aspect ratio
+	const videoAspect = videoWidth / videoHeight;
+	const screenAspect = maxWidth / maxHeight;
+	
+	let outputWidth, outputHeight;
+	
+	if (videoWidth <= maxWidth && videoHeight <= maxHeight) {
+		// Video is smaller than screen - use native resolution
+		outputWidth = videoWidth;
+		outputHeight = videoHeight;
+	} else if (videoAspect > screenAspect) {
+		// Video is wider - fit to width
+		outputWidth = maxWidth;
+		outputHeight = Math.round(maxWidth / videoAspect);
+	} else {
+		// Video is taller - fit to height
+		outputHeight = maxHeight;
+		outputWidth = Math.round(maxHeight * videoAspect);
+	}
+	
+	// Round to even numbers (better for some codecs)
+	outputWidth = Math.round(outputWidth / 2) * 2;
+	outputHeight = Math.round(outputHeight / 2) * 2;
+	
+	// Minimum size
+	outputWidth = Math.max(320, outputWidth);
+	outputHeight = Math.max(180, outputHeight);
+	
+	return { width: outputWidth, height: outputHeight };
+}
 
 export class FrameBuffer {
 	constructor() {
@@ -19,10 +54,12 @@ export class FrameBuffer {
 		this.isLoading = false;
 		this.loadProgress = 0;
 		
-		// Reusable canvas for frame conversion
+		// Output dimensions (will be set per video based on native resolution)
+		this.outputWidth = 1920;
+		this.outputHeight = 1080;
+		
+		// Reusable canvas for frame conversion (will be resized per video)
 		this.canvas = document.createElement('canvas');
-		this.canvas.width = OUTPUT_WIDTH;
-		this.canvas.height = OUTPUT_HEIGHT;
 		this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
 	}
 
@@ -77,6 +114,7 @@ export class FrameBuffer {
 			let samplesSubmitted = 0;
 			let allSamplesExtracted = false;
 			let frameIndex = 0; // Track frame order
+			let pendingBitmaps = 0; // Track how many ImageBitmaps are being created
 			
 			const mp4boxfile = MP4Box.createFile();
 			let videoDecoder = null;
@@ -85,9 +123,18 @@ export class FrameBuffer {
 				if (allSamplesExtracted && frameMap.size >= totalSamples) {
 					// Convert Map to ordered array
 					const frames = [];
+					let nullFrames = 0;
 					for (let i = 0; i < totalSamples; i++) {
-						frames.push(frameMap.get(i) || null);
+						const frame = frameMap.get(i);
+						frames.push(frame || null);
+						if (!frame) nullFrames++;
 					}
+					
+					if (nullFrames > 0) {
+						console.warn(`[FrameBuffer] Warning: ${nullFrames} frames failed to allocate (memory limit). Video may have gaps.`);
+						console.warn(`[FrameBuffer] Consider using shorter videos or reducing resolution.`);
+					}
+					
 					videoDecoder?.close();
 					resolve(frames);
 				}
@@ -101,12 +148,27 @@ export class FrameBuffer {
 				}
 
 				totalSamples = videoTrack.nb_samples;
-				console.log(`Video has ${totalSamples} samples`);
+				const nativeWidth = videoTrack.video.width;
+				const nativeHeight = videoTrack.video.height;
+				
+				console.log(`Video: ${nativeWidth}x${nativeHeight}, ${totalSamples} samples`);
+
+				// Calculate optimal output size based on screen and video resolution
+				const outputSize = calculateOutputSize(nativeWidth, nativeHeight);
+				this.outputWidth = outputSize.width;
+				this.outputHeight = outputSize.height;
+				
+				// Resize canvas to output size
+				this.canvas.width = this.outputWidth;
+				this.canvas.height = this.outputHeight;
+				
+				const mbPerFrame = (this.outputWidth * this.outputHeight * 4) / 1024 / 1024;
+				console.log(`Output size: ${this.outputWidth}x${this.outputHeight} (${mbPerFrame.toFixed(2)}MB per frame)`);
 
 				const config = {
 					codec: videoTrack.codec,
-					codedWidth: videoTrack.video.width,
-					codedHeight: videoTrack.video.height,
+					codedWidth: nativeWidth,
+					codedHeight: nativeHeight,
 				};
 
 				// Extract codec-specific description
@@ -136,17 +198,41 @@ export class FrameBuffer {
 						const currentFrameIndex = frameIndex++;
 						
 						// Synchronous frame handling to avoid race conditions
-						this.ctx.clearRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
-						this.ctx.drawImage(frame, 0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+						this.ctx.clearRect(0, 0, this.outputWidth, this.outputHeight);
+						// Draw frame and resize to output dimensions
+						this.ctx.drawImage(frame, 0, 0, this.outputWidth, this.outputHeight);
 						
 						// Use sync canvas copy instead of async createImageBitmap
-						const imageData = this.ctx.getImageData(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
-						createImageBitmap(imageData).then(bitmap => {
-							// Store frame at correct index to maintain order
-							frameMap.set(currentFrameIndex, bitmap);
-							onProgress(frameMap.size / totalSamples);
-							checkComplete();
-						});
+						const imageData = this.ctx.getImageData(0, 0, this.outputWidth, this.outputHeight);
+						
+						// Throttle ImageBitmap creation to prevent memory exhaustion
+						pendingBitmaps++;
+						
+						// Create ImageBitmap with error handling for memory issues
+						createImageBitmap(imageData)
+							.then(bitmap => {
+								pendingBitmaps--;
+								// Store frame at correct index to maintain order
+								frameMap.set(currentFrameIndex, bitmap);
+								onProgress(frameMap.size / totalSamples);
+								checkComplete();
+							})
+							.catch(error => {
+								pendingBitmaps--;
+								console.error(`[FrameBuffer] Failed to create ImageBitmap for frame ${currentFrameIndex}:`, error);
+								
+								// Check if it's a memory error
+								if (error.name === 'InvalidStateError' || error.message.includes('allocation') || error.message.includes('memory')) {
+									console.warn(`[FrameBuffer] Memory limit reached at frame ${currentFrameIndex}/${totalSamples}. Consider using shorter videos or lower resolution.`);
+								}
+								
+								// Store null to maintain frame count, but skip the bitmap
+								frameMap.set(currentFrameIndex, null);
+								onProgress(frameMap.size / totalSamples);
+								
+								// Continue processing - don't reject the entire decode
+								checkComplete();
+							});
 						
 						frame.close();
 					},
@@ -184,15 +270,34 @@ export class FrameBuffer {
 				}
 			};
 
-			mp4boxfile.onError = (e) => reject(e);
+			mp4boxfile.onError = (e) => {
+				// Ignore non-fatal MP4Box parsing errors
+				if (e && typeof e === 'string' && (e.includes('BoxParser') || e.includes('Invalid box'))) {
+					console.warn('[FrameBuffer] MP4Box parsing warning (non-fatal):', e);
+					// Don't reject - continue processing
+				} else {
+					console.error('[FrameBuffer] MP4Box error:', e);
+					reject(e);
+				}
+			};
 
 			// Read file
 			const reader = new FileReader();
 			reader.onload = (e) => {
-				const buffer = e.target.result;
-				buffer.fileStart = 0;
-				mp4boxfile.appendBuffer(buffer);
-				mp4boxfile.flush();
+				try {
+					const buffer = e.target.result;
+					buffer.fileStart = 0;
+					mp4boxfile.appendBuffer(buffer);
+					mp4boxfile.flush();
+				} catch (error) {
+					// Ignore MP4Box parsing warnings (they're usually non-fatal)
+					if (error.message && (error.message.includes('BoxParser') || error.message.includes('Invalid box'))) {
+						console.warn('[FrameBuffer] MP4Box parsing warning (non-fatal):', error.message);
+						// Continue anyway - the file might still decode
+					} else {
+						reject(error);
+					}
+				}
 			};
 			reader.onerror = reject;
 			reader.readAsArrayBuffer(file);

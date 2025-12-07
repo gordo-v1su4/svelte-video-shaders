@@ -18,10 +18,13 @@ export const chromaticAberrationFragmentShader = `
             offset *= (1.0 + radius * u_modulationOffset);
         }
         
-        // Sample RGB channels with offset
-        float r = texture2D(u_texture, uv + offset).r;
+        // Sample RGB channels with offset (clamp UV to prevent sampling outside texture)
+        vec2 uvR = clamp(uv + offset, 0.0, 1.0);
+        vec2 uvB = clamp(uv - offset, 0.0, 1.0);
+        
+        float r = texture2D(u_texture, uvR).r;
         float g = texture2D(u_texture, uv).g;
-        float b = texture2D(u_texture, uv - offset).b;
+        float b = texture2D(u_texture, uvB).b;
         
         gl_FragColor = vec4(r, g, b, 1.0);
     }

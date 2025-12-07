@@ -14,7 +14,10 @@ from deepgram import DeepgramClient
 # Environment variables for configuration
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+# CORS origins - default to "*" but can be overridden
+# Note: When using "*", allow_credentials must be False (browser security restriction)
+CORS_ORIGINS_STR = os.getenv("CORS_ORIGINS", "*")
+CORS_ORIGINS = [origin.strip() for origin in CORS_ORIGINS_STR.split(",")]
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
 # Initialize Deepgram client if API key is provided
@@ -25,10 +28,12 @@ if DEEPGRAM_API_KEY:
 app = FastAPI(title="Audio Analysis API", version="1.0.0")
 
 # CORS configuration (supports multiple origins via comma-separated env var)
+# Note: When allow_credentials=True, you cannot use "*" - must specify exact origins
+cors_origins = CORS_ORIGINS if "*" not in CORS_ORIGINS else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=True if "*" not in CORS_ORIGINS else False,  # Can't use credentials with "*"
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -368,9 +373,28 @@ async def analyze_audio(file: UploadFile = File(...)):
                 "utterances": utterances  # Phrases with timestamps for UI markers
             } if transcription else None
         }
+    except Exception as e:
+        # Log the full error for debugging
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"[ERROR] Analysis failed: {e}")
+        print(error_trace)
+        
+        # Return error response
+        return {
+            "error": str(e),
+            "bpm": 0,
+            "beats": [],
+            "confidence": 0,
+            "duration": 0
+        }
     finally:
         # Cleanup temp file
-        os.unlink(tmp_path)
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception as e:
+                print(f"Warning: Could not delete temp file {tmp_path}: {e}")
 
 @app.get("/health")
 async def health():

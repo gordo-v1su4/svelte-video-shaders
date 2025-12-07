@@ -18,10 +18,13 @@ export const crtFragmentShader = `
         return fract(sin(dot(p, vec3(829., 4839., 432.))) * 39428.);
     }
 
-    // Read texture with smooth edge
+    // Read texture with smooth edge (clamp UV to prevent sampling outside)
     vec4 readTex(vec2 uv) {  
+        // Clamp UV to valid range
+        uv = clamp(uv, 0.0, 1.0);
         vec4 c = texture2D(u_texture, uv);  
-        c.a *= smoothstep(.5, .499, abs(uv.x - .5)) * smoothstep(.5, .499, abs(uv.y - .5));
+        // Optional: smooth edge fade (commented out as it can cause issues)
+        // c.a *= smoothstep(.5, .499, abs(uv.x - .5)) * smoothstep(.5, .499, abs(uv.y - .5));
         return c;
     }
 
@@ -41,22 +44,30 @@ export const crtFragmentShader = `
     }
 
     void main() {
-        vec2 fc = v_uv * u_resolution;
+        // Start with normalized UV coordinates
+        vec2 uv = v_uv;
+        
+        // Calculate pixel coordinates for pixelation effect
+        vec2 fc = uv * u_resolution;
         vec2 fp = fract(fc / u_pixelSize) * 2. - 1.;
         float pixel = 1. - length(fp*fp*fp); 
 
-        // Pixelize
+        // Pixelize - round to pixel grid
         fc = floor(fc / u_pixelSize) * u_pixelSize;    
-
-        vec2 uv = fc / u_resolution;
+        uv = fc / u_resolution;
+        
+        // Calculate distance from center for distortion (with aspect ratio correction)
         vec2 p = uv * 2. - 1.;
-        p.x *= u_resolution.x / u_resolution.y;
+        float aspect = u_resolution.x / u_resolution.y;
+        p.x *= aspect;
         float l = length(p); 
          
-        // Distort
+        // Distort - barrel/pincushion distortion
         float dist = pow(l, 2.) * u_distortion;
         dist = smoothstep(0., 1., dist);
-        uv = zoom(uv, 0.5 + dist);          
+        // Zoom: 1.0 = no zoom, < 1.0 = zoom out, > 1.0 = zoom in
+        // For barrel distortion, we want to zoom out from center
+        uv = zoom(uv, 1.0 - dist * 0.3);          
             
         // Blur
         vec2 du = (uv - .5);
@@ -68,12 +79,16 @@ export const crtFragmentShader = `
         vec2 uvg = uv;
         vec2 uvb = uv;
             
-        // Chromatic aberration
+        // Chromatic aberration - separate RGB channels
         float d = (1. + sin(uv.y * 20. + u_time * 3.) * 0.1) * u_aberration;
-        uvr.x += 0.0015;
-        uvb.x -= 0.0015;
-        uvr = zoom(uvr, 1. + d * l * l);
-        uvb = zoom(uvb, 1. - d * l * l);    
+        uvr.x += 0.0015 * u_aberration;
+        uvb.x -= 0.0015 * u_aberration;
+        
+        // Apply zoom-based distortion for chromatic aberration
+        if (u_aberration > 0.0) {
+            uvr = zoom(uvr, 1.0 + d * l * l * 0.1);
+            uvb = zoom(uvb, 1.0 - d * l * l * 0.1);
+        }    
             
         vec4 cr = readTex(uvr);
         vec4 cg = readTex(uvg);
@@ -85,7 +100,7 @@ export const crtFragmentShader = `
         
         vec4 outColor = vec4(
             vec3(.3, .5, .0) * gr + vec3(.1, .9, .2) * gg + vec3(.0, .3, .9) * gb,
-            cr.a + cg.a + cb.a
+            min(1.0, cr.a + cg.a + cb.a)
         );
         outColor *= pixel;
 
@@ -104,12 +119,13 @@ export const crtFragmentShader = `
         outColor += deco * smoothstep(2., 0., l);
         
         // Vignette
-        outColor *= 1.8 - l * l * u_vignetteIntensity;  
+        outColor *= clamp(1.8 - l * l * u_vignetteIntensity, 0.0, 2.0);  
 
         // Dither
         outColor += rand(vec3(p, u_time)) * u_dither;     
 
-        gl_FragColor = outColor;
+        // Clamp final color to prevent overflow
+        gl_FragColor = clamp(outColor, 0.0, 1.0);
     }
 `;
 
