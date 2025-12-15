@@ -183,8 +183,11 @@ async def analyze_audio(file: UploadFile = File(...)):
             for flux_index, flux in enumerate(flux_values):
                 if flux > threshold:
                     # Calculate time: each flux value represents transition at the END of frame flux_index
-                    # Time = (flux_index + 1) * hop_size / sample_rate
-                    time = ((flux_index + 1) * hop_size) / actual_sample_rate
+                    # Time = flux_index * hop_size / sample_rate
+                    # Flux index 0 is the change from frame 0 to 1, effectively occurring at time hop_size
+                    # But standard practice often aligns to start of window. Let's align to start of the flux window.
+                    # Previous was (flux_index + 1), which adds ~11ms. Let's try flux_index.
+                    time = (flux_index * hop_size) / actual_sample_rate
                     if 0 <= time < duration:
                         onset_times.append(time)
             
@@ -377,7 +380,7 @@ async def analyze_audio(file: UploadFile = File(...)):
             "beats": [float(b) for b in beats],  # Beat positions in seconds
             "confidence": float(beats_confidence),
             "duration": duration,
-            "onsets": onset_times[:2000] if len(onset_times) > 2000 else onset_times,  # Limit to first 2000 onsets
+            "onsets": onset_times[:10000] if len(onset_times) > 10000 else onset_times,  # Increased limit 2k -> 10k
             "onset_count": len(onset_times),
             "onset_rate": float(onset_rate),
             "energy": {

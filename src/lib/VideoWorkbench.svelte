@@ -75,6 +75,7 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 	let audioReactivePlayback = $state(false);
 	let beatSensitivity = $state(0.3);
 	let audioFilterIntensity = $state(1.0);
+	let onsetDensity = $state(1.0); // New state for density control
 	let enableLooping = $state(true); // Loop/auto-cycle within playback
 	let uniforms = $state({
 		// VHS shader uniforms
@@ -753,6 +754,16 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 							min={0}
 							max={2.0}
 							step={0.01}
+						/>
+
+						<Tweakpane.Separator />
+						
+						<Tweakpane.Slider
+							bind:value={onsetDensity}
+							label="Transient Density"
+							min={0.0}
+							max={1.0}
+							step={0.05}
 						/>
 					{/if}
 				</Tweakpane.Folder>
@@ -1544,6 +1555,7 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 					bpm={analysisData.bpm || 0}
 				currentTime={audioCurrentTime}
 				duration={audioDuration}
+				onsetDensity={onsetDensity}
 				onSeek={(time) => audioAnalyzer?.seekTo?.(time)}
 			/>
 			</div>

@@ -10,6 +10,7 @@
 		currentTime = 0,
 		duration = 0,
 		frameRate = 30,
+		onsetDensity = 1.0, // Exposed as prop
 		onSeek = (time) => {},
 		onSegmentChange = (segments) => {},
 		onMarkerAdd = (marker) => {}
@@ -36,7 +37,7 @@
 	let timeDisplayMode = $state('time'); // 'time', 'frames', 'beats'
 	let showBeats = $state(true);
 	let showOnsets = $state(true);
-	let onsetDensity = $state(1.0); // 0.0 to 1.0, controls how many onsets are displayed
+	// onsetDensity is now a prop
 	let showUtterances = $state(true);
 	let snapToBeats = $state(false);
 	let zoom = $state(1);
