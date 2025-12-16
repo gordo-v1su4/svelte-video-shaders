@@ -17,7 +17,7 @@ services:
       - ./models:/app/models
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -31,4 +31,3 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
-
