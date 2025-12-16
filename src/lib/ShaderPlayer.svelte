@@ -138,7 +138,7 @@
 
 		// Only advance frames if playing and buffer is ready
 		if (isPlaying && frameBuffer && frameBuffer.totalFrames > 0) {
-				playbackSpeed = 1.0;
+
 
 			// Accumulate time and advance frames
 			accumulatedTime += deltaTime * playbackSpeed;

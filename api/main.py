@@ -359,6 +359,22 @@ async def analyze_audio(file: UploadFile = File(...)):
                 "label": "song",
                 "energy": energy_mean
             })
+            
+        # High-resolution Energy Curve for Speed Ramping
+        # Hop size 512 at 44.1kHz is ~11.6ms (approx 86Hz), good for ~60fps video
+        rms_frames = es.FrameGenerator(audio, frameSize=1024, hopSize=512)
+        rms_curve = []
+        rms = es.RMS()
+        
+        for frame in rms_frames:
+            rms_val = rms(frame)
+            rms_curve.append(float(rms_val))
+            
+        # Normalize curve to 0-1 for easier mapping
+        if rms_curve:
+            max_rms = max(rms_curve)
+            if max_rms > 0:
+                rms_curve = [val / max_rms for val in rms_curve]
         
         # Deepgram transcription (if API key is configured)
         # Isolated in try-except so errors don't affect Essentia analysis
@@ -388,7 +404,8 @@ async def analyze_audio(file: UploadFile = File(...)):
             "onset_rate": float(onset_rate),
             "energy": {
                 "mean": energy_mean,
-                "std": energy_std
+                "std": energy_std,
+                "curve": rms_curve
             },
             "spectral_centroid": mean_spectral_centroid,
             "structure": {

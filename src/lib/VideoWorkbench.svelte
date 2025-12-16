@@ -321,10 +321,36 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	// --- Playback State ---
 	let isPlaying = $state(false);
 
+	// Speed Ramping State
+	let enableSpeedRamping = $state(false);
+	let speedRampSensitivity = $state(2.0); // How much energy affects speed
+	let baseSpeed = $state(1.0); // Minimum/Base speed
+	const ESSENTIA_HOP_SIZE = 512;
+	const ESSENTIA_SAMPLE_RATE = 44100;
+	const SECONDS_PER_FRAME = ESSENTIA_HOP_SIZE / ESSENTIA_SAMPLE_RATE;
+
 	// High-precision time loop for sub-beat synchronization
 	function updateTime() {
 		if (sharedAudioRef && !sharedAudioRef.paused) {
 			audioCurrentTime = sharedAudioRef.currentTime;
+			
+			// Handle Speed Ramping
+			if (enableSpeedRamping && analysisData.energy?.curve && shaderPlayerRef) {
+				const frameIndex = Math.floor(audioCurrentTime / SECONDS_PER_FRAME);
+				if (frameIndex >= 0 && frameIndex < analysisData.energy.curve.length) {
+					const energy = analysisData.energy.curve[frameIndex];
+					// Formula: speed = base + (energy * sensitivity)
+					// Energy is 0-1 normalized
+					const newSpeed = baseSpeed + (energy * speedRampSensitivity);
+					shaderPlayerRef.setSpeed(newSpeed);
+				}
+			} else if (shaderPlayerRef) {
+				// Reset to normal if ramping disabled
+				// Only reset if we haven't manually set it elsewhere? 
+				// For now, assume this controls playback speed when playing
+				shaderPlayerRef.setSpeed(1.0);
+			}
+
 			rafId = requestAnimationFrame(updateTime);
 		}
 	}
@@ -401,6 +427,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				bpm: result.bpm,
 				beats: result.beats || [],
 				onsets: result.onsets || [], // critical for transients
+				energy: result.energy, // Contains curve for speed ramping
 				confidence: result.confidence
 			};
 			
@@ -833,6 +860,30 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 						/>
                         
                         <Tweakpane.Separator />
+						
+						<!-- Speed Ramping Controls -->
+						<Tweakpane.Folder title="Speed Ramping" expanded={false}>
+							<Tweakpane.Checkbox
+								bind:value={enableSpeedRamping}
+								label="Enable Ramping"
+							/>
+							<Tweakpane.Slider
+								bind:value={baseSpeed}
+								label="Base Speed"
+								min={0.1}
+								max={2.0}
+								step={0.1}
+							/>
+							<Tweakpane.Slider
+								bind:value={speedRampSensitivity}
+								label="Sensitivity"
+								min={0}
+								max={5.0}
+								step={0.1}
+							/>
+						</Tweakpane.Folder>
+
+						<Tweakpane.Separator />
                         
 						<Tweakpane.Slider
 							bind:value={markerSwapThreshold}
