@@ -29,7 +29,7 @@ docker build -t essentia-api .
 # Run the container
 docker run -p 8000:8000 essentia-api
 ```
-
+                                                                                                                                 
 #### Using Docker Compose
 
 ```bash
@@ -111,7 +111,7 @@ Health check endpoint.
    ```
 
 4. **Update frontend environment:**
-   - Set `VITE_ESSENTIA_API_URL=http://your-server-ip:8000` in your frontend `.env` file
+   - Set `VITE_ESSENTIA_API_URL=https://essentia.v1su4.com` in your frontend `.env` file
 
 ### Option 2: Docker Hub / Container Registry
 

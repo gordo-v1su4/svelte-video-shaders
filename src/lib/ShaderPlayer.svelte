@@ -7,7 +7,6 @@
 		fragmentShader,
 		uniforms = $bindable({}),
 		filtersEnabled = true,
-		audioReactivePlayback = false,
 		analysisData = { beats: [], bpm: 0 },
 		enableLooping = true
 	} = $props();
@@ -139,34 +138,7 @@
 
 		// Only advance frames if playing and buffer is ready
 		if (isPlaying && frameBuffer && frameBuffer.totalFrames > 0) {
-			// Audio-reactive playback modifications
-			if (audioReactivePlayback && uniforms) {
-				const audioLevel = uniforms.u_audioLevel?.value || 0;
-				const trebleLevel = uniforms.u_trebleLevel?.value || 0;
-				const bassLevel = uniforms.u_bassLevel?.value || 0;
-
-				// Beat-synced jumps using Essentia data
-				if (analysisData?.beats?.length > 0) {
-					const audioTimeSeconds = (currentTime - playbackStartTime) / 1000;
-					
-					while (beatIndex < analysisData.beats.length &&
-						   analysisData.beats[beatIndex] < audioTimeSeconds) {
-						// Jump cut on beat - skip forward 2-4 frames
-						globalFrameIndex += Math.floor(2 + bassLevel * 3);
-						beatIndex++;
-					}
-				}
-
-				// Speed ramp based on audio intensity (0.5x to 3x)
-				playbackSpeed = 0.5 + (audioLevel * 2.5);
-
-				// Stutter/glitch on high treble
-				if (trebleLevel > 0.6 && Math.random() < 0.1) {
-					globalFrameIndex -= Math.floor(Math.random() * 3);
-				}
-			} else {
 				playbackSpeed = 1.0;
-			}
 
 			// Accumulate time and advance frames
 			accumulatedTime += deltaTime * playbackSpeed;

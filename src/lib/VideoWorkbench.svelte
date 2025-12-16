@@ -3,7 +3,7 @@
 	import { ThemeUtils } from 'svelte-tweakpane-ui';
 	import Button from 'svelte-tweakpane-ui/Button.svelte';
 import ShaderPlayer from '$lib/ShaderPlayer.svelte';
-	import WaveformDisplay from '$lib/WaveformDisplay.svelte';
+import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	import { videoAssets, activeVideo } from '$lib/stores.js';
 	import { generateThumbnail } from '$lib/video-utils.js';
 	import { vhsFragmentShader } from '$lib/shaders/vhs-shader.js';
@@ -72,11 +72,71 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 	let audioColorShift = $state(0.5);
 	let audioPulseSpeed = $state(1.0);
 	let audioWaveAmplitude = $state(0.5);
-	let audioReactivePlayback = $state(false);
+	// Removed legacy audioReactivePlayback
 	let beatSensitivity = $state(0.3);
-	let audioFilterIntensity = $state(1.0);
+	// Removed legacy audioFilterIntensity
 	let onsetDensity = $state(1.0); // New state for density control
+	let markerSwapThreshold = $state(4); // Swap video after this many markers
+	let markerCounter = $state(0); // Current count of markers hit
+	let isBeatActive = $state(false); // For visual indicator
+	let lastBeatTime = 0; // Debounce for beat detection
+	
 	let enableLooping = $state(true); // Loop/auto-cycle within playback
+	
+	let showGrid = $state(true);
+	
+	const filteredOnsets = $derived.by(() => {
+		if (!analysisData.onsets || analysisData.onsets.length === 0) return [];
+		
+		const bpm = analysisData.bpm > 0 ? analysisData.bpm : 120;
+		const secondsPerBeat = 60 / bpm;
+		const interval32 = secondsPerBeat / 8; // 1/32 note duration
+		
+		// Map density slider (0.0-1.0) to interval multiplier
+		// 1.0 = 1x interval (1/32 note density)
+		// 0.0 = 32x interval (1/1 note density)
+		// We use a power curve for better feel
+		const densityFactor = Math.pow(onsetDensity, 2); 
+		// If density is 1.0, minInterval is interval32. If 0, it's huge.
+		// Let's invert: slider controls density. 
+		// Density 1.0 => Min Interval = interval32
+		// Density 0.0 => Min Interval = interval32 * 32 (whole note)
+		const scaler = 1 + (1 - onsetDensity) * 31;
+		const effectiveMinInterval = interval32 * scaler;
+
+		const result = [];
+		let lastTime = -effectiveMinInterval; // Ensure first can be picked
+		
+		for (const onset of analysisData.onsets) {
+			if (onset - lastTime >= effectiveMinInterval) {
+				result.push(onset);
+				lastTime = onset;
+			}
+		}
+		return result;
+	});
+
+	const gridMarkers = $derived.by(() => {
+		if (!showGrid || !audioDuration || audioDuration === 0) return [];
+		const bpm = analysisData.bpm > 0 ? analysisData.bpm : 120;
+		const secondsPerBeat = 60 / bpm;
+		const interval32 = secondsPerBeat / 8;
+		
+		const markers = [];
+		// Align grid to first beat if available, else 0
+		const startOffset = (analysisData.beats && analysisData.beats.length > 0) ? analysisData.beats[0] : 0;
+		
+		// Backfill from startOffset to 0
+		for (let t = startOffset - interval32; t >= 0; t -= interval32) {
+			markers.unshift(t);
+		}
+		
+		// Forward fill
+		for (let t = startOffset; t < audioDuration; t += interval32) {
+			markers.push(t);
+		}
+		return markers;
+	});
 	let uniforms = $state({
 		// VHS shader uniforms
 		u_time: { value: 0.0 },
@@ -253,6 +313,7 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 
 	// --- Component Refs ---
 	let shaderPlayerRef = $state();
+	let sharedAudioRef; // Shared audio element
 	let fileInput;
 	let audioInput;
 
@@ -305,120 +366,76 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 		console.log("[VideoWorkbench] 📡 Starting Essentia API analysis (one-time request, no ongoing connection)...");
 		console.log("[VideoWorkbench] File:", file.name, "Size:", (file.size / 1024).toFixed(2), "KB");
 		
-		// Initialize audio analyzer for playback/FFT (local Web Audio API, not server)
-		if (audioAnalyzer) {
-			audioAnalyzer.destroy();
-		}
-		audioAnalyzer = new AudioAnalyzer();
-		const success = await audioAnalyzer.initializeAudio(file);
-		
-		// Initialize Essentia API and run offline analysis (separate from AudioAnalyzer)
 		try {
 			if (!essentiaService) {
-				console.log("[VideoWorkbench] Creating EssentiaService instance...");
 				essentiaService = new EssentiaService();
 				await essentiaService.initialize();
 			}
 			
-			if (!essentiaService.isReady) {
-				console.warn("[VideoWorkbench] ⚠️ EssentiaService is not ready, attempting to reinitialize...");
-				await essentiaService.initialize();
-			}
-			
-			console.log("[VideoWorkbench] Starting Essentia analysis via API...");
 			const result = await essentiaService.analyzeFile(file);
-			console.log("[VideoWorkbench] Analysis complete:", result);
-			console.log("[VideoWorkbench] 📡 API connection closed (one-time request completed)");
 			
-			// Set analysisData if we have any useful data (beats, onsets, or BPM)
-			if (result && (result.bpm > 0 || result.beats?.length > 0 || result.onsets?.length > 0)) {
-				analysisData = result;
-				console.log("[VideoWorkbench] ✅ Analysis data set:", {
-					bpm: result.bpm,
-					beatsCount: result.beats?.length || 0,
-					onsetsCount: result.onsets?.length || 0,
-					confidence: result.confidence,
-					duration: result.duration
-				});
-				if (result.onsets && result.onsets.length > 0) {
-					console.log("[VideoWorkbench] 🎯 Onsets detected:", result.onsets.length, "onsets");
-					console.log("[VideoWorkbench] First 5 onsets:", result.onsets.slice(0, 5));
-				} else {
-					console.warn("[VideoWorkbench] ⚠️ No onsets detected in API response");
-				}
-				console.log("[VideoWorkbench] ℹ️ Note: 'Playing audio, analyzer state' messages are from LOCAL Web Audio API (not server)");
-			} else {
-				console.warn("[VideoWorkbench] ⚠️ Analysis returned empty data, API may not have processed the file");
-				console.warn("[VideoWorkbench] Result:", result);
-			}
+			// Update analysis data with result from API
+			analysisData = {
+				bpm: result.bpm,
+				beats: result.beats || [],
+				onsets: result.onsets || [], // critical for transients
+				confidence: result.confidence
+			};
+			
+			console.log(`[VideoWorkbench] Analysis applied: ${analysisData.onsets.length} onsets, ${analysisData.bpm} BPM`);
+			
 		} catch (err) {
 			console.error("[VideoWorkbench] ❌ Essentia analysis failed:", err);
-			console.error("[VideoWorkbench] Error details:", err.stack);
+			// Fallback or empty data
+			analysisData = { bpm: 0, beats: [], onsets: [] };
 		} finally {
 			isAnalyzingAudio = false;
-			// Reset file input to allow re-selecting the same file
-			if (audioInput) {
-				audioInput.value = '';
-			}
 		}
 		
-	if (success) {
-			audioAnalyzer.setVolume(audioVolume);
-			// Set initial duration (may update once metadata loads)
-			audioAnalyzer.audioElement?.addEventListener('loadedmetadata', () => {
-				audioDuration = audioAnalyzer.getDuration();
-			});
-			// Start audio analysis loop
-			startAudioAnalysis();
+		// Audio set up logic simplified - strictly Essentia + Peaks
+		if (sharedAudioRef) {
+			const objectUrl = URL.createObjectURL(file);
+			sharedAudioRef.src = objectUrl;
+			sharedAudioRef.volume = audioVolume;
+			// Ensure we catch the duration
+			sharedAudioRef.onloadedmetadata = () => {
+				audioDuration = sharedAudioRef.duration;
+			};
 		}
 	}
 
-	function startAudioAnalysis() {
-		if (!audioAnalyzer) return;
+	/* Local Analysis Loop Removed - Pure Reactive Logic Trigger */
+	
+	let previousTime = 0;
+	
+	$effect(() => {
+		const time = audioCurrentTime;
 		
-		function updateAudioUniforms() {
-			// Always update playhead time when audio element exists and is playing
-			if (audioAnalyzer && audioAnalyzer.audioElement) {
-				const isPlaying = !audioAnalyzer.audioElement.paused && 
-				                  audioAnalyzer.audioElement.currentTime > 0 && 
-				                  !audioAnalyzer.audioElement.ended;
-				
-				if (isPlaying || audioAnalyzer.isAnalyzing) {
-					// Update playhead time for waveform (always update when playing)
-					audioCurrentTime = audioAnalyzer.getCurrentTime?.() || 0;
-					if (!audioDuration && audioAnalyzer.getDuration?.()) {
-						audioDuration = audioAnalyzer.getDuration();
-					}
-				}
-			}
-			
-			if (audioAnalyzer && audioAnalyzer.isAnalyzing) {
-				const audioData = audioAnalyzer.getAudioData();
-				
-				uniforms.u_audioLevel.value = audioData.audioLevel;
-				uniforms.u_bassLevel.value = audioData.bassLevel;
-				uniforms.u_midLevel.value = audioData.midLevel;
-				uniforms.u_trebleLevel.value = audioData.trebleLevel;
-				
-				// Apply audio-reactive filter intensity only if audio is actually playing
-				if (audioReactivePlayback) {
-					const baseIntensity = filtersEnabled ? 1.0 : 0.0;
-					const audioModulation = audioData.audioLevel * audioFilterIntensity;
-					uniforms.u_intensity.value = Math.min(baseIntensity + audioModulation, 2.0);
-				}
-			} else {
-				// Reset audio levels when no audio is playing
-				uniforms.u_audioLevel.value = 0;
-				uniforms.u_bassLevel.value = 0;
-				uniforms.u_midLevel.value = 0;
-				uniforms.u_trebleLevel.value = 0;
-			}
-			
-			requestAnimationFrame(updateAudioUniforms);
+		// Reset tracking on seek or pause (approximate)
+		if (!isPlaying || Math.abs(time - previousTime) > 1.0) {
+			previousTime = time;
+			return;
 		}
 		
-		updateAudioUniforms();
-	}
+		if (time > previousTime) {
+			// Check if we crossed any onset (simple linear check for robustness)
+			const hit = filteredOnsets.some(onset => onset > previousTime && onset <= time);
+			
+			if (hit) {
+				isBeatActive = true;
+				markerCounter++;
+				setTimeout(() => isBeatActive = false, 100); // Visual blink duration
+				
+				// Video Swap Logic
+				if (enableVideoCycling && markerCounter >= markerSwapThreshold) {
+					// console.log("Marker threshold reached, swapping video");
+					nextVideo();
+					markerCounter = 0;
+				}
+			}
+		}
+		previousTime = time;
+	});
 
 	function handleAudioVolumeChange() {
 		if (audioAnalyzer) {
@@ -427,16 +444,18 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 	}
 
 	function playAudio() {
-		if (audioAnalyzer) {
-			console.log('Playing audio, analyzer state:', audioAnalyzer.isAnalyzing);
-			audioAnalyzer.play();
-			console.log('Audio playing, analyzer state:', audioAnalyzer.isAnalyzing);
+		// Control global playback state directly
+		isPlaying = true;
+		if (sharedAudioRef && sharedAudioRef.paused) {
+			sharedAudioRef.play();
 		}
 	}
 
 	function pauseAudio() {
-		if (audioAnalyzer) {
-			audioAnalyzer.pause();
+		// Control global playback state directly
+		isPlaying = false;
+		if (sharedAudioRef && !sharedAudioRef.paused) {
+			sharedAudioRef.pause();
 		}
 	}
 
@@ -517,6 +536,8 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 		if (!shaderPlayerRef || $videoAssets.length <= 1) return;
 		const currentIndex = $videoAssets.findIndex(asset => asset.id === $activeVideo?.id);
 		const nextIndex = (currentIndex + 1) % $videoAssets.length;
+		
+        // Ensure seamless loop if we just wrapped
 		activeVideo.set($videoAssets[nextIndex]);
 		shaderPlayerRef.seekToClip(nextIndex);
 	}
@@ -585,7 +606,31 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 				break;
 		}
 	}
+	// Sync Video Playback with shared IsPlaying state
+	$effect(() => {
+		if (shaderPlayerRef) {
+			if (isPlaying) {
+				// Need to ensure audio is playing too? 
+				// PeaksPlayer handles audio element play/pause based on isPlaying binding.
+				// We just handle video.
+				shaderPlayerRef.play();
+				// Also ensure analyzer knows?
+				if (audioAnalyzer) audioAnalyzer.isAnalyzing = true; 
+			} else {
+				shaderPlayerRef.pause();
+				if (audioAnalyzer) audioAnalyzer.isAnalyzing = false;
+			}
+		}
+	});
+
+	// Handle video end for looping
+	// Note: ShaderPlayer likely has an onVideoEnd prop or event we should use.
+    // If not, we might need to check duration.
+    // Assuming ShaderPlayer handles loop if 'loop' prop passed (we pass enableLooping)
 </script>
+
+<!-- The Shared Audio Element -->
+<audio bind:this={sharedAudioRef} style="display: none;" crossorigin="anonymous"></audio>
 
 <!-- Hidden file inputs for the entire workbench -->
 	<input
@@ -735,28 +780,9 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 							on:change={handleAudioVolumeChange}
 						/>
 						
-						<Tweakpane.Checkbox
-							bind:value={audioReactivePlayback}
-							label="Audio Reactive Playback"
-						/>
 						
-						<Tweakpane.Slider
-							bind:value={beatSensitivity}
-							label="Beat Sensitivity"
-							min={0.1}
-							max={1.0}
-							step={0.01}
-						/>
+						<!-- Legacy Audio Reactive Playback & Filter Intensity removed -->
 						
-						<Tweakpane.Slider
-							bind:value={audioFilterIntensity}
-							label="Audio Filter Intensity"
-							min={0}
-							max={2.0}
-							step={0.01}
-						/>
-
-						<Tweakpane.Separator />
 						
 						<Tweakpane.Slider
 							bind:value={onsetDensity}
@@ -765,6 +791,27 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 							max={1.0}
 							step={0.05}
 						/>
+						
+						<Tweakpane.Checkbox
+							bind:value={showGrid}
+							label="Show 1/32 Grid"
+						/>
+                        
+                        <Tweakpane.Separator />
+                        
+						<Tweakpane.Slider
+							bind:value={markerSwapThreshold}
+							label="Swap Threshold"
+							min={1}
+							max={16}
+							step={1}
+						/>
+                        
+                         <!-- Beat Indicator -->
+                         <div class="beat-indicator-row">
+                             <div class="beat-label">Beat Trigger:</div>
+                             <div class="beat-light" class:active={isBeatActive}></div>
+                         </div>
 					{/if}
 				</Tweakpane.Folder>
 
@@ -1533,7 +1580,6 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 				{fragmentShader}
 				bind:uniforms={uniforms}
 				{filtersEnabled}
-				{audioReactivePlayback}
 				{analysisData}
 				{enableLooping}
 			/>
@@ -1545,25 +1591,60 @@ import ShaderPlayer from '$lib/ShaderPlayer.svelte';
 			{/if}
 		</div>
 
-		{#if audioFile}
-			<div class="waveform-wrapper">
-			<WaveformDisplay
-				{audioFile}
-					beats={analysisData.beats || []}
-					onsets={analysisData.onsets || []}
-					utterances={analysisData.transcription?.utterances || []}
-					bpm={analysisData.bpm || 0}
-				currentTime={audioCurrentTime}
-				duration={audioDuration}
-				onsetDensity={onsetDensity}
-				onSeek={(time) => audioAnalyzer?.seekTo?.(time)}
+		<div class="waveform-wrapper" style="position: relative;">
+			{#if isAnalyzingAudio}
+				<div style="position: absolute; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; background-color: rgba(0,0,0,0.8); backdrop-filter: blur(4px);">
+					<div style="width: 3rem; height: 3rem; border: 4px solid #06b6d4; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 1rem;"></div>
+					<div style="color: #22d3ee; font-family: monospace; font-size: 1.125rem; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;">Running Essentia Analysis...</div>
+					<div style="color: #9ca3af; font-size: 0.75rem; margin-top: 0.5rem;">Extracting beats & transients</div>
+				</div>
+			{/if}
+			<PeaksPlayer
+				audioFile={audioFile}
+                mediaElement={sharedAudioRef}
+				bind:currentTime={audioCurrentTime}
+				bind:duration={audioDuration}
+				bind:isPlaying={isPlaying}
+				onsets={filteredOnsets} 
+				segments={[]} 
+				grid={gridMarkers}
+				onSeek={(time) => {
+					if (audioAnalyzer) audioAnalyzer.seekTo(time);
+					else {
+						audioCurrentTime = time;
+					}
+				}}
 			/>
-			</div>
-		{/if}
+		</div>
 	</main>
 </div>
 
 <style>
+    .beat-indicator-row {
+        display: flex;
+        align-items: center;
+        margin-top: 10px;
+        padding: 5px;
+    }
+    .beat-label {
+        font-size: 11px;
+        color: #888;
+        margin-right: 10px;
+    }
+    .beat-light {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background-color: #333;
+        border: 1px solid #555;
+        transition: background-color 0.05s;
+    }
+    .beat-light.active {
+        background-color: #00ff00;
+        box-shadow: 0 0 8px #00ff00;
+        border-color: #00ff00;
+    }
+
 	.app-container { display: flex; height: 100vh; background-color: #1a1a1a; color: #fff; }
 	.sidebar { width: 350px; padding: 1rem; background-color: #242424; display: flex; flex-direction: column; gap: 1.5rem; overflow-y: auto; }
 	.sidebar h2 { text-align: center; margin-bottom: 0; }
