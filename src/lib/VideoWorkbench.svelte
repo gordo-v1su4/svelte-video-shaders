@@ -313,12 +313,34 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 
 	// --- Component Refs ---
 	let shaderPlayerRef = $state();
-	let sharedAudioRef; // Shared audio element
+	let sharedAudioRef = $state(); // Shared audio element
+	let rafId; // RequestAnimationFrame ID for smooth time updates
 	let fileInput;
 	let audioInput;
 
 	// --- Playback State ---
 	let isPlaying = $state(false);
+
+	// High-precision time loop for sub-beat synchronization
+	function updateTime() {
+		if (sharedAudioRef && !sharedAudioRef.paused) {
+			audioCurrentTime = sharedAudioRef.currentTime;
+			rafId = requestAnimationFrame(updateTime);
+		}
+	}
+
+	$effect(() => {
+		if (isPlaying) {
+			// Start loop
+			cancelAnimationFrame(rafId);
+			updateTime();
+		} else {
+			// Stop loop
+			cancelAnimationFrame(rafId);
+		}
+		
+		return () => cancelAnimationFrame(rafId);
+	});
 	let videoCycleInterval = null;
 	let videoCycleDuration = $state(5000); // 5 seconds per video
 	let enableVideoCycling = $state(false);
@@ -653,6 +675,19 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 <div class="app-container">
 	<aside class="sidebar">
 		<h2>Video Shaders</h2>
+		
+		{#if audioFile}
+			<div class="beat-indicator-container">
+				<div class="beat-indicator-row">
+					<div class="beat-label">Beat Trigger:</div>
+					<div class="beat-light" class:active={isBeatActive}></div>
+				</div>
+				<div class="beat-info">
+					{markerCounter} / {markerSwapThreshold}
+				</div>
+			</div>
+		{/if}
+
 		<div class="unified-controls">
 			<Tweakpane.Pane title="Video Shaders Controls" theme={ThemeUtils.presets[themeKey]}>
 				<!-- Theme Picker -->
@@ -807,11 +842,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 							step={1}
 						/>
                         
-                         <!-- Beat Indicator -->
-                         <div class="beat-indicator-row">
-                             <div class="beat-label">Beat Trigger:</div>
-                             <div class="beat-light" class:active={isBeatActive}></div>
-                         </div>
+						<!-- Beat Indicator removed from here -->
 					{/if}
 				</Tweakpane.Folder>
 
@@ -1677,6 +1708,30 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		width: 100%;
 		text-align: center;
 		z-index: 1;
+	}
+
+	.beat-indicator-container {
+		background: #111;
+		border: 1px solid #333;
+		border-radius: 4px;
+		margin: 0 0 1rem 0;
+		padding: 0.5rem;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.beat-indicator-row {
+		display: flex;
+		align-items: center;
+		margin: 0; /* Override previous margin */
+		padding: 0;
+	}
+
+	.beat-info {
+		font-family: monospace;
+		color: #666;
+		font-size: 0.9rem;
 	}
 
 	.audio-info {
