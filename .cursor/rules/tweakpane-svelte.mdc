@@ -253,9 +253,100 @@ import { AutoObject } from 'svelte-tweakpane-ui/AutoObject.svelte';
 <Pane bind:this={pane} title="Shader Controls" />
 ```
 
+## CRITICAL: Preserving Tweakpane Structure
+
+### ⚠️ NEVER Break Tweakpane.Pane Structure
+
+**CRITICAL RULE**: When editing VideoWorkbench.svelte or any component with Tweakpane controls:
+
+1. **ALWAYS verify Tweakpane.Pane is properly opened and closed**
+   - Opening tag: `<Tweakpane.Pane title="..." theme={...}>`
+   - Closing tag: `</Tweakpane.Pane>`
+   - Must be on the same nesting level
+
+2. **NEVER remove or comment out the Tweakpane.Pane wrapper**
+   - The entire control panel is wrapped in ONE `<Tweakpane.Pane>` component
+   - All folders, sliders, checkboxes, etc. must be INSIDE this pane
+
+3. **When adding new controls:**
+   - ✅ Add them INSIDE the existing `<Tweakpane.Pane>` block
+   - ✅ Use `<Tweakpane.Folder>`, `<Tweakpane.Slider>`, etc.
+   - ❌ NEVER create a new `<Tweakpane.Pane>` wrapper
+   - ❌ NEVER close the pane prematurely
+
+4. **Structure Checklist:**
+   ```svelte
+   <div class="unified-controls">
+     <Tweakpane.Pane title="..." theme={...}>
+       <!-- All controls here -->
+       <Tweakpane.Folder>...</Tweakpane.Folder>
+       <Tweakpane.Slider>...</Tweakpane.Slider>
+       <!-- etc -->
+     </Tweakpane.Pane>  <!-- MUST CLOSE HERE -->
+   </div>
+   ```
+
+5. **Before committing changes:**
+   - Verify the pane opens and closes correctly
+   - Check that all controls are visible
+   - Test that the sidebar renders properly
+   - **Check browser console for ReferenceError** - missing variable declarations will break everything
+   - Verify all `bind:this={variable}` have corresponding `let variable;` declarations
+
 ## Common Issues & Solutions
 
-### Issue 1: Draggable Position Not Working
+### Issue 1: Tweakpane Controls Not Rendering - Missing Variable Declaration
+
+**Problem**: Tweakpane controls completely disappear from the UI, component fails to render.
+
+**Root Cause**: Using a variable in the template (e.g., `bind:this={myInput}`) without declaring it in the script section causes a `ReferenceError` that breaks the entire component initialization.
+
+**Example Error**:
+```
+Uncaught (in promise) ReferenceError: midiInput is not defined
+```
+
+**Solution**: Always declare all template-bound variables in the script section.
+
+```svelte
+<script>
+  // ❌ BAD: Using midiInput in template without declaration
+  // <input bind:this={midiInput} />
+  
+  // ✅ GOOD: Declare all template-bound variables
+  let audioInput;
+  let midiInput;  // Must be declared!
+  let fileInput;
+</script>
+
+<input bind:this={audioInput} />
+<input bind:this={midiInput} />  <!-- Now works -->
+```
+
+**Prevention Checklist**:
+- [ ] Before using `bind:this={variable}` in template, verify `let variable;` exists in script
+- [ ] Check browser console for `ReferenceError` if controls don't render
+- [ ] All component refs should be declared together in a "Component Refs" section
+- [ ] Run linter to catch undeclared variables
+
+**Real Example from VideoWorkbench.svelte**:
+```svelte
+// Component Refs section
+let fileInput;
+let audioInput;
+let midiInput;  // ← This was missing, causing entire Tweakpane to not render
+
+// Later in template:
+<input bind:this={midiInput} />  // Would throw ReferenceError without declaration
+```
+
+**Impact**: This error is particularly dangerous because:
+1. It breaks the entire component, not just one control
+2. The error is silent in the UI (controls just don't appear)
+3. It's easy to miss during development
+4. The browser console is the only way to detect it
+
+### Issue 2: Draggable Position Not Working
 **Problem**: `<Pane position='draggable'>` doesn't render in DOM
 **Solution**: Use `position='fixed'` instead, or implement custom dragging
 

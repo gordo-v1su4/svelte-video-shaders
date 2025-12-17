@@ -32,6 +32,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	import { crtFragmentShader, crtUniforms } from '$lib/shaders/crt-shader.js';
 	import { AudioAnalyzer } from '$lib/audio-utils.js';
 	import { EssentiaService } from '$lib/essentia-service.js';
+	import { parseMIDIFile } from '$lib/midi-utils.js';
 	import { frameBuffer } from '$lib/frame-buffer.js';
 
 	// --- Shader State ---
@@ -67,6 +68,10 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	let analysisData = $state({ beats: [], bpm: 0 });
 	let isAnalyzingAudio = $state(false);
 	let audioFile = $state(null);
+	let midiFile = $state(null);
+	let midiMarkers = $state([]); // Array of timestamps from MIDI file
+	let showMIDIMarkers = $state(true); // Show MIDI markers checkbox
+	let showOnsets = $state(true); // Show Essentia onsets checkbox
 	let audioVolume = $state(0.5);
 	let audioIntensity = $state(1.0);
 	let audioColorShift = $state(0.5);
@@ -85,23 +90,37 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	
 	let showGrid = $state(true);
 	
-	const filteredOnsets = $derived.by(() => {
-		if (!analysisData.onsets || analysisData.onsets.length === 0) return [];
+	// Separate arrays for MIDI markers and Essentia onsets
+	// These are filtered by duration/density but NOT by toggle state (PeaksPlayer handles toggles)
+	const filteredMIDIMarkers = $derived.by(() => {
+		if (midiMarkers.length === 0) return [];
+		
+		// Filter MIDI markers to audio duration only (not by toggle state)
+		const markers = midiMarkers
+			.map(t => typeof t === 'number' ? t : parseFloat(t))
+			.filter(t => !isNaN(t) && t >= 0)
+			.filter(t => !audioDuration || t <= audioDuration);
+		
+		if (markers.length !== midiMarkers.length) {
+			console.log(`[VideoWorkbench] Filtered MIDI markers: ${midiMarkers.length} -> ${markers.length} (audio duration: ${audioDuration}s)`);
+		}
+		return markers;
+	});
+	
+	const filteredEssentiaOnsets = $derived.by(() => {
+		// Track onsetDensity to ensure reactivity
+		const density = onsetDensity;
+		
+		if (!analysisData.onsets || analysisData.onsets.length === 0) {
+			return [];
+		}
 		
 		const bpm = analysisData.bpm > 0 ? analysisData.bpm : 120;
 		const secondsPerBeat = 60 / bpm;
 		const interval32 = secondsPerBeat / 8; // 1/32 note duration
 		
 		// Map density slider (0.0-1.0) to interval multiplier
-		// 1.0 = 1x interval (1/32 note density)
-		// 0.0 = 32x interval (1/1 note density)
-		// We use a power curve for better feel
-		const densityFactor = Math.pow(onsetDensity, 2); 
-		// If density is 1.0, minInterval is interval32. If 0, it's huge.
-		// Let's invert: slider controls density. 
-		// Density 1.0 => Min Interval = interval32
-		// Density 0.0 => Min Interval = interval32 * 32 (whole note)
-		const scaler = 1 + (1 - onsetDensity) * 31;
+		const scaler = 1 + (1 - density) * 31;
 		const effectiveMinInterval = interval32 * scaler;
 
 		const result = [];
@@ -113,7 +132,18 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				lastTime = onset;
 			}
 		}
+		
+		console.log(`[VideoWorkbench] filteredEssentiaOnsets: density=${density.toFixed(2)}, filtered ${result.length} from ${analysisData.onsets.length} onsets`);
 		return result;
+	});
+	
+	// Combined array for triggers (both can be used) - only include if toggle is enabled
+	const filteredOnsets = $derived.by(() => {
+		const midi = (showMIDIMarkers && filteredMIDIMarkers.length > 0) ? filteredMIDIMarkers : [];
+		const onsets = (showOnsets && filteredEssentiaOnsets.length > 0) ? filteredEssentiaOnsets : [];
+		const combined = [...midi, ...onsets].sort((a, b) => a - b);
+		console.log(`[VideoWorkbench] filteredOnsets: ${midi.length} MIDI + ${onsets.length} Onsets = ${combined.length} total triggers`);
+		return combined;
 	});
 
 	const gridMarkers = $derived.by(() => {
@@ -317,6 +347,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	let rafId; // RequestAnimationFrame ID for smooth time updates
 	let fileInput;
 	let audioInput;
+	let midiInput;
 
 	// --- Playback State ---
 	let isPlaying = $state(false);
@@ -394,6 +425,50 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 
 	function handleAudioUploadClick() {
 		audioInput?.click();
+	}
+
+	function handleMIDIUploadClick() {
+		midiInput?.click();
+	}
+
+	async function onMIDISelected(event) {
+		const file = event.currentTarget.files?.[0];
+		if (!file) return;
+
+		midiFile = file;
+		console.log(`[VideoWorkbench] 📁 MIDI file selected: ${file.name}`);
+
+		try {
+			const result = await parseMIDIFile(file);
+			// Ensure times are numbers (not strings) and sorted
+			midiMarkers = result.times
+				.map(t => typeof t === 'number' ? t : parseFloat(t))
+				.filter(t => !isNaN(t) && t >= 0)
+				.sort((a, b) => a - b);
+			
+			console.log(`[VideoWorkbench] ✅ Parsed MIDI file: ${midiMarkers.length} note-on events`);
+			if (midiMarkers.length > 0) {
+				console.log(`[VideoWorkbench] MIDI markers range: ${midiMarkers[0]?.toFixed(3)}s - ${midiMarkers[midiMarkers.length - 1]?.toFixed(3)}s`);
+				console.log(`[VideoWorkbench] First 5 MIDI markers:`, midiMarkers.slice(0, 5).map(t => t.toFixed(3)));
+				console.log(`[VideoWorkbench] MIDI markers format check:`, {
+					isArray: Array.isArray(midiMarkers),
+					allNumbers: midiMarkers.every(t => typeof t === 'number'),
+					sample: midiMarkers.slice(0, 3)
+				});
+			} else {
+				console.warn(`[VideoWorkbench] ⚠️ MIDI file parsed but no markers found`);
+			}
+		} catch (err) {
+			console.error('[VideoWorkbench] ❌ Failed to parse MIDI file:', err);
+			console.error('[VideoWorkbench] Error details:', err.stack);
+			midiFile = null;
+			midiMarkers = [];
+		} finally {
+			// Reset file input to allow re-selecting the same file
+			if (midiInput) {
+				midiInput.value = '';
+			}
+		}
 	}
 
 	async function onAudioSelected(event) {
@@ -698,6 +773,13 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	multiple
 	hidden
 />
+<input
+	type="file"
+	bind:this={midiInput}
+	onchange={onMIDISelected}
+	accept=".mid,.midi"
+	hidden
+/>
 
 <div class="app-container">
 	<aside class="sidebar">
@@ -817,6 +899,23 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				<!-- Audio Controls -->
 				<Tweakpane.Folder title="Audio Controls" expanded={true}>
 					<Button title="Upload Audio" on:click={handleAudioUploadClick} />
+					<Button title="Upload MIDI" on:click={handleMIDIUploadClick} />
+					
+					{#if midiFile}
+						<div class="midi-info">
+							<strong>MIDI:</strong> {midiFile.name} ({midiMarkers.length} markers)
+						</div>
+						<Tweakpane.Checkbox
+							bind:value={showMIDIMarkers}
+							label="Show MIDI Markers"
+						/>
+					{/if}
+					{#if analysisData.onsets && analysisData.onsets.length > 0}
+						<Tweakpane.Checkbox
+							bind:value={showOnsets}
+							label="Show Essentia Onsets"
+						/>
+					{/if}
 					
 					{#if audioFile}
 						<div class="audio-info">
@@ -1681,13 +1780,17 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 					<div style="color: #9ca3af; font-size: 0.75rem; margin-top: 0.5rem;">Extracting beats & transients</div>
 				</div>
 			{/if}
+			
 			<PeaksPlayer
 				audioFile={audioFile}
                 mediaElement={sharedAudioRef}
 				bind:currentTime={audioCurrentTime}
 				bind:duration={audioDuration}
 				bind:isPlaying={isPlaying}
-				onsets={filteredOnsets} 
+				onsets={filteredEssentiaOnsets}
+				midiMarkers={filteredMIDIMarkers}
+				bind:showOnsets={showOnsets}
+				bind:showMIDIMarkers={showMIDIMarkers}
 				segments={[]} 
 				grid={gridMarkers}
 				onSeek={(time) => {

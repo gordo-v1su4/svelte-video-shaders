@@ -5,6 +5,8 @@
 		audioFile = null,
 		beats = [],
 		onsets = [],
+		midiMarkers = [], // MIDI note-on events as timestamps
+		useMIDIMarkers = false, // Toggle between onsets and MIDI markers
 		utterances = [],
 		bpm = 0,
 		currentTime = 0,
@@ -323,27 +325,35 @@
 			}
 		}
 
-		// Draw onset markers (transients) - draw onsets based on density setting
-		if (showOnsets && onsets && onsets.length > 0) {
-			ctx.strokeStyle = 'rgba(255, 150, 100, 0.7)';
+		// Draw onset markers (transients) or MIDI markers - draw based on toggle
+		const markersToShow = useMIDIMarkers ? midiMarkers : onsets;
+		if (showOnsets && markersToShow && markersToShow.length > 0) {
+			// Use different colors for MIDI markers vs onsets
+			if (useMIDIMarkers) {
+				ctx.strokeStyle = 'rgba(100, 200, 255, 0.8)'; // Blue for MIDI
+				ctx.fillStyle = 'rgba(50, 150, 255, 0.15)';
+			} else {
+				ctx.strokeStyle = 'rgba(255, 150, 100, 0.7)'; // Orange for onsets
+				ctx.fillStyle = 'rgba(255, 100, 100, 0.1)';
+			}
 			ctx.lineWidth = 1;
-			ctx.fillStyle = 'rgba(255, 100, 100, 0.1)';
 			
-			// Filter onsets based on density (0.0 = none, 1.0 = all)
-			const filteredOnsets = onsetDensity < 1.0 
-				? onsets.filter((_, index) => {
-					// Thin out onsets based on density
-					// At density 0.5, show every other onset; at 0.25, show every 4th, etc.
-					const step = Math.max(1, Math.round(1 / onsetDensity));
-					return index % step === 0;
-				})
-				: onsets;
+			// Filter markers based on density (only for onsets, not MIDI)
+			const filteredMarkers = useMIDIMarkers 
+				? midiMarkers // MIDI markers are not filtered
+				: (onsetDensity < 1.0 
+					? onsets.filter((_, index) => {
+						// Thin out onsets based on density
+						const step = Math.max(1, Math.round(1 / onsetDensity));
+						return index % step === 0;
+					})
+					: onsets);
 			
-			for (const onset of filteredOnsets) {
-				// Ensure onset is within valid time range
-				if (onset < 0 || onset > effectiveDuration) continue;
+			for (const marker of filteredMarkers) {
+				// Ensure marker is within valid time range
+				if (marker < 0 || marker > effectiveDuration) continue;
 				
-				const x = timeToX(onset);
+				const x = timeToX(marker);
 				// Draw if x is within canvas bounds (with margin for lines that extend slightly)
 				// This ensures we draw all onsets that could be visible, even if slightly off-screen
 				if (x < -10 || x > width + 10) continue;
@@ -555,21 +565,28 @@
 			}
 		}
 		
-		// Draw onsets in overview (also filtered by density)
-		if (showOnsets && onsets && onsets.length > 0) {
-			ctx.strokeStyle = 'rgba(255, 150, 100, 0.7)';
+		// Draw onsets or MIDI markers in overview
+		const overviewMarkersToShow = useMIDIMarkers ? midiMarkers : onsets;
+		if (showOnsets && overviewMarkersToShow && overviewMarkersToShow.length > 0) {
+			if (useMIDIMarkers) {
+				ctx.strokeStyle = 'rgba(100, 200, 255, 0.8)'; // Blue for MIDI
+			} else {
+				ctx.strokeStyle = 'rgba(255, 150, 100, 0.7)'; // Orange for onsets
+			}
 			ctx.lineWidth = 1;
 			
-			// Filter onsets based on density
-			const filteredOnsets = onsetDensity < 1.0 
-				? onsets.filter((_, index) => {
-					const step = Math.max(1, Math.round(1 / onsetDensity));
-					return index % step === 0;
-				})
-				: onsets;
+			// Filter markers based on density (only for onsets, not MIDI)
+			const filteredMarkers = useMIDIMarkers 
+				? midiMarkers // MIDI markers are not filtered
+				: (onsetDensity < 1.0 
+					? onsets.filter((_, index) => {
+						const step = Math.max(1, Math.round(1 / onsetDensity));
+						return index % step === 0;
+					})
+					: onsets);
 			
-			for (const onset of filteredOnsets) {
-				const x = (onset / effectiveDuration) * width;
+			for (const marker of filteredMarkers) {
+				const x = (marker / effectiveDuration) * width;
 				if (x < 0 || x > width) continue;
 				ctx.beginPath();
 				ctx.moveTo(x, 0);
@@ -988,10 +1005,10 @@
 				<input type="checkbox" bind:checked={showBeats} />
 				<span>Beats</span>
 			</label>
-			{#if onsets && onsets.length > 0}
+			{#if (onsets && onsets.length > 0) || (midiMarkers && midiMarkers.length > 0)}
 				<label class="toggle-option">
 					<input type="checkbox" bind:checked={showOnsets} />
-					<span>Onsets</span>
+					<span>{useMIDIMarkers ? 'MIDI' : 'Onsets'}</span>
 				</label>
 				{#if showOnsets}
 					<div class="onset-density-control">
