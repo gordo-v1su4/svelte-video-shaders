@@ -287,6 +287,44 @@
 		return isPlaying;
 	}
 
+	/**
+	 * Set the video frame based on audio time (audio-as-master-clock)
+	 * @param {number} audioTimeSeconds - Current audio time in seconds
+	 * @param {number} fps - Video frame rate (default 24)
+	 * @returns {number} The frame index that was set
+	 */
+	export function setAudioTime(audioTimeSeconds, fps = 24) {
+		if (!frameBuffer || frameBuffer.totalFrames === 0) return 0;
+		
+		// Calculate frame index from audio time
+		// audioTime (seconds) * fps = frameIndex
+		const targetFrame = Math.floor(audioTimeSeconds * fps);
+		
+		// Clamp or wrap based on looping mode
+		if (enableLooping) {
+			globalFrameIndex = targetFrame % frameBuffer.totalFrames;
+			if (globalFrameIndex < 0) {
+				globalFrameIndex = globalFrameIndex + frameBuffer.totalFrames;
+			}
+		} else {
+			globalFrameIndex = Math.max(0, Math.min(targetFrame, frameBuffer.totalFrames - 1));
+		}
+		
+		// Reset accumulated time since we're externally controlled
+		accumulatedTime = 0;
+		
+		return globalFrameIndex;
+	}
+
+	/**
+	 * Get the current video time in seconds (based on frame index and fps)
+	 * @param {number} fps - Video frame rate (default 24)
+	 * @returns {number} Current time in seconds
+	 */
+	export function getVideoTime(fps = 24) {
+		return globalFrameIndex / fps;
+	}
+
 	// === Reactive Updates ===
 
 	// Track last uniform values to prevent infinite loops

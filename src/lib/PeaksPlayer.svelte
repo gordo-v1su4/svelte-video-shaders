@@ -36,11 +36,38 @@
 	const zoomId = `peaks-zoom-${id}`;
 	const overviewId = `peaks-overview-${id}`;
 
+	// Format time as mm:ss.ms
+	function formatTime(seconds) {
+		if (!seconds || isNaN(seconds)) return '00:00.00';
+		const mins = Math.floor(seconds / 60);
+		const secs = Math.floor(seconds % 60);
+		const ms = Math.floor((seconds % 1) * 100);
+		return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+	}
+
 	let mounted = $state(false);
 
 	onMount(() => {
 		mounted = true;
+		
+		// Add resize handler for waveform
+		const handleResize = () => {
+			if (peaksInstance) {
+				try {
+					const zoomview = peaksInstance.views.getView('zoomview');
+					const overview = peaksInstance.views.getView('overview');
+					if (zoomview) zoomview.fitToContainer();
+					if (overview) overview.fitToContainer();
+				} catch (e) {
+					console.warn('[PeaksPlayer] Resize error:', e);
+				}
+			}
+		};
+		
+		window.addEventListener('resize', handleResize);
+		
 		return () => {
+			window.removeEventListener('resize', handleResize);
 			if (peaksInstance) {
 				peaksInstance.destroy();
 			}
@@ -169,132 +196,174 @@
                 onSegmentClick(segment);
             });
 
-			// Initial render of markers (onsets + grid)
-			renderMarkers();
+			// Initial render of markers - the $effect will handle subsequent updates
+			renderMarkersSync(showOnsets, showMIDIMarkers, onsets, midiMarkers, grid);
 		});
 	}
 
+	// Track render version to prevent stale updates
+	let renderVersion = $state(0);
+	
+	// Track array changes by creating a fingerprint that includes first, last, and length
+	const onsetsFingerprint = $derived(() => {
+		if (!onsets || onsets.length === 0) return 'empty';
+		const first = onsets[0]?.toFixed(3) || '0';
+		const last = onsets[onsets.length - 1]?.toFixed(3) || '0';
+		return `${first}-${last}-${onsets.length}`;
+	});
+	const midiFingerprint = $derived(() => {
+		if (!midiMarkers || midiMarkers.length === 0) return 'empty';
+		const first = midiMarkers[0]?.toFixed(3) || '0';
+		const last = midiMarkers[midiMarkers.length - 1]?.toFixed(3) || '0';
+		return `${first}-${last}-${midiMarkers.length}`;
+	});
+	const gridFingerprint = $derived(() => grid ? grid.length.toString() : '0');
+	
 	$effect(() => {
-		// Re-render markers when peaks is ready and data (onsets/midiMarkers/grid) or toggle states change
+		// Re-render markers when peaks is ready and data or toggle states change
 		if (peaksInstance) {
-			// Access reactive values to track changes - this ensures the effect runs when any of these change
-			const currentOnsets = onsets; // Track onsets changes (including density updates)
-			const currentMIDI = midiMarkers; // Track MIDI markers changes
-			const currentGrid = grid; // Track grid changes
-			const currentShowOnsets = showOnsets; // Track toggle state - MUST access to track changes
-			const currentShowMIDI = showMIDIMarkers; // Track toggle state - MUST access to track changes
+			// Access fingerprints and toggle states to track all changes
+			const _onsetsFp = onsetsFingerprint;
+			const _midiFp = midiFingerprint;
+			const _gridFp = gridFingerprint;
+			const _showOnsets = showOnsets;
+			const _showMIDI = showMIDIMarkers;
 			
-			// Always render markers when peaks is ready, even if arrays are empty (to clear them)
-			console.log(`[PeaksPlayer] $effect triggered: onsets.length=${currentOnsets?.length || 0}, midiMarkers.length=${currentMIDI?.length || 0}, grid.length=${currentGrid?.length || 0}, showOnsets=${currentShowOnsets}, showMIDI=${currentShowMIDI}`);
+			// Capture current array values to avoid stale closures
+			const currentOnsets = onsets ? [...onsets] : [];
+			const currentMidi = midiMarkers ? [...midiMarkers] : [];
+			const currentGrid = grid ? [...grid] : [];
 			
-			// Use tick to ensure DOM updates are complete before rendering
-			tick().then(() => {
-				renderMarkers();
-			});
+			console.log(`[PeaksPlayer] $effect triggered: onsetsFp=${_onsetsFp}, midiFp=${_midiFp}, showOnsets=${_showOnsets}, showMIDI=${_showMIDI}`);
+			
+			// Increment version and render synchronously
+			renderVersion++;
+			
+			// Render with captured values to avoid stale closure issues
+			renderMarkersSync(_showOnsets, _showMIDI, currentOnsets, currentMidi, currentGrid);
 		}
 	});
 
-	function renderMarkers() {
+	function renderMarkersSync(shouldShowOnsets, shouldShowMIDI, onsetData, midiData, gridData) {
 		if (!peaksInstance) {
 			console.log(`[PeaksPlayer] renderMarkers: peaksInstance not ready`);
 			return;
 		}
 		
-		// Always clear all points first
+		// Clear all existing points - be aggressive about it
 		try {
 			const existingPoints = peaksInstance.points.getPoints();
 			console.log(`[PeaksPlayer] Clearing ${existingPoints.length} existing points`);
+			
+			// Remove points one by one for reliability
+			if (existingPoints.length > 0) {
+				for (let i = existingPoints.length - 1; i >= 0; i--) {
+					try {
+						peaksInstance.points.removeById(existingPoints[i].id);
+					} catch (e) {
+						// Ignore individual removal errors
+					}
+				}
+			}
+			
+			// Also try removeAll as backup
 			peaksInstance.points.removeAll();
+			
+			// Verify points are cleared
+			const remainingPoints = peaksInstance.points.getPoints();
+			if (remainingPoints.length > 0) {
+				console.warn(`[PeaksPlayer] ⚠️ ${remainingPoints.length} points remain after clear attempt`);
+			}
 		} catch (e) {
 			console.warn(`[PeaksPlayer] Error removing points:`, e);
 		}
         
         const allPoints = [];
-        
-        console.log(`[PeaksPlayer] renderMarkers: showOnsets=${showOnsets}, showMIDI=${showMIDIMarkers}, onsets.length=${onsets?.length || 0}, midiMarkers.length=${midiMarkers?.length || 0}`);
 
         // 1. Grid Lines (Faint)
-        if (grid && grid.length > 0) {
-            grid.forEach((time) => {
+        if (gridData && gridData.length > 0) {
+            gridData.forEach((time) => {
                 allPoints.push({
                     time,
                     labelText: '',
                     editable: false,
-                    color: 'rgba(255, 255, 255, 0.1)', // Very faint white
-                    shape: 'line'
+                    color: 'rgba(255, 255, 255, 0.1)',
                 });
             });
         }
 
         // 2. Essentia Onsets (Orange) - only if enabled
-		if (showOnsets && onsets && onsets.length > 0) {
-             console.log(`[PeaksPlayer] ✅ Adding ${onsets.length} Essentia onsets (showOnsets=${showOnsets})`);
-             onsets.forEach((time, i) => {
-                const pointTime = typeof time === 'number' ? time : parseFloat(time);
-                if (isNaN(pointTime) || pointTime < 0) {
-                    console.warn(`[PeaksPlayer] Invalid onset time at index ${i}: ${time}`);
-                    return;
-                }
-                allPoints.push({
-                    time: pointTime,
-                    labelText: `T${i}`,
-                    editable: false,
-                    color: '#ff8800', // Orange for Essentia onsets
-                    shape: 'line'
-                });
-            });
+		if (shouldShowOnsets && onsetData && onsetData.length > 0) {
+			console.log(`[PeaksPlayer] ✅ Adding ${onsetData.length} Essentia onsets`);
+			onsetData.forEach((time, i) => {
+				const pointTime = typeof time === 'number' ? time : parseFloat(time);
+				if (!isNaN(pointTime) && pointTime >= 0) {
+					allPoints.push({
+						time: pointTime,
+						labelText: '',  // Cleaner without labels
+						editable: false,
+						color: 'rgba(255, 136, 0, 0.5)',  // 50% opacity orange
+					});
+				}
+			});
 		} else {
-			console.log(`[PeaksPlayer] ❌ Skipping Essentia onsets: showOnsets=${showOnsets}, onsets.length=${onsets?.length || 0}`);
+			console.log(`[PeaksPlayer] ❌ Skipping onsets: show=${shouldShowOnsets}, count=${onsetData?.length || 0}`);
 		}
 
         // 3. MIDI Markers (Blue) - only if enabled
-		if (showMIDIMarkers && midiMarkers && midiMarkers.length > 0) {
-             console.log(`[PeaksPlayer] ✅ Adding ${midiMarkers.length} MIDI markers (showMIDIMarkers=${showMIDIMarkers})`);
-             midiMarkers.forEach((time, i) => {
-                const pointTime = typeof time === 'number' ? time : parseFloat(time);
-                if (isNaN(pointTime) || pointTime < 0) {
-                    console.warn(`[PeaksPlayer] Invalid MIDI time at index ${i}: ${time}`);
-                    return;
-                }
-                allPoints.push({
-                    time: pointTime,
-                    labelText: `M${i}`,
-                    editable: false,
-                    color: '#64c8ff', // Blue for MIDI markers
-                    shape: 'line'
-                });
-            });
+		if (shouldShowMIDI && midiData && midiData.length > 0) {
+			console.log(`[PeaksPlayer] ✅ Adding ${midiData.length} MIDI markers`);
+			midiData.forEach((time, i) => {
+				const pointTime = typeof time === 'number' ? time : parseFloat(time);
+				if (!isNaN(pointTime) && pointTime >= 0) {
+					allPoints.push({
+						time: pointTime,
+						labelText: '',  // Cleaner without labels
+						editable: false,
+						color: 'rgba(100, 200, 255, 0.6)',  // 60% opacity blue
+					});
+				}
+			});
 		} else {
-			console.log(`[PeaksPlayer] ❌ Skipping MIDI markers: showMIDIMarkers=${showMIDIMarkers}, midiMarkers.length=${midiMarkers?.length || 0}`);
+			console.log(`[PeaksPlayer] ❌ Skipping MIDI: show=${shouldShowMIDI}, count=${midiData?.length || 0}`);
 		}
 
-		// Always add points, even if empty (to clear the display)
+		// Add all points at once
 		if (allPoints.length > 0) {
-            // Use setTimeout to ensure removeAll() has processed
-            setTimeout(() => {
-                try {
-                    // Peaks.js points.add() accepts an array
-                    peaksInstance.points.add(allPoints);
-                    const addedPoints = peaksInstance.points.getPoints();
-                    console.log(`[PeaksPlayer] ✅ Added ${allPoints.length} points, Peaks.js now has ${addedPoints.length} total points`);
-                } catch (e) {
-                    console.error(`[PeaksPlayer] ❌ Error adding points:`, e);
-                    // Fallback: add individually
-                    console.log(`[PeaksPlayer] Trying individual add...`);
-                    let successCount = 0;
-                    allPoints.forEach((point) => {
-                        try {
-                            peaksInstance.points.add(point);
-                            successCount++;
-                        } catch (err) {
-                            console.error(`[PeaksPlayer] Failed to add point at ${point.time}:`, err);
-                        }
-                    });
-                    console.log(`[PeaksPlayer] ✅ Added ${successCount}/${allPoints.length} points individually`);
-                }
-            }, 10); // Small delay to ensure removeAll() completes
-        } else {
-			console.log(`[PeaksPlayer] ⚠️ No points to add (all toggles off or no data)`);
+			try {
+				peaksInstance.points.add(allPoints);
+				console.log(`[PeaksPlayer] ✅ Added ${allPoints.length} points total`);
+			} catch (e) {
+				console.error(`[PeaksPlayer] ❌ Error adding points:`, e);
+			}
+		} else {
+			console.log(`[PeaksPlayer] ⚠️ No points to add (toggles: onsets=${shouldShowOnsets}, midi=${shouldShowMIDI})`);
+		}
+		
+		// Force redraw of views to ensure markers are visible
+		try {
+			const zoomview = peaksInstance.views.getView('zoomview');
+			const overview = peaksInstance.views.getView('overview');
+			
+			// Use multiple methods to force a redraw
+			if (zoomview) {
+				// Method 1: Update waveform color (triggers redraw)
+				zoomview.setWaveformColor('#5a3fc0');
+				// Method 2: Try fitToContainer if available
+				if (typeof zoomview.fitToContainer === 'function') {
+					zoomview.fitToContainer();
+				}
+			}
+			if (overview) {
+				overview.setWaveformColor('#5a3fc0');
+				if (typeof overview.fitToContainer === 'function') {
+					overview.fitToContainer();
+				}
+			}
+			
+			console.log(`[PeaksPlayer] Forced redraw of views`);
+		} catch (e) {
+			console.warn(`[PeaksPlayer] Error forcing redraw:`, e);
 		}
 	}
     
@@ -354,7 +423,31 @@
 	<!-- Removed Hidden native audio element for Peaks to control - Parent provides it -->
 
 	<div class="controls-header">
-		<span class="label">Zoom View</span>
+		<div class="header-left">
+			<!-- Play/Pause button -->
+			<button 
+				class="play-btn"
+				onclick={() => { isPlaying = !isPlaying; }}
+				disabled={!isReady}
+				title={isPlaying ? 'Pause' : 'Play'}
+			>
+				{#if isPlaying}
+					<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+						<rect x="6" y="4" width="4" height="16"/>
+						<rect x="14" y="4" width="4" height="16"/>
+					</svg>
+				{:else}
+					<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+						<polygon points="5,3 19,12 5,21"/>
+					</svg>
+				{/if}
+			</button>
+			<!-- Time display -->
+			<span class="time-display">
+				{formatTime(currentTime)} / {formatTime(duration)}
+			</span>
+			<span class="label">Zoom View</span>
+		</div>
         <div class="header-controls">
          {#if isReady}
          <div class="zoom-controls"> 
@@ -364,23 +457,41 @@
          {/if}
          <button 
          	class="marker-toggle-btn" 
-         	class:active={showMIDIMarkers && midiMarkers && midiMarkers.length > 0}
-         	class:disabled={!midiMarkers || midiMarkers.length === 0}
-         	onclick={() => { if (midiMarkers && midiMarkers.length > 0) showMIDIMarkers = !showMIDIMarkers; }}
+         	class:active={showMIDIMarkers}
+         	class:has-data={midiMarkers && midiMarkers.length > 0}
+         	disabled={!midiMarkers || midiMarkers.length === 0}
+         	onclick={() => { 
+         		const newVal = !showMIDIMarkers;
+         		console.log('[PeaksPlayer] MIDI toggle clicked, changing from', showMIDIMarkers, 'to', newVal);
+         		showMIDIMarkers = newVal; 
+         		// Force immediate re-render
+         		if (peaksInstance) {
+         			console.log('[PeaksPlayer] Forcing immediate MIDI re-render');
+         			renderMarkersSync(showOnsets, newVal, onsets ? [...onsets] : [], midiMarkers ? [...midiMarkers] : [], grid ? [...grid] : []);
+         		}
+         	}}
          	title={midiMarkers && midiMarkers.length > 0 ? `Toggle MIDI Markers (${midiMarkers.length})` : 'No MIDI markers'}
-         	style="border-color: {showMIDIMarkers && midiMarkers && midiMarkers.length > 0 ? '#64c8ff' : '#444'}; background: {showMIDIMarkers && midiMarkers && midiMarkers.length > 0 ? '#64c8ff' : 'inherit'};"
          >
-         	MIDI {midiMarkers && midiMarkers.length > 0 ? `(${midiMarkers.length})` : ''}
+         	MIDI {midiMarkers && midiMarkers.length > 0 ? `(${midiMarkers.length})` : '(0)'}
          </button>
          <button 
          	class="marker-toggle-btn" 
-         	class:active={showOnsets && onsets && onsets.length > 0}
-         	class:disabled={!onsets || onsets.length === 0}
-         	onclick={() => { if (onsets && onsets.length > 0) showOnsets = !showOnsets; }}
+         	class:active={showOnsets}
+         	class:has-data={onsets && onsets.length > 0}
+         	disabled={!onsets || onsets.length === 0}
+         	onclick={() => { 
+         		const newVal = !showOnsets;
+         		console.log('[PeaksPlayer] Onsets toggle clicked, changing from', showOnsets, 'to', newVal);
+         		showOnsets = newVal; 
+         		// Force immediate re-render
+         		if (peaksInstance) {
+         			console.log('[PeaksPlayer] Forcing immediate Onsets re-render');
+         			renderMarkersSync(newVal, showMIDIMarkers, onsets ? [...onsets] : [], midiMarkers ? [...midiMarkers] : [], grid ? [...grid] : []);
+         		}
+         	}}
          	title={onsets && onsets.length > 0 ? `Toggle Essentia Onsets (${onsets.length})` : 'No onsets'}
-         	style="border-color: {showOnsets && onsets && onsets.length > 0 ? '#ff8800' : '#444'}; background: {showOnsets && onsets && onsets.length > 0 ? '#ff8800' : 'inherit'};"
          >
-         	Onsets {onsets && onsets.length > 0 ? `(${onsets.length})` : ''}
+         	Onsets {onsets && onsets.length > 0 ? `(${onsets.length})` : '(0)'}
          </button>
         </div>
 	</div>
@@ -442,6 +553,48 @@
 		letter-spacing: 1px;
 	}
 
+	.header-left {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.play-btn {
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		background: linear-gradient(135deg, #5a3fc0, #8a6fd0);
+		border: none;
+		color: #fff;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: all 0.15s ease;
+	}
+
+	.play-btn:hover:not(:disabled) {
+		background: linear-gradient(135deg, #6a4fd0, #9a7fe0);
+		transform: scale(1.05);
+	}
+
+	.play-btn:disabled {
+		background: #333;
+		cursor: not-allowed;
+		opacity: 0.5;
+	}
+
+	.time-display {
+		font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Mono', monospace;
+		font-size: 0.75rem;
+		color: #a882ff;
+		background: #1a1a1a;
+		padding: 4px 8px;
+		border-radius: 4px;
+		border: 1px solid #333;
+		letter-spacing: 0.5px;
+	}
+
     .header-controls {
         display: flex;
         align-items: center;
@@ -477,35 +630,48 @@
         cursor: pointer;
         font-size: 11px;
         font-weight: 500;
-        transition: all 0.2s;
-        border: 1px solid;
-        background: #2a2a2a; /* Charcoal grey default */
-        color: #999;
+        transition: all 0.15s ease;
+        border: 2px solid #444;
+        background: #2a2a2a;
+        color: #888;
     }
 
-    .marker-toggle-btn.disabled {
-        background: #1a1a1a !important; /* Darker charcoal when disabled */
-        color: #666 !important;
-        border-color: #333 !important;
+    .marker-toggle-btn:disabled {
+        background: #1a1a1a;
+        color: #555;
+        border-color: #333;
         cursor: not-allowed;
-        opacity: 0.6;
+        opacity: 0.5;
     }
 
-    .marker-toggle-btn:not(.active):not(.disabled) {
-        background: #2a2a2a; /* Charcoal grey when not active but enabled */
-        color: #999;
-        border-color: #444;
+    .marker-toggle-btn:not(:disabled):hover {
+        background: #3a3a3a;
     }
 
-    .marker-toggle-btn.active {
-        opacity: 1;
-        color: #fff;
+    /* MIDI button - blue when active */
+    .marker-toggle-btn:first-of-type.active.has-data {
+        background: #64c8ff;
+        border-color: #64c8ff;
+        color: #000;
         font-weight: 600;
     }
 
-    .marker-toggle-btn:not(.disabled):hover {
-        opacity: 0.9;
-        background: #333;
+    .marker-toggle-btn:first-of-type:not(.active).has-data {
+        border-color: #64c8ff55;
+        color: #64c8ff;
+    }
+
+    /* Onsets button - orange when active */
+    .marker-toggle-btn:last-of-type.active.has-data {
+        background: #ff8800;
+        border-color: #ff8800;
+        color: #000;
+        font-weight: 600;
+    }
+
+    .marker-toggle-btn:last-of-type:not(.active).has-data {
+        border-color: #ff880055;
+        color: #ff8800;
     }
 
 	.placeholder-overlay {

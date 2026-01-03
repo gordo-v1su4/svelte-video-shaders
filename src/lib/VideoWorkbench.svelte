@@ -65,7 +65,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	let selectedShaderName = $state('VHS');
 	let audioAnalyzer = null;
 	let essentiaService = null;
-	let analysisData = $state({ beats: [], bpm: 0 });
+	let analysisData = $state({ beats: [], bpm: 0, onsets: [], structure: { sections: [], boundaries: [] }, energy: null });
 	let isAnalyzingAudio = $state(false);
 	let audioFile = $state(null);
 	let midiFile = $state(null);
@@ -80,7 +80,10 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	// Removed legacy audioReactivePlayback
 	let beatSensitivity = $state(0.3);
 	// Removed legacy audioFilterIntensity
-	let onsetDensity = $state(1.0); // New state for density control
+	let onsetDensity = $state(1.0); // Density control for Essentia onsets
+	let midiDensity = $state(1.0); // Density control for MIDI markers
+	let enableRandomSkip = $state(false); // Toggle random skip
+	let randomSkipChance = $state(0.3); // Probability of skipping a marker (0-0.5)
 	let markerSwapThreshold = $state(4); // Swap video after this many markers
 	let markerCounter = $state(0); // Current count of markers hit
 	let isBeatActive = $state(false); // For visual indicator
@@ -91,25 +94,47 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	let showGrid = $state(true);
 	
 	// Separate arrays for MIDI markers and Essentia onsets
+	// Seeded random function for deterministic random skip
+	function seededRandom(seed) {
+		const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+		return x - Math.floor(x);
+	}
+	
 	// These are filtered by duration/density but NOT by toggle state (PeaksPlayer handles toggles)
 	const filteredMIDIMarkers = $derived.by(() => {
 		if (midiMarkers.length === 0) return [];
 		
-		// Filter MIDI markers to audio duration only (not by toggle state)
-		const markers = midiMarkers
+		const density = midiDensity;
+		const doRandomSkip = enableRandomSkip;
+		const skipChance = randomSkipChance;
+		
+		// Filter MIDI markers to audio duration
+		let markers = midiMarkers
 			.map(t => typeof t === 'number' ? t : parseFloat(t))
 			.filter(t => !isNaN(t) && t >= 0)
 			.filter(t => !audioDuration || t <= audioDuration);
 		
-		if (markers.length !== midiMarkers.length) {
-			console.log(`[VideoWorkbench] Filtered MIDI markers: ${midiMarkers.length} -> ${markers.length} (audio duration: ${audioDuration}s)`);
+		// Apply density filtering (keep every Nth marker based on density)
+		if (density < 1.0) {
+			const keepRatio = density;
+			const step = Math.max(1, Math.round(1 / keepRatio));
+			markers = markers.filter((_, i) => i % step === 0);
 		}
+		
+		// Apply random skip
+		if (doRandomSkip && skipChance > 0) {
+			markers = markers.filter((_, i) => seededRandom(i) > skipChance);
+		}
+		
+		console.log(`[VideoWorkbench] Filtered MIDI markers: ${midiMarkers.length} -> ${markers.length} (density=${density.toFixed(2)}, randomSkip=${doRandomSkip})`);
 		return markers;
 	});
 	
 	const filteredEssentiaOnsets = $derived.by(() => {
 		// Track onsetDensity to ensure reactivity
 		const density = onsetDensity;
+		const doRandomSkip = enableRandomSkip;
+		const skipChance = randomSkipChance;
 		
 		if (!analysisData.onsets || analysisData.onsets.length === 0) {
 			return [];
@@ -123,7 +148,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		const scaler = 1 + (1 - density) * 31;
 		const effectiveMinInterval = interval32 * scaler;
 
-		const result = [];
+		let result = [];
 		let lastTime = -effectiveMinInterval; // Ensure first can be picked
 		
 		for (const onset of analysisData.onsets) {
@@ -133,7 +158,12 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 			}
 		}
 		
-		console.log(`[VideoWorkbench] filteredEssentiaOnsets: density=${density.toFixed(2)}, filtered ${result.length} from ${analysisData.onsets.length} onsets`);
+		// Apply random skip
+		if (doRandomSkip && skipChance > 0) {
+			result = result.filter((_, i) => seededRandom(i + 1000) > skipChance);
+		}
+		
+		console.log(`[VideoWorkbench] filteredEssentiaOnsets: density=${density.toFixed(2)}, randomSkip=${doRandomSkip}, filtered ${result.length} from ${analysisData.onsets.length} onsets`);
 		return result;
 	});
 	
@@ -167,6 +197,96 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		}
 		return markers;
 	});
+
+	// === Phase 3: Section Tracking ===
+	// Track current section based on audio time and analysisData.structure.sections
+	const currentSection = $derived.by(() => {
+		const sections = analysisData.structure?.sections;
+		if (!sections || sections.length === 0) {
+			return { label: 'song', start: 0, end: audioDuration || 0, index: 0 };
+		}
+		
+		const time = audioCurrentTime;
+		for (let i = 0; i < sections.length; i++) {
+			const section = sections[i];
+			if (time >= section.start && time < section.end) {
+				return { ...section, index: i };
+			}
+		}
+		// Fallback to last section if at the very end
+		const lastSection = sections[sections.length - 1];
+		return { ...lastSection, index: sections.length - 1 };
+	});
+
+	// Track section changes for video pool switching
+	let previousSectionIndex = $state(-1);
+	
+	$effect(() => {
+		if (currentSection.index !== previousSectionIndex) {
+			console.log(`[VideoWorkbench] Section changed: ${currentSection.label} (${currentSection.index})`);
+			previousSectionIndex = currentSection.index;
+			
+			// Check if current video is in the new section's pool
+			if ($activeVideo && currentSectionVideos.length > 0) {
+				const isInPool = currentSectionVideos.some(v => v.id === $activeVideo?.id);
+				if (!isInPool) {
+					// Current video not in new section's pool - switch to first video in pool
+					console.log(`[VideoWorkbench] Video not in section pool, switching...`);
+					const nextVideo = currentSectionVideos[0];
+					const globalIndex = $videoAssets.findIndex(asset => asset.id === nextVideo.id);
+					activeVideo.set(nextVideo);
+					if (shaderPlayerRef) {
+						shaderPlayerRef.seekToClip(globalIndex);
+					}
+				}
+			}
+		}
+	});
+
+	// Video pool assignment per section (Phase 3)
+	// Map from section index -> array of video asset indices
+	let sectionVideoPools = $state({});
+	
+	// Helper functions for section video pools
+	function isVideoInSection(sectionIndex, videoIndex) {
+		const pool = sectionVideoPools[sectionIndex];
+		if (!pool) return true; // Default: all videos in all sections
+		return pool.includes(videoIndex);
+	}
+	
+	function toggleVideoInSection(sectionIndex, videoIndex) {
+		// Initialize pool if needed (default to all videos)
+		if (!sectionVideoPools[sectionIndex]) {
+			sectionVideoPools[sectionIndex] = $videoAssets.map((_, i) => i);
+		}
+		
+		const pool = sectionVideoPools[sectionIndex];
+		const idx = pool.indexOf(videoIndex);
+		if (idx >= 0) {
+			pool.splice(idx, 1);
+		} else {
+			pool.push(videoIndex);
+		}
+		// Trigger reactivity
+		sectionVideoPools = { ...sectionVideoPools };
+	}
+	
+	function formatSectionTime(seconds) {
+		const mins = Math.floor(seconds / 60);
+		const secs = Math.floor(seconds % 60);
+		return `${mins}:${secs.toString().padStart(2, '0')}`;
+	}
+	
+	// Get videos available in current section
+	const currentSectionVideos = $derived.by(() => {
+		const pool = sectionVideoPools[currentSection.index];
+		if (!pool || pool.length === 0) {
+			// No pool defined, use all videos
+			return $videoAssets;
+		}
+		return $videoAssets.filter((_, i) => pool.includes(i));
+	});
+	
 	let uniforms = $state({
 		// VHS shader uniforms
 		u_time: { value: 0.0 },
@@ -359,13 +479,23 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	const ESSENTIA_HOP_SIZE = 512;
 	const ESSENTIA_SAMPLE_RATE = 44100;
 	const SECONDS_PER_FRAME = ESSENTIA_HOP_SIZE / ESSENTIA_SAMPLE_RATE;
+	const TARGET_FPS = 24; // Video frame rate for audio-to-frame sync
+
+	// Audio-as-master-clock: sync video to audio time
+	let audioMasterEnabled = $state(true); // Toggle for audio-synced playback
 
 	// High-precision time loop for sub-beat synchronization
 	function updateTime() {
 		if (sharedAudioRef && !sharedAudioRef.paused) {
 			audioCurrentTime = sharedAudioRef.currentTime;
 			
-			// Handle Speed Ramping
+			// === AUDIO AS MASTER CLOCK ===
+			// Sync video frame to audio time (Phase 2 feature)
+			if (audioMasterEnabled && shaderPlayerRef) {
+				shaderPlayerRef.setAudioTime(audioCurrentTime, TARGET_FPS);
+			}
+			
+			// Handle Speed Ramping (adjusts playback speed, not position)
 			if (enableSpeedRamping && analysisData.energy?.curve && shaderPlayerRef) {
 				const frameIndex = Math.floor(audioCurrentTime / SECONDS_PER_FRAME);
 				if (frameIndex >= 0 && frameIndex < analysisData.energy.curve.length) {
@@ -375,10 +505,8 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 					const newSpeed = baseSpeed + (energy * speedRampSensitivity);
 					shaderPlayerRef.setSpeed(newSpeed);
 				}
-			} else if (shaderPlayerRef) {
-				// Reset to normal if ramping disabled
-				// Only reset if we haven't manually set it elsewhere? 
-				// For now, assume this controls playback speed when playing
+			} else if (shaderPlayerRef && !audioMasterEnabled) {
+				// Only set speed to 1.0 when NOT using audio master clock
 				shaderPlayerRef.setSpeed(1.0);
 			}
 
@@ -409,7 +537,40 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	let isBufferReady = $state(false);
 
 	// --- Theme State ---
-	let themeKey = $state('standard');
+	let themeKey = $state('glass');
+	
+	// Custom transparent glass theme for Tweakpane
+	// Using valid Tweakpane theme variables only
+	const glassTheme = {
+		baseBorderRadius: '6px',
+		baseFontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+		baseShadowColor: 'rgba(0, 0, 0, 0.5)',
+		buttonBackgroundColor: 'rgba(90, 63, 192, 0.4)',
+		buttonBackgroundColorActive: 'rgba(90, 63, 192, 0.7)',
+		buttonBackgroundColorFocus: 'rgba(90, 63, 192, 0.5)',
+		buttonBackgroundColorHover: 'rgba(90, 63, 192, 0.6)',
+		buttonForegroundColor: 'rgba(255, 255, 255, 0.95)',
+		containerBackgroundColor: 'rgba(13, 13, 13, 0.85)',
+		containerBackgroundColorActive: 'rgba(20, 20, 20, 0.9)',
+		containerBackgroundColorFocus: 'rgba(20, 20, 20, 0.9)',
+		containerBackgroundColorHover: 'rgba(25, 25, 25, 0.9)',
+		containerForegroundColor: 'rgba(255, 255, 255, 0.8)',
+		grooveForegroundColor: 'rgba(90, 63, 192, 0.8)',
+		inputBackgroundColor: 'rgba(25, 25, 25, 0.8)',
+		inputBackgroundColorActive: 'rgba(35, 35, 35, 0.9)',
+		inputBackgroundColorFocus: 'rgba(35, 35, 35, 0.9)',
+		inputBackgroundColorHover: 'rgba(30, 30, 30, 0.85)',
+		inputForegroundColor: 'rgba(255, 255, 255, 0.9)',
+		labelForegroundColor: 'rgba(168, 130, 255, 0.9)',
+		monitorBackgroundColor: 'rgba(20, 20, 20, 0.8)',
+		monitorForegroundColor: 'rgba(168, 130, 255, 0.95)',
+	};
+	
+	// Extend presets with custom theme
+	const customThemes = {
+		...ThemeUtils.presets,
+		glass: glassTheme
+	};
 
 	// --- Filter Toggle State ---
 	let filtersEnabled = $state(true);
@@ -503,15 +664,17 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				beats: result.beats || [],
 				onsets: result.onsets || [], // critical for transients
 				energy: result.energy, // Contains curve for speed ramping
-				confidence: result.confidence
+				confidence: result.confidence,
+				structure: result.structure || { sections: [], boundaries: [] } // For section-based features
 			};
 			
 			console.log(`[VideoWorkbench] Analysis applied: ${analysisData.onsets.length} onsets, ${analysisData.bpm} BPM`);
+			console.log(`[VideoWorkbench] Structure: ${analysisData.structure.sections?.length || 0} sections detected`);
 			
 		} catch (err) {
 			console.error("[VideoWorkbench] ❌ Essentia analysis failed:", err);
 			// Fallback or empty data
-			analysisData = { bpm: 0, beats: [], onsets: [] };
+			analysisData = { bpm: 0, beats: [], onsets: [], structure: { sections: [], boundaries: [] }, energy: null };
 		} finally {
 			isAnalyzingAudio = false;
 		}
@@ -528,7 +691,24 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		}
 	}
 
-	/* Local Analysis Loop Removed - Pure Reactive Logic Trigger */
+	/* === Phase 4: Unified Trigger System === */
+	
+	// Trigger modes
+	let enableJumpCuts = $state(false); // Random frame jump on marker hit
+	let enableGlitchMode = $state(false); // Rapid micro-jumps in high-energy sections
+	let enableFXTriggers = $state(true); // Shader parameter spikes on marker
+	
+	// Jump cut settings
+	let jumpCutRange = $state(30); // Max frames to jump (random within range)
+	
+	// Glitch mode settings
+	let glitchFrameRange = $state(5); // 1-5 frame micro-jumps
+	let glitchEnergyThreshold = $state(0.7); // Energy level to trigger glitch mode
+	
+	// FX trigger settings
+	let fxTriggerIntensity = $state(0.5); // How much to spike shader params
+	let fxTriggerDecay = $state(0.1); // How fast the spike decays (seconds)
+	let fxTriggerActive = $state(0); // Current FX trigger level (0-1)
 	
 	let previousTime = 0;
 	
@@ -550,15 +730,68 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				markerCounter++;
 				setTimeout(() => isBeatActive = false, 100); // Visual blink duration
 				
-				// Video Swap Logic
+				// === TRIGGER: Video Swap ===
 				if (enableVideoCycling && markerCounter >= markerSwapThreshold) {
-					// console.log("Marker threshold reached, swapping video");
 					nextVideo();
 					markerCounter = 0;
+				}
+				
+				// === TRIGGER: Jump Cut ===
+				if (enableJumpCuts && shaderPlayerRef) {
+					const jumpAmount = Math.floor(Math.random() * jumpCutRange * 2) - jumpCutRange;
+					shaderPlayerRef.jumpFrames(jumpAmount);
+				}
+				
+				// === TRIGGER: FX Spike ===
+				if (enableFXTriggers) {
+					fxTriggerActive = 1.0; // Full spike
+				}
+			}
+			
+			// === TRIGGER: Glitch Mode (high-energy micro-jumps) ===
+			if (enableGlitchMode && shaderPlayerRef) {
+				// Check if we're in a high-energy section
+				const sectionEnergy = currentSection.energy || 0;
+				const isHighEnergy = sectionEnergy > glitchEnergyThreshold;
+				
+				if (isHighEnergy && hit) {
+					// Rapid micro-jumps
+					const microJump = Math.floor(Math.random() * glitchFrameRange * 2) - glitchFrameRange;
+					shaderPlayerRef.jumpFrames(microJump);
 				}
 			}
 		}
 		previousTime = time;
+	});
+	
+	// FX trigger decay effect
+	$effect(() => {
+		if (fxTriggerActive > 0 && isPlaying) {
+			const decayPerFrame = fxTriggerDecay / (1000 / 60); // Decay per ~16ms frame
+			const interval = setInterval(() => {
+				fxTriggerActive = Math.max(0, fxTriggerActive - decayPerFrame);
+				if (fxTriggerActive <= 0) {
+					clearInterval(interval);
+				}
+			}, 16);
+			return () => clearInterval(interval);
+		}
+	});
+	
+	// Apply FX trigger to shader uniforms
+	$effect(() => {
+		if (fxTriggerActive > 0 && uniforms) {
+			// Spike certain shader params based on trigger level
+			const spikeAmount = fxTriggerActive * fxTriggerIntensity;
+			
+			// Example: spike noise and RGB shift on VHS shader
+			if (uniforms.u_noise) {
+				uniforms.u_noise.value = Math.min(0.5, (uniforms.u_noise?.value || 0.02) + spikeAmount * 0.3);
+			}
+			if (uniforms.u_rgbShift) {
+				uniforms.u_rgbShift.value = Math.min(0.02, (uniforms.u_rgbShift?.value || 0.001) + spikeAmount * 0.01);
+			}
+		}
 	});
 
 	function handleAudioVolumeChange() {
@@ -655,23 +888,41 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		}
 	}
 
-	// Video cycling functionality - now uses frame buffer directly
+	// Video cycling functionality - now uses section-constrained pools
 	function nextVideo() {
 		if (!shaderPlayerRef || $videoAssets.length <= 1) return;
-		const currentIndex = $videoAssets.findIndex(asset => asset.id === $activeVideo?.id);
-		const nextIndex = (currentIndex + 1) % $videoAssets.length;
 		
-        // Ensure seamless loop if we just wrapped
-		activeVideo.set($videoAssets[nextIndex]);
-		shaderPlayerRef.seekToClip(nextIndex);
+		// Get videos available in current section
+		const availableVideos = currentSectionVideos;
+		if (availableVideos.length === 0) return;
+		
+		// Find current video in the available pool
+		const currentPoolIndex = availableVideos.findIndex(asset => asset.id === $activeVideo?.id);
+		const nextPoolIndex = (currentPoolIndex + 1) % availableVideos.length;
+		const nextVideo = availableVideos[nextPoolIndex];
+		
+		// Find the global index for seekToClip
+		const globalIndex = $videoAssets.findIndex(asset => asset.id === nextVideo.id);
+		
+		activeVideo.set(nextVideo);
+		shaderPlayerRef.seekToClip(globalIndex);
 	}
 
 	function previousVideo() {
 		if (!shaderPlayerRef || $videoAssets.length <= 1) return;
-		const currentIndex = $videoAssets.findIndex(asset => asset.id === $activeVideo?.id);
-		const prevIndex = currentIndex === 0 ? $videoAssets.length - 1 : currentIndex - 1;
-		activeVideo.set($videoAssets[prevIndex]);
-		shaderPlayerRef.seekToClip(prevIndex);
+		
+		// Get videos available in current section
+		const availableVideos = currentSectionVideos;
+		if (availableVideos.length === 0) return;
+		
+		const currentPoolIndex = availableVideos.findIndex(asset => asset.id === $activeVideo?.id);
+		const prevPoolIndex = currentPoolIndex === 0 ? availableVideos.length - 1 : currentPoolIndex - 1;
+		const prevVideo = availableVideos[prevPoolIndex];
+		
+		const globalIndex = $videoAssets.findIndex(asset => asset.id === prevVideo.id);
+		
+		activeVideo.set(prevVideo);
+		shaderPlayerRef.seekToClip(globalIndex);
 	}
 
     // Removed time-based cycling logic as we now use onVideoEnd
@@ -787,6 +1038,18 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		
 		{#if audioFile}
 			<div class="beat-indicator-container">
+				<!-- Section Indicator -->
+				<div class="section-indicator">
+					<span class="section-label">{currentSection.label.toUpperCase()}</span>
+					{#if currentSection.end > currentSection.start}
+						<div class="section-progress-bar">
+							<div 
+								class="section-progress-fill"
+								style="width: {Math.min(100, ((audioCurrentTime - currentSection.start) / (currentSection.end - currentSection.start)) * 100)}%"
+							></div>
+						</div>
+					{/if}
+				</div>
 				<div class="beat-indicator-row">
 					<div class="beat-label">Beat Trigger:</div>
 					<div class="beat-light" class:active={isBeatActive}></div>
@@ -798,12 +1061,12 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		{/if}
 
 		<div class="unified-controls">
-			<Tweakpane.Pane title="Video Shaders Controls" theme={ThemeUtils.presets[themeKey]}>
+			<Tweakpane.Pane title="Video Shader" theme={customThemes[themeKey]}>
 				<!-- Theme Picker -->
 				<Tweakpane.List
 					bind:value={themeKey}
 					label="Theme"
-					options={Object.keys(ThemeUtils.presets)}
+					options={Object.keys(customThemes)}
 				/>
 
 				<!-- Filter Toggle -->
@@ -942,16 +1205,39 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 						/>
 						
 						
-						<!-- Legacy Audio Reactive Playback & Filter Intensity removed -->
-						
-						
-						<Tweakpane.Slider
-							bind:value={onsetDensity}
-							label="Transient Density"
-							min={0.0}
-							max={1.0}
-							step={0.05}
-						/>
+						<!-- Density Controls -->
+						<Tweakpane.Folder title="Marker Density" expanded={true}>
+							<Tweakpane.Slider
+								bind:value={onsetDensity}
+								label="Onset Density"
+								min={0.1}
+								max={1.0}
+								step={0.05}
+							/>
+							
+							<Tweakpane.Slider
+								bind:value={midiDensity}
+								label="MIDI Density"
+								min={0.1}
+								max={1.0}
+								step={0.05}
+							/>
+							
+							<Tweakpane.Checkbox
+								bind:value={enableRandomSkip}
+								label="Random Skip"
+							/>
+							
+							{#if enableRandomSkip}
+							<Tweakpane.Slider
+								bind:value={randomSkipChance}
+								label="Skip Chance"
+								min={0.0}
+								max={0.5}
+								step={0.05}
+							/>
+							{/if}
+						</Tweakpane.Folder>
 						
 						<Tweakpane.Checkbox
 							bind:value={showGrid}
@@ -982,18 +1268,111 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 							/>
 						</Tweakpane.Folder>
 
-						<Tweakpane.Separator />
-                        
-						<Tweakpane.Slider
-							bind:value={markerSwapThreshold}
-							label="Swap Threshold"
-							min={1}
-							max={16}
-							step={1}
-						/>
-                        
-						<!-- Beat Indicator removed from here -->
 					{/if}
+				</Tweakpane.Folder>
+
+				<!-- Section Video Pools (Phase 3) -->
+				{#if analysisData.structure?.sections?.length > 0}
+				<Tweakpane.Folder title="Section Video Pools" expanded={false}>
+					<div class="section-pools-info">
+						Assign videos to song sections. During playback, video cycling is restricted to the current section's pool.
+					</div>
+					{#each analysisData.structure.sections as section, sectionIndex}
+						<div class="section-pool-row">
+							<div class="section-pool-label">
+								<span class="section-name">{section.label}</span>
+								<span class="section-time">{formatSectionTime(section.start)} - {formatSectionTime(section.end)}</span>
+							</div>
+							<div class="section-pool-videos">
+								{#each $videoAssets as asset, videoIndex}
+									<label class="video-pool-checkbox">
+										<input 
+											type="checkbox" 
+											checked={isVideoInSection(sectionIndex, videoIndex)}
+											onchange={() => toggleVideoInSection(sectionIndex, videoIndex)}
+										/>
+										<span class="video-pool-name">{videoIndex + 1}</span>
+									</label>
+								{/each}
+							</div>
+						</div>
+					{/each}
+				</Tweakpane.Folder>
+				{/if}
+
+				<!-- Triggers & Effects Folder (Phase 4 & 5) -->
+				<Tweakpane.Folder title="Triggers & Effects" expanded={false}>
+					<!-- Video Cycling -->
+					<Tweakpane.Checkbox
+						bind:value={enableVideoCycling}
+						label="Video Cycling"
+					/>
+					<Tweakpane.Slider
+						bind:value={markerSwapThreshold}
+						label="Swap Threshold"
+						min={1}
+						max={16}
+						step={1}
+					/>
+					
+					<Tweakpane.Separator />
+					
+					<!-- Jump Cuts -->
+					<Tweakpane.Checkbox
+						bind:value={enableJumpCuts}
+						label="Jump Cuts"
+					/>
+					<Tweakpane.Slider
+						bind:value={jumpCutRange}
+						label="Jump Range"
+						min={5}
+						max={120}
+						step={5}
+					/>
+					
+					<Tweakpane.Separator />
+					
+					<!-- Glitch Mode -->
+					<Tweakpane.Checkbox
+						bind:value={enableGlitchMode}
+						label="Glitch Mode"
+					/>
+					<Tweakpane.Slider
+						bind:value={glitchFrameRange}
+						label="Glitch Frames"
+						min={1}
+						max={15}
+						step={1}
+					/>
+					<Tweakpane.Slider
+						bind:value={glitchEnergyThreshold}
+						label="Energy Threshold"
+						min={0.1}
+						max={1.0}
+						step={0.05}
+					/>
+					
+					<Tweakpane.Separator />
+					
+					<!-- FX Triggers -->
+					<Tweakpane.Checkbox
+						bind:value={enableFXTriggers}
+						label="FX Triggers"
+					/>
+					<Tweakpane.Slider
+						bind:value={fxTriggerIntensity}
+						label="FX Intensity"
+						min={0.1}
+						max={1.0}
+						step={0.05}
+					/>
+					<Tweakpane.Slider
+						bind:value={fxTriggerDecay}
+						label="FX Decay"
+						min={0.01}
+						max={0.5}
+						step={0.01}
+					/>
 				</Tweakpane.Folder>
 
 				{#if selectedShaderName === 'XlsczN'}
@@ -1794,9 +2173,14 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				segments={[]} 
 				grid={gridMarkers}
 				onSeek={(time) => {
+					// Sync audio position
 					if (audioAnalyzer) audioAnalyzer.seekTo(time);
 					else {
 						audioCurrentTime = time;
+					}
+					// Sync video position to match audio (Phase 2 seek sync)
+					if (shaderPlayerRef && audioMasterEnabled) {
+						shaderPlayerRef.setAudioTime(time, TARGET_FPS);
 					}
 				}}
 			/>
@@ -1817,17 +2201,30 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
         margin-right: 10px;
     }
     .beat-light {
-        width: 12px;
-        height: 12px;
+        width: 14px;
+        height: 14px;
         border-radius: 50%;
         background-color: #333;
         border: 1px solid #555;
-        transition: background-color 0.05s;
+        transition: all 0.05s ease;
+        transform: scale(1);
     }
     .beat-light.active {
-        background-color: #00ff00;
-        box-shadow: 0 0 8px #00ff00;
-        border-color: #00ff00;
+        background-color: #00ff88;
+        box-shadow: 0 0 12px #00ff88, 0 0 24px rgba(0, 255, 136, 0.5);
+        border-color: #00ff88;
+        animation: beat-pulse 0.1s ease-out;
+    }
+    
+    @keyframes beat-pulse {
+        0% {
+            transform: scale(1.4);
+            box-shadow: 0 0 20px #00ff88, 0 0 40px rgba(0, 255, 136, 0.8);
+        }
+        100% {
+            transform: scale(1);
+            box-shadow: 0 0 12px #00ff88, 0 0 24px rgba(0, 255, 136, 0.5);
+        }
     }
 
 	.app-container { display: flex; height: 100vh; background-color: #1a1a1a; color: #fff; }
@@ -1871,8 +2268,112 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		margin: 0 0 1rem 0;
 		padding: 0.5rem;
 		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.section-indicator {
+		display: flex;
 		align-items: center;
+		gap: 10px;
+		width: 100%;
+	}
+
+	.section-label {
+		font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+		font-size: 0.7rem;
+		font-weight: 600;
+		color: #a882ff;
+		letter-spacing: 1.5px;
+		min-width: 60px;
+		text-align: center;
+		background: rgba(90, 63, 192, 0.2);
+		padding: 3px 8px;
+		border-radius: 4px;
+		border: 1px solid rgba(90, 63, 192, 0.4);
+	}
+
+	.section-progress-bar {
+		flex: 1;
+		height: 4px;
+		background: #222;
+		border-radius: 2px;
+		overflow: hidden;
+	}
+
+	.section-progress-fill {
+		height: 100%;
+		background: linear-gradient(90deg, #5a3fc0, #a882ff);
+		border-radius: 2px;
+		transition: width 0.1s linear;
+	}
+
+	/* Section Video Pools UI */
+	.section-pools-info {
+		font-size: 0.7rem;
+		color: #888;
+		margin-bottom: 10px;
+		line-height: 1.4;
+	}
+
+	.section-pool-row {
+		margin-bottom: 12px;
+		padding: 8px;
+		background: rgba(30, 30, 30, 0.6);
+		border-radius: 4px;
+	}
+
+	.section-pool-label {
+		display: flex;
 		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 6px;
+	}
+
+	.section-name {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: #a882ff;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.section-time {
+		font-size: 0.65rem;
+		color: #666;
+		font-family: monospace;
+	}
+
+	.section-pool-videos {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+
+	.video-pool-checkbox {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+		cursor: pointer;
+		padding: 3px 6px;
+		background: rgba(40, 40, 40, 0.8);
+		border-radius: 3px;
+		font-size: 0.7rem;
+		transition: all 0.15s;
+	}
+
+	.video-pool-checkbox:hover {
+		background: rgba(60, 60, 60, 0.8);
+	}
+
+	.video-pool-checkbox input[type="checkbox"] {
+		width: 12px;
+		height: 12px;
+		accent-color: #a882ff;
+	}
+
+	.video-pool-name {
+		color: #ccc;
 	}
 
 	.beat-indicator-row {

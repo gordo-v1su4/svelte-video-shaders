@@ -28,3 +28,7 @@ mediabunny/
 
 # Essentia models (large files, downloaded separately)
 api/models/
+
+*.mid
+*.wav
+*.mp3
