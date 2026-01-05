@@ -15,6 +15,7 @@
 		midiMarkers = [], // Array of timestamps for MIDI markers
 		showOnsets = $bindable(true), // Toggle for showing Essentia onsets
 		showMIDIMarkers = $bindable(true), // Toggle for showing MIDI markers
+		sections = [], // Song structure sections (intro, verse, chorus, etc.)
 		currentTime = $bindable(0),
 		duration = $bindable(0),
 		isPlaying = $bindable(false),
@@ -198,6 +199,9 @@
 
 			// Initial render of markers - the $effect will handle subsequent updates
 			renderMarkersSync(showOnsets, showMIDIMarkers, onsets, midiMarkers, grid);
+			
+			// Render section overlays if available
+			renderSections(sections);
 		});
 	}
 
@@ -218,6 +222,10 @@
 		return `${first}-${last}-${midiMarkers.length}`;
 	});
 	const gridFingerprint = $derived(() => grid ? grid.length.toString() : '0');
+	const sectionsFingerprint = $derived(() => {
+		if (!sections || sections.length === 0) return 'empty';
+		return `${sections.length}-${sections.map(s => s.label).join('-')}`;
+	});
 	
 	$effect(() => {
 		// Re-render markers when peaks is ready and data or toggle states change
@@ -226,6 +234,7 @@
 			const _onsetsFp = onsetsFingerprint;
 			const _midiFp = midiFingerprint;
 			const _gridFp = gridFingerprint;
+			const _sectionsFp = sectionsFingerprint;
 			const _showOnsets = showOnsets;
 			const _showMIDI = showMIDIMarkers;
 			
@@ -241,6 +250,11 @@
 			
 			// Render with captured values to avoid stale closure issues
 			renderMarkersSync(_showOnsets, _showMIDI, currentOnsets, currentMidi, currentGrid);
+			
+			// Re-render sections when they change
+			if (_sectionsFp !== 'empty') {
+				renderSections(sections);
+			}
 		}
 	});
 
@@ -280,19 +294,19 @@
         
         const allPoints = [];
 
-        // 1. Grid Lines (Faint)
+        // 1. Grid Lines (Very faint)
         if (gridData && gridData.length > 0) {
             gridData.forEach((time) => {
                 allPoints.push({
                     time,
                     labelText: '',
                     editable: false,
-                    color: 'rgba(255, 255, 255, 0.1)',
+                    color: 'rgba(255, 255, 255, 0.05)',
                 });
             });
         }
 
-        // 2. Essentia Onsets (Orange) - only if enabled
+        // 2. Essentia Onsets (Orange) - reduced opacity
 		if (shouldShowOnsets && onsetData && onsetData.length > 0) {
 			console.log(`[PeaksPlayer] ✅ Adding ${onsetData.length} Essentia onsets`);
 			onsetData.forEach((time, i) => {
@@ -300,9 +314,9 @@
 				if (!isNaN(pointTime) && pointTime >= 0) {
 					allPoints.push({
 						time: pointTime,
-						labelText: '',  // Cleaner without labels
+						labelText: '',
 						editable: false,
-						color: 'rgba(255, 136, 0, 0.5)',  // 50% opacity orange
+						color: 'rgba(255, 136, 0, 0.25)',  // 25% opacity orange
 					});
 				}
 			});
@@ -310,7 +324,7 @@
 			console.log(`[PeaksPlayer] ❌ Skipping onsets: show=${shouldShowOnsets}, count=${onsetData?.length || 0}`);
 		}
 
-        // 3. MIDI Markers (Blue) - only if enabled
+        // 3. MIDI Markers (Blue) - reduced opacity
 		if (shouldShowMIDI && midiData && midiData.length > 0) {
 			console.log(`[PeaksPlayer] ✅ Adding ${midiData.length} MIDI markers`);
 			midiData.forEach((time, i) => {
@@ -318,9 +332,9 @@
 				if (!isNaN(pointTime) && pointTime >= 0) {
 					allPoints.push({
 						time: pointTime,
-						labelText: '',  // Cleaner without labels
+						labelText: '',
 						editable: false,
-						color: 'rgba(100, 200, 255, 0.6)',  // 60% opacity blue
+						color: 'rgba(100, 200, 255, 0.3)',  // 30% opacity blue
 					});
 				}
 			});
@@ -340,7 +354,7 @@
 			console.log(`[PeaksPlayer] ⚠️ No points to add (toggles: onsets=${shouldShowOnsets}, midi=${shouldShowMIDI})`);
 		}
 		
-		// Force redraw of views to ensure markers are visible
+		// Force redraw of views and hide points in overview
 		try {
 			const zoomview = peaksInstance.views.getView('zoomview');
 			const overview = peaksInstance.views.getView('overview');
@@ -353,17 +367,135 @@
 				if (typeof zoomview.fitToContainer === 'function') {
 					zoomview.fitToContainer();
 				}
+				// Show points in zoom view
+				if (typeof zoomview.showPoints === 'function') {
+					zoomview.showPoints(true);
+				}
 			}
 			if (overview) {
 				overview.setWaveformColor('#5a3fc0');
 				if (typeof overview.fitToContainer === 'function') {
 					overview.fitToContainer();
 				}
+				// Hide points in overview - keep only segments
+				if (typeof overview.showPoints === 'function') {
+					overview.showPoints(false);
+				}
 			}
+			
+			// Reduce opacity of point markers in overview via DOM manipulation
+			setTimeout(() => {
+				const overviewEl = document.querySelector(`#${overviewId}`);
+				if (overviewEl) {
+					const overviewSvg = overviewEl.querySelector('svg');
+					if (overviewSvg) {
+						// Get all lines in overview (point markers)
+						const allLines = overviewSvg.querySelectorAll('line');
+						console.log(`[PeaksPlayer] Setting opacity for ${allLines.length} lines in overview`);
+						allLines.forEach(line => {
+							line.style.opacity = '0.02';
+							line.style.strokeOpacity = '0.02';
+						});
+					}
+				}
+			}, 300);
 			
 			console.log(`[PeaksPlayer] Forced redraw of views`);
 		} catch (e) {
 			console.warn(`[PeaksPlayer] Error forcing redraw:`, e);
+		}
+	}
+	
+	function renderSections(sectionsData) {
+		if (!peaksInstance || !sectionsData || sectionsData.length === 0) {
+			return;
+		}
+		
+		// Remove existing section segments (they have a special prefix)
+		try {
+			const existingSegments = peaksInstance.segments.getSegments();
+			const sectionSegments = existingSegments.filter(seg => seg.id?.startsWith('section-'));
+			
+			for (const seg of sectionSegments) {
+				peaksInstance.segments.removeById(seg.id);
+			}
+		} catch (e) {
+			console.warn('[PeaksPlayer] Error removing section segments:', e);
+		}
+		
+		// Add section segments - increased opacity for more prominent overlays
+		const sectionColors = {
+			'intro': 'rgba(255, 200, 100, 0.35)',
+			'verse': 'rgba(100, 150, 255, 0.35)',
+			'chorus': 'rgba(255, 100, 150, 0.4)',
+			'bridge': 'rgba(150, 255, 100, 0.35)',
+			'outro': 'rgba(200, 100, 255, 0.35)',
+			'default': 'rgba(200, 200, 200, 0.25)'
+		};
+		
+		try {
+			sectionsData.forEach((section, index) => {
+				const label = section.label?.toLowerCase() || '';
+				let color = sectionColors.default;
+				
+				// Find matching color
+				for (const [key, sectionColor] of Object.entries(sectionColors)) {
+					if (label.includes(key)) {
+						color = sectionColor;
+						break;
+					}
+				}
+				
+				peaksInstance.segments.add({
+					id: `section-${index}`,
+					startTime: section.start,
+					endTime: section.end,
+					labelText: section.label.toUpperCase(),
+					color: color,
+					editable: false
+				});
+			});
+			
+			console.log(`[PeaksPlayer] ✅ Added ${sectionsData.length} section segments`);
+			
+			// Also reduce marker opacity in overview after sections are added
+			// Use multiple attempts with increasing delays
+			const reduceOverviewOpacity = () => {
+				const overviewEl = document.querySelector(`#${overviewId}`);
+				if (overviewEl) {
+					// Debug: log structure
+					console.log('[PeaksPlayer] Overview element:', overviewEl);
+					console.log('[PeaksPlayer] Overview HTML:', overviewEl.innerHTML.substring(0, 200));
+					
+					// Try multiple selectors
+					let allLines = overviewEl.querySelectorAll('line');
+					if (allLines.length === 0) {
+						// Try looking in canvas or other elements
+						allLines = document.querySelectorAll(`#${overviewId} line`);
+					}
+					if (allLines.length === 0) {
+						// Try looking for all child elements
+						const allChildren = overviewEl.querySelectorAll('*');
+						console.log('[PeaksPlayer] Overview has', allChildren.length, 'child elements');
+						console.log('[PeaksPlayer] First few:', Array.from(allChildren).slice(0, 5));
+					}
+					
+					console.log(`[PeaksPlayer] Post-section: Found ${allLines.length} lines in overview`);
+					if (allLines.length > 0) {
+						allLines.forEach(line => {
+							line.style.opacity = '0.02';
+							line.style.strokeOpacity = '0.02';
+						});
+						console.log(`[PeaksPlayer] ✅ Reduced opacity for ${allLines.length} overview markers`);
+					}
+				}
+			};
+			
+			setTimeout(reduceOverviewOpacity, 300);
+			setTimeout(reduceOverviewOpacity, 600);
+			setTimeout(reduceOverviewOpacity, 1000);
+		} catch (e) {
+			console.error('[PeaksPlayer] Error adding section segments:', e);
 		}
 	}
     
@@ -723,5 +855,15 @@
         height: 20px;
         background: #444;
         margin: 0 5px;
+    }
+
+    /* Reduce point marker opacity in overview to emphasize sections */
+    .peaks-overview :global(svg) :global(line) {
+        opacity: 0.05 !important;
+    }
+    
+    /* Keep full opacity in zoom view */
+    .peaks-zoomview :global(svg) :global(line) {
+        opacity: 1 !important;
     }
 </style>

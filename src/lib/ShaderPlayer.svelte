@@ -32,6 +32,11 @@
 	let playbackSpeed = 1.0;
 	let lastRenderTime = 0;
 	let accumulatedTime = 0;
+	
+	// Clip-based playback (for video cycling)
+	let currentClipIndex = 0;
+	let clipLocalFrame = 0; // Frame within current clip
+	let clipStartAudioTime = 0; // Audio time when this clip started
 
 	// Audio-reactive state
 	let beatIndex = 0;
@@ -258,12 +263,19 @@
 		accumulatedTime = 0;
 	}
 
-	export function seekToClip(clipIndex) {
+export function seekToClip(clipIndex, audioTime = null) {
 		if (!frameBuffer) return;
 		const clipInfo = frameBuffer.getClipInfo(clipIndex);
 		if (clipInfo) {
+			currentClipIndex = clipIndex;
+			clipLocalFrame = 0;
 			globalFrameIndex = clipInfo.startFrame;
 			accumulatedTime = 0;
+			// Record when this clip started (for relative frame calculation)
+			if (audioTime !== null) {
+				clipStartAudioTime = audioTime;
+			}
+			console.log(`[ShaderPlayer] seekToClip(${clipIndex}): startFrame=${clipInfo.startFrame}, frameCount=${clipInfo.frameCount}, audioTime=${audioTime?.toFixed(2)}`);
 		}
 	}
 
@@ -289,6 +301,7 @@
 
 	/**
 	 * Set the video frame based on audio time (audio-as-master-clock)
+	 * Now respects current clip - uses time relative to when clip started
 	 * @param {number} audioTimeSeconds - Current audio time in seconds
 	 * @param {number} fps - Video frame rate (default 24)
 	 * @returns {number} The frame index that was set
@@ -296,19 +309,24 @@
 	export function setAudioTime(audioTimeSeconds, fps = 24) {
 		if (!frameBuffer || frameBuffer.totalFrames === 0) return 0;
 		
-		// Calculate frame index from audio time
-		// audioTime (seconds) * fps = frameIndex
-		const targetFrame = Math.floor(audioTimeSeconds * fps);
-		
-		// Clamp or wrap based on looping mode
-		if (enableLooping) {
+		// Get current clip info
+		const clipInfo = frameBuffer.getClipInfo(currentClipIndex);
+		if (!clipInfo) {
+			// Fallback: use all frames
+			const targetFrame = Math.floor(audioTimeSeconds * fps);
 			globalFrameIndex = targetFrame % frameBuffer.totalFrames;
-			if (globalFrameIndex < 0) {
-				globalFrameIndex = globalFrameIndex + frameBuffer.totalFrames;
-			}
-		} else {
-			globalFrameIndex = Math.max(0, Math.min(targetFrame, frameBuffer.totalFrames - 1));
+			return globalFrameIndex;
 		}
+		
+		// Calculate time elapsed since this clip started
+		const elapsedTime = audioTimeSeconds - clipStartAudioTime;
+		
+		// Calculate frame within current clip based on elapsed time (loop within clip)
+		const targetFrame = Math.floor(elapsedTime * fps);
+		clipLocalFrame = ((targetFrame % clipInfo.frameCount) + clipInfo.frameCount) % clipInfo.frameCount;
+		
+		// Convert to global frame index
+		globalFrameIndex = clipInfo.startFrame + clipLocalFrame;
 		
 		// Reset accumulated time since we're externally controlled
 		accumulatedTime = 0;

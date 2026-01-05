@@ -39,17 +39,18 @@ export class EssentiaService {
     }
 
     /**
-     * Analyzes an audio file for beats and BPM via the API.
+     * Analyzes an audio file for beats, BPM, structure, and classification via the API.
+     * Uses the official Essentia API /analyze/full endpoint for complete analysis.
      * @param {File} audioFile - The audio file to analyze
-     * @returns {Promise<{bpm: number, beats: number[], confidence: number}>}
+     * @returns {Promise<{bpm: number, beats: number[], confidence: number, onsets: number[], duration: number, structure: object, classification?: object, tonal?: object}>}
      */
     async analyzeFile(audioFile) {
         if (!this.isReady) {
             console.warn('[EssentiaService] ⚠️ API not available, returning empty analysis');
-            return { bpm: 0, beats: [], confidence: 0 };
+            return { bpm: 0, beats: [], confidence: 0, onsets: [], duration: 0, structure: { sections: [], boundaries: [] } };
         }
 
-        console.log(`[EssentiaService] 📤 Sending audio file to ${API_URL}/analyze`);
+        console.log(`[EssentiaService] 📤 Sending audio file to ${API_URL}/analyze/full`);
         console.log(`[EssentiaService] File: ${audioFile.name}, Size: ${(audioFile.size / 1024).toFixed(2)} KB`);
 
         const formData = new FormData();
@@ -57,7 +58,7 @@ export class EssentiaService {
 
         try {
             const startTime = performance.now();
-            const response = await fetch(`${API_URL}/analyze`, {
+            const response = await fetch(`${API_URL}/analyze/full`, {
                 method: 'POST',
                 body: formData
             });
@@ -72,11 +73,12 @@ export class EssentiaService {
 
             const result = await response.json();
             console.log(`[EssentiaService] ✅ Analysis complete in ${elapsed}s:`, result);
-            console.log(`[EssentiaService] BPM: ${result.bpm}, Beats: ${result.beats?.length || 0}, Confidence: ${result.confidence}`);
+            console.log(`[EssentiaService] BPM: ${result.bpm}, Beats: ${result.beats?.length || 0}, Onsets: ${result.onsets?.length || 0}, Confidence: ${result.confidence}`);
+            console.log(`[EssentiaService] Structure: ${result.structure?.sections?.length || 0} sections, Classification: ${result.classification ? 'available' : 'none'}`);
             return result;
         } catch (e) {
             console.error('[EssentiaService] ❌ Analysis failed:', e);
-            return { bpm: 0, beats: [], confidence: 0 };
+            return { bpm: 0, beats: [], confidence: 0, onsets: [], duration: 0, structure: { sections: [], boundaries: [] } };
         }
     }
 

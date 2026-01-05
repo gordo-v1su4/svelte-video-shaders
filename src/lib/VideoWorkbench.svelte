@@ -68,8 +68,9 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	let analysisData = $state({ beats: [], bpm: 0, onsets: [], structure: { sections: [], boundaries: [] }, energy: null });
 	let isAnalyzingAudio = $state(false);
 	let audioFile = $state(null);
+	let audioFileUrl = $state(null); // Store blob URL to prevent garbage collection
 	let midiFile = $state(null);
-	let midiMarkers = $state([]); // Array of timestamps from MIDI file
+	let midiMarkers = $state([]);
 	let showMIDIMarkers = $state(true); // Show MIDI markers checkbox
 	let showOnsets = $state(true); // Show Essentia onsets checkbox
 	let audioVolume = $state(0.5);
@@ -84,6 +85,12 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	let midiDensity = $state(1.0); // Density control for MIDI markers
 	let enableRandomSkip = $state(false); // Toggle random skip
 	let randomSkipChance = $state(0.3); // Probability of skipping a marker (0-0.5)
+	
+	// Temporary values for density controls (not applied until button click)
+	let tempOnsetDensity = $state(1.0);
+	let tempMidiDensity = $state(1.0);
+	let tempEnableRandomSkip = $state(false);
+	let tempRandomSkipChance = $state(0.3);
 	let markerSwapThreshold = $state(4); // Swap video after this many markers
 	let markerCounter = $state(0); // Current count of markers hit
 	let isBeatActive = $state(false); // For visual indicator
@@ -92,6 +99,9 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	let enableLooping = $state(true); // Loop/auto-cycle within playback
 	
 	let showGrid = $state(true);
+	
+	// Section looping
+	let loopSectionIndex = $state(-1); // -1 = no loop, 0+ = loop that section
 	
 	// Separate arrays for MIDI markers and Essentia onsets
 	// Seeded random function for deterministic random skip
@@ -198,6 +208,17 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		return markers;
 	});
 
+	// Cleanup effect for audio blob URL to prevent memory leaks
+	$effect(() => {
+		// Return cleanup function
+		return () => {
+			if (audioFileUrl) {
+				console.log('[VideoWorkbench] Cleaning up audio blob URL');
+				URL.revokeObjectURL(audioFileUrl);
+			}
+		};
+	});
+
 	// === Phase 3: Section Tracking ===
 	// Track current section based on audio time and analysisData.structure.sections
 	const currentSection = $derived.by(() => {
@@ -277,6 +298,42 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		return `${mins}:${secs.toString().padStart(2, '0')}`;
 	}
 	
+	// Apply marker density changes
+	function applyMarkerDensity() {
+		onsetDensity = tempOnsetDensity;
+		midiDensity = tempMidiDensity;
+		enableRandomSkip = tempEnableRandomSkip;
+		randomSkipChance = tempRandomSkipChance;
+		console.log('[VideoWorkbench] Applied marker density changes');
+	}
+	
+	// Handle section loop change
+	function handleSectionLoopChange() {
+		if (loopSectionIndex >= 0 && analysisData.structure?.sections) {
+			const section = analysisData.structure.sections[loopSectionIndex];
+			if (section && sharedAudioRef) {
+				// Jump to section start
+				sharedAudioRef.currentTime = section.start;
+				console.log(`[VideoWorkbench] Looping section: ${section.label} (${section.start}s - ${section.end}s)`);
+			}
+		} else {
+			console.log('[VideoWorkbench] Section loop disabled');
+		}
+	}
+	
+	// Effect to handle section looping during playback
+	$effect(() => {
+		if (loopSectionIndex >= 0 && analysisData.structure?.sections && isPlaying) {
+			const section = analysisData.structure.sections[loopSectionIndex];
+			if (section && audioCurrentTime >= section.end - 0.05) {
+				// Loop back to section start
+				if (sharedAudioRef) {
+					sharedAudioRef.currentTime = section.start;
+				}
+			}
+		}
+	});
+	
 	// Get videos available in current section
 	const currentSectionVideos = $derived.by(() => {
 		const pool = sectionVideoPools[currentSection.index];
@@ -287,13 +344,17 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		return $videoAssets.filter((_, i) => pool.includes(i));
 	});
 	
+	// Store base values for FX triggers (so we can spike and return)
+	let baseNoiseValue = 0;
+	let baseRgbShiftValue = 0.0015;
+	
 	let uniforms = $state({
 		// VHS shader uniforms
 		u_time: { value: 0.0 },
 		u_distortion: { value: 0.075 },
 		u_scanlineIntensity: { value: 0.26 },
 		u_rgbShift: { value: 0.0015 },
-		u_noise: { value: 0.022 },
+		u_noise: { value: 0.0 },
 		u_flickerIntensity: { value: 0.5 },
 		u_trackingIntensity: { value: 0.1 },
 		u_trackingSpeed: { value: 1.2 },
@@ -632,6 +693,113 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		}
 	}
 
+	/**
+	 * Post-process structure sections to fix bad API detection
+	 * If sections are too short, empty, or unrealistic, generate reasonable sections
+	 */
+	function postProcessSections(structure, duration) {
+		if (!structure || !structure.sections || !duration) {
+			return { sections: [], boundaries: [] };
+		}
+		
+		const sections = structure.sections;
+		
+		// Check if sections are valid (not too short, not empty)
+		const hasValidSections = sections.some(s => 
+			s.duration > 5 && // At least 5 seconds
+			s.end > s.start && // Actual duration
+			s.start >= 0
+		);
+		
+		if (hasValidSections) {
+			// Filter out invalid sections (0 duration, negative, etc.)
+			const validSections = sections.filter(s => 
+				s.duration > 1 && s.end > s.start && s.start >= 0
+			);
+			
+			if (validSections.length > 0) {
+				console.log('[VideoWorkbench] Using API sections (valid)');
+				return {
+					sections: validSections,
+					boundaries: validSections.map(s => s.start).concat([validSections[validSections.length - 1].end])
+				};
+			}
+		}
+		
+		// Generate fallback sections based on song duration
+		console.log('[VideoWorkbench] API sections invalid, generating fallback sections');
+		
+		// Create reasonable sections based on typical song structure
+		const fallbackSections = [];
+		const boundaries = [0];
+		
+		// Intro: first 10% or 15s, whichever is smaller
+		const introEnd = Math.min(duration * 0.1, 15);
+		if (introEnd > 5) {
+			fallbackSections.push({
+				start: 0,
+				end: introEnd,
+				label: 'intro',
+				duration: introEnd,
+				energy: 0
+			});
+			boundaries.push(introEnd);
+		}
+		
+		// Main body: split into verse/chorus alternating
+		const mainStart = introEnd;
+		const outroStart = duration - Math.min(duration * 0.15, 20); // Last 15% or 20s
+		const mainDuration = outroStart - mainStart;
+		
+		if (mainDuration > 20) {
+			// Divide main section into 4-6 parts alternating verse/chorus
+			const numParts = Math.floor(mainDuration / 30); // ~30s per section
+			const partDuration = mainDuration / numParts;
+			
+			for (let i = 0; i < numParts; i++) {
+				const start = mainStart + (i * partDuration);
+				const end = mainStart + ((i + 1) * partDuration);
+				const label = i % 2 === 0 ? 'verse' : 'chorus';
+				
+				fallbackSections.push({
+					start,
+					end,
+					label,
+					duration: end - start,
+					energy: 0
+				});
+				boundaries.push(end);
+			}
+		} else {
+			// Short main section, just one part
+			fallbackSections.push({
+				start: mainStart,
+				end: outroStart,
+				label: 'verse',
+				duration: mainDuration,
+				energy: 0
+			});
+			boundaries.push(outroStart);
+		}
+		
+		// Outro
+		if (duration - outroStart > 5) {
+			fallbackSections.push({
+				start: outroStart,
+				end: duration,
+				label: 'outro',
+				duration: duration - outroStart,
+				energy: 0
+			});
+			boundaries.push(duration);
+		}
+		
+		return {
+			sections: fallbackSections,
+			boundaries
+		};
+	}
+	
 	async function onAudioSelected(event) {
 		const file = event.currentTarget.files?.[0];
 		if (!file) return;
@@ -658,6 +826,9 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 			
 			const result = await essentiaService.analyzeFile(file);
 			
+			// Post-process structure sections to fix bad API detection
+			const processedStructure = postProcessSections(result.structure, result.duration);
+			
 			// Update analysis data with result from API
 			analysisData = {
 				bpm: result.bpm,
@@ -665,11 +836,13 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				onsets: result.onsets || [], // critical for transients
 				energy: result.energy, // Contains curve for speed ramping
 				confidence: result.confidence,
-				structure: result.structure || { sections: [], boundaries: [] } // For section-based features
+				structure: processedStructure // Use post-processed sections
 			};
 			
 			console.log(`[VideoWorkbench] Analysis applied: ${analysisData.onsets.length} onsets, ${analysisData.bpm} BPM`);
 			console.log(`[VideoWorkbench] Structure: ${analysisData.structure.sections?.length || 0} sections detected`);
+			console.log('[DEBUG] Raw structure data:', JSON.stringify(result.structure, null, 2));
+			console.log('[DEBUG] Processed structure data:', JSON.stringify(processedStructure, null, 2));
 			
 		} catch (err) {
 			console.error("[VideoWorkbench] ❌ Essentia analysis failed:", err);
@@ -681,8 +854,14 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		
 		// Audio set up logic simplified - strictly Essentia + Peaks
 		if (sharedAudioRef) {
-			const objectUrl = URL.createObjectURL(file);
-			sharedAudioRef.src = objectUrl;
+			// Revoke old blob URL if exists to prevent memory leak
+			if (audioFileUrl) {
+				URL.revokeObjectURL(audioFileUrl);
+			}
+			
+			// Create and store new blob URL
+			audioFileUrl = URL.createObjectURL(file);
+			sharedAudioRef.src = audioFileUrl;
 			sharedAudioRef.volume = audioVolume;
 			// Ensure we catch the duration
 			sharedAudioRef.onloadedmetadata = () => {
@@ -693,10 +872,10 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 
 	/* === Phase 4: Unified Trigger System === */
 	
-	// Trigger modes
-	let enableJumpCuts = $state(false); // Random frame jump on marker hit
-	let enableGlitchMode = $state(false); // Rapid micro-jumps in high-energy sections
-	let enableFXTriggers = $state(true); // Shader parameter spikes on marker
+// Trigger modes
+let enableJumpCuts = $state(false); // Random frame jump on marker hit
+let enableGlitchMode = $state(false); // Rapid micro-jumps in high-energy sections
+let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 	
 	// Jump cut settings
 	let jumpCutRange = $state(30); // Max frames to jump (random within range)
@@ -714,6 +893,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	
 	$effect(() => {
 		const time = audioCurrentTime;
+		const triggers = filteredOnsets; // Capture for reactivity
 		
 		// Reset tracking on seek or pause (approximate)
 		if (!isPlaying || Math.abs(time - previousTime) > 1.0) {
@@ -723,7 +903,12 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		
 		if (time > previousTime) {
 			// Check if we crossed any onset (simple linear check for robustness)
-			const hit = filteredOnsets.some(onset => onset > previousTime && onset <= time);
+			const hit = triggers.some(onset => onset > previousTime && onset <= time);
+			
+			// Debug: log every ~1 second to avoid spam
+			if (Math.floor(time) !== Math.floor(previousTime)) {
+				console.log(`[Trigger] time=${time.toFixed(2)}, triggers=${triggers.length}, enableCycling=${enableVideoCycling}`);
+			}
 			
 			if (hit) {
 				isBeatActive = true;
@@ -731,8 +916,13 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				setTimeout(() => isBeatActive = false, 100); // Visual blink duration
 				
 				// === TRIGGER: Video Swap ===
-				if (enableVideoCycling && markerCounter >= markerSwapThreshold) {
-					nextVideo();
+				if (markerCounter >= markerSwapThreshold) {
+					if (enableVideoCycling) {
+						console.log(`[VideoWorkbench] 🔄 Video swap triggered! Counter: ${markerCounter}/${markerSwapThreshold}`);
+						nextVideo();
+					} else {
+						console.log(`[VideoWorkbench] ⚠️ Video cycling DISABLED - would have swapped at ${markerCounter}/${markerSwapThreshold}`);
+					}
 					markerCounter = 0;
 				}
 				
@@ -780,19 +970,42 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	
 	// Apply FX trigger to shader uniforms
 	$effect(() => {
-		if (fxTriggerActive > 0 && uniforms) {
-			// Spike certain shader params based on trigger level
-			const spikeAmount = fxTriggerActive * fxTriggerIntensity;
-			
-			// Example: spike noise and RGB shift on VHS shader
-			if (uniforms.u_noise) {
-				uniforms.u_noise.value = Math.min(0.5, (uniforms.u_noise?.value || 0.02) + spikeAmount * 0.3);
-			}
-			if (uniforms.u_rgbShift) {
-				uniforms.u_rgbShift.value = Math.min(0.02, (uniforms.u_rgbShift?.value || 0.001) + spikeAmount * 0.01);
+		if (uniforms) {
+			if (fxTriggerActive > 0) {
+				// Spike certain shader params based on trigger level
+				const spikeAmount = fxTriggerActive * fxTriggerIntensity;
+				
+				// Spike noise and RGB shift on VHS shader (add to base value)
+				if (uniforms.u_noise) {
+					uniforms.u_noise.value = Math.min(0.5, baseNoiseValue + spikeAmount * 0.3);
+				}
+				if (uniforms.u_rgbShift) {
+					uniforms.u_rgbShift.value = Math.min(0.02, baseRgbShiftValue + spikeAmount * 0.01);
+				}
+			} else {
+				// Return to base values when no trigger active
+				if (uniforms.u_noise) {
+					uniforms.u_noise.value = baseNoiseValue;
+				}
+				if (uniforms.u_rgbShift) {
+					uniforms.u_rgbShift.value = baseRgbShiftValue;
+				}
 			}
 		}
 	});
+	
+	// Update base values when sliders change (only when FX not active)
+	function handleNoiseChange() {
+		if (fxTriggerActive === 0) {
+			baseNoiseValue = uniforms.u_noise.value;
+		}
+	}
+	
+	function handleRgbShiftChange() {
+		if (fxTriggerActive === 0) {
+			baseRgbShiftValue = uniforms.u_rgbShift.value;
+		}
+	}
 
 	function handleAudioVolumeChange() {
 		if (audioAnalyzer) {
@@ -899,13 +1112,14 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		// Find current video in the available pool
 		const currentPoolIndex = availableVideos.findIndex(asset => asset.id === $activeVideo?.id);
 		const nextPoolIndex = (currentPoolIndex + 1) % availableVideos.length;
-		const nextVideo = availableVideos[nextPoolIndex];
+		const nextVid = availableVideos[nextPoolIndex];
 		
 		// Find the global index for seekToClip
-		const globalIndex = $videoAssets.findIndex(asset => asset.id === nextVideo.id);
+		const globalIndex = $videoAssets.findIndex(asset => asset.id === nextVid.id);
 		
-		activeVideo.set(nextVideo);
-		shaderPlayerRef.seekToClip(globalIndex);
+		activeVideo.set(nextVid);
+		// Pass current audio time so clip knows when it started
+		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime);
 	}
 
 	function previousVideo() {
@@ -917,12 +1131,13 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		
 		const currentPoolIndex = availableVideos.findIndex(asset => asset.id === $activeVideo?.id);
 		const prevPoolIndex = currentPoolIndex === 0 ? availableVideos.length - 1 : currentPoolIndex - 1;
-		const prevVideo = availableVideos[prevPoolIndex];
+		const prevVid = availableVideos[prevPoolIndex];
 		
-		const globalIndex = $videoAssets.findIndex(asset => asset.id === prevVideo.id);
+		const globalIndex = $videoAssets.findIndex(asset => asset.id === prevVid.id);
 		
-		activeVideo.set(prevVideo);
-		shaderPlayerRef.seekToClip(globalIndex);
+		activeVideo.set(prevVid);
+		// Pass current audio time so clip knows when it started
+		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime);
 	}
 
     // Removed time-based cycling logic as we now use onVideoEnd
@@ -1076,24 +1291,6 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				/>
 
 				<Tweakpane.Separator />
-
-				<div class="thumbnail-gallery">
-					{#each $videoAssets as asset (asset.id)}
-						<button
-							class="thumbnail-button"
-							class:active={asset.id === $activeVideo?.id}
-							onclick={() => handleVideoSelect(asset)}
-							style:background-image={asset.thumbnailUrl ? `url(${asset.thumbnailUrl})` : 'none'}
-						>
-							{#if !asset.thumbnailUrl}
-								<div class="thumbnail-placeholder">Loading...</div>
-							{/if}
-							<span class="thumbnail-label">{asset.name}</span>
-						</button>
-					{/each}
-				</div>
-
-				<Tweakpane.Separator />
 				
 				<Tweakpane.List
 					bind:value={selectedShaderName}
@@ -1208,7 +1405,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 						<!-- Density Controls -->
 						<Tweakpane.Folder title="Marker Density" expanded={true}>
 							<Tweakpane.Slider
-								bind:value={onsetDensity}
+								bind:value={tempOnsetDensity}
 								label="Onset Density"
 								min={0.1}
 								max={1.0}
@@ -1216,7 +1413,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 							/>
 							
 							<Tweakpane.Slider
-								bind:value={midiDensity}
+								bind:value={tempMidiDensity}
 								label="MIDI Density"
 								min={0.1}
 								max={1.0}
@@ -1224,49 +1421,27 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 							/>
 							
 							<Tweakpane.Checkbox
-								bind:value={enableRandomSkip}
+								bind:value={tempEnableRandomSkip}
 								label="Random Skip"
 							/>
 							
-							{#if enableRandomSkip}
+							{#if tempEnableRandomSkip}
 							<Tweakpane.Slider
-								bind:value={randomSkipChance}
+								bind:value={tempRandomSkipChance}
 								label="Skip Chance"
 								min={0.0}
 								max={0.5}
 								step={0.05}
 							/>
 							{/if}
+							
+							<Button title="Apply Marker Changes" on:click={applyMarkerDensity} />
 						</Tweakpane.Folder>
 						
 						<Tweakpane.Checkbox
 							bind:value={showGrid}
 							label="Show 1/32 Grid"
 						/>
-                        
-                        <Tweakpane.Separator />
-						
-						<!-- Speed Ramping Controls -->
-						<Tweakpane.Folder title="Speed Ramping" expanded={false}>
-							<Tweakpane.Checkbox
-								bind:value={enableSpeedRamping}
-								label="Enable Ramping"
-							/>
-							<Tweakpane.Slider
-								bind:value={baseSpeed}
-								label="Base Speed"
-								min={0.1}
-								max={2.0}
-								step={0.1}
-							/>
-							<Tweakpane.Slider
-								bind:value={speedRampSensitivity}
-								label="Sensitivity"
-								min={0}
-								max={5.0}
-								step={0.1}
-							/>
-						</Tweakpane.Folder>
 
 					{/if}
 				</Tweakpane.Folder>
@@ -1303,17 +1478,46 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				<!-- Triggers & Effects Folder (Phase 4 & 5) -->
 				<Tweakpane.Folder title="Triggers & Effects" expanded={false}>
 					<!-- Video Cycling -->
-					<Tweakpane.Checkbox
-						bind:value={enableVideoCycling}
-						label="Video Cycling"
-					/>
-					<Tweakpane.Slider
-						bind:value={markerSwapThreshold}
-						label="Swap Threshold"
-						min={1}
-						max={16}
-						step={1}
-					/>
+					<Tweakpane.Folder title="Video Cycling" expanded={true}>
+						<Tweakpane.Checkbox
+							bind:value={enableVideoCycling}
+							label="Enable Video Cycling"
+						/>
+						<Tweakpane.Slider
+							bind:value={markerSwapThreshold}
+							label="Swap Every N Markers"
+							min={1}
+							max={16}
+							step={1}
+						/>
+					</Tweakpane.Folder>
+					
+					<Tweakpane.Separator />
+					
+					<!-- Speed Ramping -->
+					<Tweakpane.Folder title="Speed Ramping" expanded={false}>
+						<Tweakpane.Checkbox
+							bind:value={enableSpeedRamping}
+							label="Enable Speed Ramping"
+						/>
+						<Tweakpane.Slider
+							bind:value={baseSpeed}
+							label="Base Speed"
+							min={0.1}
+							max={2.0}
+							step={0.1}
+						/>
+						<Tweakpane.Slider
+							bind:value={speedRampSensitivity}
+							label="Sensitivity"
+							min={0}
+							max={5.0}
+							step={0.1}
+						/>
+						<div class="info-text" style="font-size: 11px; color: #888; margin-top: 8px; padding: 4px;">
+							⚠️ Requires energy curve (not available in external API)
+						</div>
+					</Tweakpane.Folder>
 					
 					<Tweakpane.Separator />
 					
@@ -1444,6 +1648,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 							min={0}
 							max={0.1}
 							step={0.001}
+							on:change={handleRgbShiftChange}
 						/>
 
 						<Tweakpane.Slider
@@ -1452,6 +1657,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 							min={0}
 							max={0.5}
 							step={0.01}
+							on:change={handleNoiseChange}
 						/>
 
 						<Tweakpane.Slider
@@ -2160,6 +2366,26 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				</div>
 			{/if}
 			
+			<!-- Section Loop Dropdown -->
+			{#if analysisData.structure?.sections?.length > 0}
+				<div class="section-loop-controls">
+					<label class="section-loop-label">Loop Section:</label>
+					<select 
+						class="section-loop-dropdown"
+						bind:value={loopSectionIndex}
+						onchange={handleSectionLoopChange}
+					>
+						<option value={-1}>None (No Loop)</option>
+						{#each analysisData.structure.sections as section, i}
+							<option value={i}>{section.label.toUpperCase()} ({formatSectionTime(section.start)} - {formatSectionTime(section.end)})</option>
+						{/each}
+					</select>
+					{#if loopSectionIndex >= 0}
+						<span class="loop-active-indicator">🔁 Looping</span>
+					{/if}
+				</div>
+			{/if}
+			
 			<PeaksPlayer
 				audioFile={audioFile}
                 mediaElement={sharedAudioRef}
@@ -2171,6 +2397,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				bind:showOnsets={showOnsets}
 				bind:showMIDIMarkers={showMIDIMarkers}
 				segments={[]} 
+				sections={analysisData.structure?.sections || []}
 				grid={gridMarkers}
 				onSeek={(time) => {
 					// Sync audio position
@@ -2185,6 +2412,25 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				}}
 			/>
 		</div>
+		
+		<!-- Thumbnail Gallery (moved here from sidebar) -->
+		{#if $videoAssets.length > 0}
+			<div class="thumbnail-gallery-main">
+				{#each $videoAssets as asset (asset.id)}
+					<button
+						class="thumbnail-button"
+						class:active={asset.id === $activeVideo?.id}
+						onclick={() => handleVideoSelect(asset)}
+						style:background-image={asset.thumbnailUrl ? `url(${asset.thumbnailUrl})` : 'none'}
+					>
+						{#if !asset.thumbnailUrl}
+							<div class="thumbnail-placeholder">Loading...</div>
+						{/if}
+						<span class="thumbnail-label">{asset.name}</span>
+					</button>
+				{/each}
+			</div>
+		{/if}
 	</main>
 </div>
 
@@ -2468,5 +2714,71 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	.placeholder p {
 		color: #666;
 		margin-top: 0.5rem;
+	}
+
+	/* Section Loop Controls */
+	.section-loop-controls {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-bottom: 10px;
+		padding: 8px 12px;
+		background: #1a1a1a;
+		border-radius: 6px;
+		border: 1px solid #333;
+	}
+
+	.section-loop-label {
+		font-size: 0.8rem;
+		color: #888;
+		white-space: nowrap;
+	}
+
+	.section-loop-dropdown {
+		flex: 1;
+		max-width: 300px;
+		padding: 6px 10px;
+		background: #2a2a2a;
+		border: 1px solid #444;
+		border-radius: 4px;
+		color: #fff;
+		font-size: 0.8rem;
+		cursor: pointer;
+	}
+
+	.section-loop-dropdown:hover {
+		border-color: #666;
+	}
+
+	.section-loop-dropdown:focus {
+		outline: none;
+		border-color: #a882ff;
+	}
+
+	.loop-active-indicator {
+		font-size: 0.75rem;
+		color: #00ff88;
+		padding: 4px 8px;
+		background: rgba(0, 255, 136, 0.15);
+		border-radius: 4px;
+		border: 1px solid rgba(0, 255, 136, 0.3);
+		animation: pulse-loop 1.5s ease-in-out infinite;
+	}
+
+	@keyframes pulse-loop {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.6; }
+	}
+
+	/* Thumbnail Gallery in Main Area */
+	.thumbnail-gallery-main {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+		gap: 10px;
+		margin-top: 1rem;
+		padding: 10px;
+		background: #1a1a1a;
+		border-radius: 6px;
+		border: 1px solid #333;
 	}
 </style>

@@ -18,19 +18,26 @@ This rule documents the technology stack, major dependencies, their versions, an
 - **Video Demuxing:** mp4box (^1.2.0) - **REQUIRED FOR WebCodecs**
 - **Frame Buffer:** Custom pre-decoded ImageBitmap arrays for seamless retiming
 - **Audio Analysis (Real-time):** Web Audio API FFT (see audio-utils.js)
-- **Audio Analysis (Offline):** Python Essentia API for beat detection
+- **Audio Analysis (Offline):** External Essentia API (https://essentia.v1su4.com) for beat detection, structure analysis, and energy curves
 - **Timeline/Waveform:** Custom WaveformDisplay.svelte component
 - **UI Controls:** svelte-tweakpane-ui (^1.5.9), tweakpane (^4.0.5)
 - **Testing:** Vitest (^4.0.14), vitest-browser-svelte (^2.0.1), @vitest/browser-playwright (^4.0.15)
 - **Linting/Formatting:** ESLint (^9.18.0), Prettier (^3.4.2), prettier-plugin-svelte (^3.3.3)
 - **CSS:** TailwindCSS (^4.0.0), @tailwindcss/typography (^0.5.15)
 
-## Backend Stack (Python API)
+## External API (Essentia Audio Analysis)
 
-- **Framework:** FastAPI with uvicorn
-- **Beat Detection:** Essentia (RhythmExtractor2013)
-- **Package Manager:** uv (preferred for Python venvs)
-- **Endpoint:** `POST /analyze` - accepts audio file, returns BPM, beat timestamps, confidence
+- **Endpoint**: https://essentia.v1su4.com
+- **Repository**: Separate repo at `essentia-endpoint/`
+- **Framework:** FastAPI with uvicorn, Essentia C++ core via Python
+- **Endpoints:**
+  - `POST /analyze/rhythm` - BPM, beats, onsets, confidence, duration, energy curve
+  - `POST /analyze/structure` - Sections (intro/verse/chorus/outro) with energy values
+  - `POST /analyze/classification` - Genre, mood, tags
+  - `POST /analyze/full` - Complete analysis (rhythm + structure + classification)
+  - `GET /health` - Health check
+- **Documentation:** See `ESSENTIA_API.md`, `API_COMPATIBILITY.md` in project root
+- **Configuration:** Set `VITE_ESSENTIA_API_URL` in `.env` file
 
 ## Dependency Versions (from [package.json](mdc:package.json))
 
@@ -126,10 +133,15 @@ This rule documents the technology stack, major dependencies, their versions, an
 - Fixed output dimensions (1920x1080) for consistent texture handling
 - Progress callback during preloading for UI feedback
 
-### Beat Detection Pipeline
+### Beat Detection & Audio Analysis Pipeline
 - **Real-time FFT** runs in browser via Web Audio API (audioLevel, bassLevel, midLevel, trebleLevel)
-- **Offline beat detection** via Python Essentia API (BPM, beat timestamps, confidence)
-- Start API: `cd api && uv venv && uv pip install -r requirements.txt && uvicorn main:app --reload --port 8000`
+- **Offline analysis** via external Essentia API at https://essentia.v1su4.com
+  - Rhythm: BPM, beats, onsets, confidence, duration
+  - Energy: High-resolution RMS curve (~86Hz) for speed ramping
+  - Structure: Section segmentation with energy values for glitch mode
+  - Classification: Genre, mood, tags (optional)
+- **Local development:** Use external API or run local instance from `essentia-endpoint/` repo
+- **Configuration:** `VITE_ESSENTIA_API_URL=https://essentia.v1su4.com` in `.env`
 
 ### General
 - **Bun:** Use `bun install`, `bun run dev`, etc. instead of npm/pnpm

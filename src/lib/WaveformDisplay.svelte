@@ -8,6 +8,7 @@
 		midiMarkers = [], // MIDI note-on events as timestamps
 		useMIDIMarkers = false, // Toggle between onsets and MIDI markers
 		utterances = [],
+		sections = [], // Song structure sections (intro, verse, chorus, etc.)
 		bpm = 0,
 		currentTime = 0,
 		duration = 0,
@@ -41,6 +42,7 @@
 	let showOnsets = $state(true);
 	// onsetDensity is now a prop
 	let showUtterances = $state(true);
+	let showSections = $state(true);
 	let snapToBeats = $state(false);
 	let zoom = $state(1);
 	let scrollOffset = $state(0);
@@ -305,6 +307,64 @@
 			ctx.fillRect(px, centerY - amplitude, 1, amplitude * 2);
 		}
 
+		// Draw song structure sections (intro, verse, chorus, etc.)
+		if (showSections && sections && sections.length > 0) {
+			const sectionColors = {
+				'intro': 'rgba(255, 200, 100, 0.12)',
+				'verse': 'rgba(100, 150, 255, 0.12)',
+				'chorus': 'rgba(255, 100, 150, 0.15)',
+				'bridge': 'rgba(150, 255, 100, 0.12)',
+				'outro': 'rgba(200, 100, 255, 0.12)',
+				'default': 'rgba(200, 200, 200, 0.08)'
+			};
+			
+			for (const section of sections) {
+				const startX = timeToX(section.start);
+				const endX = timeToX(section.end);
+				
+				// Only draw if visible
+				if (endX < 0 || startX > width) continue;
+				
+				const regionStart = Math.max(0, startX);
+				const regionEnd = Math.min(width, endX);
+				const regionWidth = regionEnd - regionStart;
+				
+				// Determine color based on section label
+				const label = section.label?.toLowerCase() || '';
+				let bgColor = sectionColors.default;
+				for (const [key, color] of Object.entries(sectionColors)) {
+					if (label.includes(key)) {
+						bgColor = color;
+						break;
+					}
+				}
+				
+				// Section background overlay
+				ctx.fillStyle = bgColor;
+				ctx.fillRect(regionStart, 0, regionWidth, height);
+				
+				// Section boundary lines
+				ctx.strokeStyle = bgColor.replace('0.12', '0.5').replace('0.15', '0.5').replace('0.08', '0.4');
+				ctx.lineWidth = 1;
+				ctx.beginPath();
+				ctx.moveTo(regionStart, 0);
+				ctx.lineTo(regionStart, height);
+				if (regionEnd <= width) {
+					ctx.moveTo(regionEnd, 0);
+					ctx.lineTo(regionEnd, height);
+				}
+				ctx.stroke();
+				
+				// Section label at top
+				if (regionWidth > 30) {
+					ctx.fillStyle = bgColor.replace(/[\d.]+\)$/, '0.8)');
+					ctx.font = 'bold 9px -apple-system, sans-serif';
+					ctx.textAlign = 'left';
+					ctx.fillText(section.label.toUpperCase(), regionStart + 4, 10);
+				}
+			}
+		}
+
 		// Draw beat markers
 		if (showBeats && beats.length > 0) {
 			for (const beat of beats) {
@@ -537,6 +597,38 @@
 			
 			const amplitude = waveformData[sampleIndex] * (height / 2 - 4);
 			ctx.fillRect(px, centerY - amplitude, 1, amplitude * 2);
+		}
+		
+		// Draw sections in overview
+		if (showSections && sections && sections.length > 0) {
+			const sectionColors = {
+				'intro': 'rgba(255, 200, 100, 0.15)',
+				'verse': 'rgba(100, 150, 255, 0.15)',
+				'chorus': 'rgba(255, 100, 150, 0.18)',
+				'bridge': 'rgba(150, 255, 100, 0.15)',
+				'outro': 'rgba(200, 100, 255, 0.15)',
+				'default': 'rgba(200, 200, 200, 0.1)'
+			};
+			
+			for (const section of sections) {
+				const startX = (section.start / effectiveDuration) * width;
+				const endX = (section.end / effectiveDuration) * width;
+				const sectionWidth = endX - startX;
+				
+				if (sectionWidth < 0.5) continue;
+				
+				const label = section.label?.toLowerCase() || '';
+				let bgColor = sectionColors.default;
+				for (const [key, color] of Object.entries(sectionColors)) {
+					if (label.includes(key)) {
+						bgColor = color;
+						break;
+					}
+				}
+				
+				ctx.fillStyle = bgColor;
+				ctx.fillRect(startX, 0, sectionWidth, height);
+			}
 		}
 		
 		// Draw visible region indicator (semi-transparent overlay)
@@ -910,7 +1002,7 @@
 
 	// Effects
 	$effect(() => {
-		if (beats || onsets || utterances || currentTime || segments) {
+		if (beats || onsets || utterances || sections || currentTime || segments || onsetDensity || useMIDIMarkers || midiMarkers) {
 			drawAll();
 		}
 	});
@@ -1030,6 +1122,12 @@
 				<label class="toggle-option">
 					<input type="checkbox" bind:checked={showUtterances} />
 					<span>Phrases</span>
+				</label>
+			{/if}
+			{#if sections && sections.length > 0}
+				<label class="toggle-option">
+					<input type="checkbox" bind:checked={showSections} />
+					<span>Sections</span>
 				</label>
 			{/if}
 			<label class="toggle-option">

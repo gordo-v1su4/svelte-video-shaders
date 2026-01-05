@@ -1,6 +1,0 @@
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-essentia>=2.1b6.dev90
-python-multipart>=0.0.12
-numpy>=2.0.0
-deepgram-sdk>=3.0.0
