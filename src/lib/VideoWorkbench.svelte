@@ -85,12 +85,6 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	let midiDensity = $state(1.0); // Density control for MIDI markers
 	let enableRandomSkip = $state(false); // Toggle random skip
 	let randomSkipChance = $state(0.3); // Probability of skipping a marker (0-0.5)
-	
-	// Temporary values for density controls (not applied until button click)
-	let tempOnsetDensity = $state(1.0);
-	let tempMidiDensity = $state(1.0);
-	let tempEnableRandomSkip = $state(false);
-	let tempRandomSkipChance = $state(0.3);
 	let markerSwapThreshold = $state(4); // Swap video after this many markers
 	let markerCounter = $state(0); // Current count of markers hit
 	let isBeatActive = $state(false); // For visual indicator
@@ -296,15 +290,6 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		const mins = Math.floor(seconds / 60);
 		const secs = Math.floor(seconds % 60);
 		return `${mins}:${secs.toString().padStart(2, '0')}`;
-	}
-	
-	// Apply marker density changes
-	function applyMarkerDensity() {
-		onsetDensity = tempOnsetDensity;
-		midiDensity = tempMidiDensity;
-		enableRandomSkip = tempEnableRandomSkip;
-		randomSkipChance = tempRandomSkipChance;
-		console.log('[VideoWorkbench] Applied marker density changes');
 	}
 	
 	// Handle section loop change
@@ -1405,7 +1390,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 						<!-- Density Controls -->
 						<Tweakpane.Folder title="Marker Density" expanded={true}>
 							<Tweakpane.Slider
-								bind:value={tempOnsetDensity}
+								bind:value={onsetDensity}
 								label="Onset Density"
 								min={0.1}
 								max={1.0}
@@ -1413,7 +1398,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							/>
 							
 							<Tweakpane.Slider
-								bind:value={tempMidiDensity}
+								bind:value={midiDensity}
 								label="MIDI Density"
 								min={0.1}
 								max={1.0}
@@ -1421,21 +1406,19 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							/>
 							
 							<Tweakpane.Checkbox
-								bind:value={tempEnableRandomSkip}
+								bind:value={enableRandomSkip}
 								label="Random Skip"
 							/>
 							
-							{#if tempEnableRandomSkip}
+							{#if enableRandomSkip}
 							<Tweakpane.Slider
-								bind:value={tempRandomSkipChance}
+								bind:value={randomSkipChance}
 								label="Skip Chance"
 								min={0.0}
 								max={0.5}
 								step={0.05}
 							/>
 							{/if}
-							
-							<Button title="Apply Marker Changes" on:click={applyMarkerDensity} />
 						</Tweakpane.Folder>
 						
 						<Tweakpane.Checkbox
