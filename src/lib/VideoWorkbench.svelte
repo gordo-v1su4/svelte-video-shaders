@@ -219,6 +219,15 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		};
 	});
 
+	$effect(() => {
+		return () => {
+			if (audioAnalyzer) {
+				audioAnalyzer.destroy();
+				audioAnalyzer = null;
+			}
+		};
+	});
+
 	// === Phase 3: Section Tracking ===
 	// Track current section based on audio time and analysisData.structure.sections
 	const currentSection = $derived.by(() => {
@@ -549,6 +558,14 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	function updateTime() {
 		if (sharedAudioRef && !sharedAudioRef.paused) {
 			audioCurrentTime = sharedAudioRef.currentTime;
+
+			if (audioAnalyzer) {
+				const { audioLevel, bassLevel, midLevel, trebleLevel } = audioAnalyzer.getAudioData();
+				if (uniforms.u_audioLevel) uniforms.u_audioLevel.value = audioLevel;
+				if (uniforms.u_bassLevel) uniforms.u_bassLevel.value = bassLevel;
+				if (uniforms.u_midLevel) uniforms.u_midLevel.value = midLevel;
+				if (uniforms.u_trebleLevel) uniforms.u_trebleLevel.value = trebleLevel;
+			}
 			
 			// === AUDIO AS MASTER CLOCK ===
 			// Sync video frame to audio time (Phase 2 feature)
@@ -590,6 +607,29 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	let videoCycleInterval = null;
 	let videoCycleDuration = $state(5000); // 5 seconds per video
 	let enableVideoCycling = $state(false);
+
+	function resetAudioUniforms() {
+		if (uniforms.u_audioLevel) uniforms.u_audioLevel.value = 0;
+		if (uniforms.u_bassLevel) uniforms.u_bassLevel.value = 0;
+		if (uniforms.u_midLevel) uniforms.u_midLevel.value = 0;
+		if (uniforms.u_trebleLevel) uniforms.u_trebleLevel.value = 0;
+	}
+
+	async function setupAudioAnalyzer() {
+		if (!sharedAudioRef) return;
+
+		if (audioAnalyzer && audioAnalyzer.audioElement !== sharedAudioRef) {
+			audioAnalyzer.destroy();
+			audioAnalyzer = null;
+		}
+
+		if (!audioAnalyzer) {
+			audioAnalyzer = new AudioAnalyzer();
+			await audioAnalyzer.initializeAudio(null, sharedAudioRef);
+		}
+
+		audioAnalyzer.setVolume(audioVolume);
+	}
 
 	// --- Frame Buffer State ---
 	let isPreloading = $state(false);
@@ -804,6 +844,11 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		const file = event.currentTarget.files?.[0];
 		if (!file) return;
 
+		if (audioAnalyzer) {
+			audioAnalyzer.stop();
+			resetAudioUniforms();
+		}
+
 		// Prevent duplicate calls if already analyzing
 		if (isAnalyzingAudio) {
 			console.warn("[VideoWorkbench] ⚠️ Already analyzing audio, skipping duplicate call");
@@ -868,6 +913,8 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 				audioDuration = sharedAudioRef.duration;
 			};
 		}
+
+		await setupAudioAnalyzer();
 	}
 
 	/* === Phase 4: Unified Trigger System === */
