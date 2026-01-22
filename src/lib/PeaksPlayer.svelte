@@ -24,6 +24,8 @@
 		onSegmentEnd = (segment) => {},
 		onSegmentClick = (segment) => {},
 		onPreviewTime = (time) => {},
+		onRestart = () => {}, // Callback for restart button
+		onNextVideo = () => {}, // Callback for next video button
 		mediaElement = null, // External audio element
 		grid = [] // 1/32 note grid markers
 	} = $props();
@@ -588,6 +590,17 @@
 
 	<div class="controls-header">
 		<div class="header-left">
+			<!-- Restart button -->
+			<button 
+				class="transport-btn restart-btn"
+				onclick={onRestart}
+				disabled={!isReady}
+				title="Restart"
+			>
+				<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+					<path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+				</svg>
+			</button>
 			<!-- Play/Pause button -->
 			<button 
 				class="play-btn"
@@ -605,6 +618,17 @@
 						<polygon points="5,3 19,12 5,21"/>
 					</svg>
 				{/if}
+			</button>
+			<!-- Next Video button -->
+			<button 
+				class="transport-btn next-btn"
+				onclick={onNextVideo}
+				disabled={!isReady}
+				title="Next Video"
+			>
+				<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+					<path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+				</svg>
 			</button>
 			<!-- Time display -->
 			<span class="time-display">
@@ -664,8 +688,8 @@
 		id={zoomId}
 		class="peaks-zoomview"
 		style:height="{zoomHeight}px"
-		on:mousemove={(event) => updatePreview(event, 'zoomview', zoomviewContainer)}
-		on:mouseleave={clearPreview}
+		onmousemove={(event) => updatePreview(event, 'zoomview', zoomviewContainer)}
+		onmouseleave={clearPreview}
 	>
 		{#if previewTarget === 'zoomview' && previewTime !== null}
 			<div class="preview-playhead" style:left="{previewX}px"></div>
@@ -683,8 +707,8 @@
 		id={overviewId}
 		class="peaks-overview"
 		style:height="{overviewHeight}px"
-		on:mousemove={(event) => updatePreview(event, 'overview', overviewContainer)}
-		on:mouseleave={clearPreview}
+		onmousemove={(event) => updatePreview(event, 'overview', overviewContainer)}
+		onmouseleave={clearPreview}
 	>
 		{#if previewTarget === 'overview' && previewTime !== null}
 			<div class="preview-playhead" style:left="{previewX}px"></div>
@@ -801,6 +825,31 @@
 		background: #333;
 		cursor: not-allowed;
 		opacity: 0.5;
+	}
+
+	.transport-btn {
+		width: 24px;
+		height: 24px;
+		border-radius: 4px;
+		background: #2a2a2a;
+		border: 1px solid #444;
+		color: #fff;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: all 0.15s ease;
+	}
+
+	.transport-btn:hover:not(:disabled) {
+		background: #3a3a3a;
+		border-color: #555;
+	}
+
+	.transport-btn:disabled {
+		background: #222;
+		cursor: not-allowed;
+		opacity: 0.4;
 	}
 
 	.time-display {

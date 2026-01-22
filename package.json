@@ -3,6 +3,7 @@
 	"private": true,
 	"version": "0.0.1",
 	"type": "module",
+	"packageManager": "bun@1.3.3",
 	"scripts": {
 		"predev": "powershell -ExecutionPolicy Bypass -File ./scripts/kill-port.ps1",
 		"dev": "vite dev --port 5173",

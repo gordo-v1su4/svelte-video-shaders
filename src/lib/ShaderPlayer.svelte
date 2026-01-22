@@ -211,31 +211,39 @@
 				textureContext.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 				texture.needsUpdate = true;
 			}
-		} else if (frameBuffer && frameBuffer.totalFrames > 0 && !isReady) {
-			frameBuffer.primeAroundFrame(0);
-			// Not playing but buffer ready - show first frame
-			// Update output dimensions from frame buffer
+		} else if (frameBuffer && frameBuffer.totalFrames > 0) {
+			// Not playing - still show the current frame (paused state)
+			// Update output dimensions from frame buffer if changed
 			if (frameBuffer.outputWidth && frameBuffer.outputHeight) {
-				OUTPUT_WIDTH = frameBuffer.outputWidth;
-				OUTPUT_HEIGHT = frameBuffer.outputHeight;
-				textureCanvas.width = OUTPUT_WIDTH;
-				textureCanvas.height = OUTPUT_HEIGHT;
-				// Update resolution uniform directly on material (don't trigger bindable update)
-				if (material?.uniforms?.u_resolution) {
-					if (material.uniforms.u_resolution.value instanceof THREE.Vector2) {
-						material.uniforms.u_resolution.value.set(OUTPUT_WIDTH, OUTPUT_HEIGHT);
-					} else {
-						material.uniforms.u_resolution.value = [OUTPUT_WIDTH, OUTPUT_HEIGHT];
+				if (OUTPUT_WIDTH !== frameBuffer.outputWidth || OUTPUT_HEIGHT !== frameBuffer.outputHeight) {
+					OUTPUT_WIDTH = frameBuffer.outputWidth;
+					OUTPUT_HEIGHT = frameBuffer.outputHeight;
+					textureCanvas.width = OUTPUT_WIDTH;
+					textureCanvas.height = OUTPUT_HEIGHT;
+					// Update resolution uniform directly on material (don't trigger bindable update)
+					if (material?.uniforms?.u_resolution) {
+						if (material.uniforms.u_resolution.value instanceof THREE.Vector2) {
+							material.uniforms.u_resolution.value.set(OUTPUT_WIDTH, OUTPUT_HEIGHT);
+						} else {
+							material.uniforms.u_resolution.value = [OUTPUT_WIDTH, OUTPUT_HEIGHT];
+						}
 					}
 				}
 			}
 			
-			const bitmap = frameBuffer.getFrame(0);
+			frameBuffer.primeAroundFrame(globalFrameIndex);
+			const bitmap = frameBuffer.getFrame(globalFrameIndex);
 			if (bitmap) {
 				textureContext.drawImage(bitmap, 0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
 				texture.needsUpdate = true;
-				isReady = true;
-			}
+				if (!isReady) {
+					console.log('[ShaderPlayer] Paused render: Frame ready!', globalFrameIndex);
+					isReady = true;
+				}
+			} else {
+                // Throttle debug logs
+                if (Math.random() < 0.01) console.log('[ShaderPlayer] Paused render: Waiting for frame', globalFrameIndex);
+            }
 		}
 
 		renderer?.render(scene, camera);

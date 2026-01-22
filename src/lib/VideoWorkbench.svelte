@@ -850,7 +850,8 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 		if (!file) return;
 
 		if (audioAnalyzer) {
-			audioAnalyzer.stop();
+			audioAnalyzer.destroy();
+			audioAnalyzer = null;
 			resetAudioUniforms();
 		}
 
@@ -943,6 +944,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 	
 	let previousTime = 0;
 	let nextMarkerIndex = $state(0);
+	let previousTriggersLength = 0; // Track triggers array changes
 	
 	const findNextMarkerIndex = (triggers, time) => {
 		const nextIndex = triggers.findIndex(marker => marker > time);
@@ -952,6 +954,14 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 	$effect(() => {
 		const time = audioCurrentTime;
 		const triggers = filteredOnsets; // Capture for reactivity
+		
+		// Reset cursor when triggers array changes (e.g., density slider adjusted)
+		if (triggers.length !== previousTriggersLength) {
+			previousTriggersLength = triggers.length;
+			nextMarkerIndex = findNextMarkerIndex(triggers, time);
+			console.log(`[Trigger] Triggers changed (${triggers.length}), reset cursor to ${nextMarkerIndex}`);
+			return;
+		}
 		
 		// Reset tracking on seek or pause (approximate)
 		if (!isPlaying || time < previousTime || Math.abs(time - previousTime) > 1.0) {
@@ -1094,6 +1104,38 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		if (sharedAudioRef && !sharedAudioRef.paused) {
 			sharedAudioRef.pause();
 		}
+	}
+
+	function restartPlayback() {
+		// If a section loop is active, restart to the beginning of that section
+		// Otherwise restart to the beginning of the song
+		let targetTime = 0;
+		
+		if (loopSectionIndex >= 0 && analysisData.structure?.sections) {
+			const section = analysisData.structure.sections[loopSectionIndex];
+			if (section) {
+				targetTime = section.start;
+				console.log(`[VideoWorkbench] Restarting to section: ${section.label} at ${targetTime}s`);
+			}
+		} else {
+			console.log('[VideoWorkbench] Restarting to beginning of song');
+		}
+		
+		// Update audio position
+		if (sharedAudioRef) {
+			sharedAudioRef.currentTime = targetTime;
+		}
+		audioCurrentTime = targetTime;
+		
+		// Sync video position
+		if (shaderPlayerRef && audioMasterEnabled) {
+			shaderPlayerRef.setAudioTime(targetTime, TARGET_FPS);
+		}
+		
+		// Reset marker tracking
+		previousTime = targetTime;
+		nextMarkerIndex = findNextMarkerIndex(filteredOnsets, targetTime);
+		markerCounter = 0;
 	}
 
 	async function onFileSelected(event) {
@@ -2464,6 +2506,8 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				segments={[]} 
 				sections={analysisData.structure?.sections || []}
 				grid={gridMarkers}
+				onRestart={restartPlayback}
+				onNextVideo={nextVideo}
 				onSeek={(time) => {
 					// Sync audio position
 					if (audioAnalyzer) audioAnalyzer.seekTo(time);
