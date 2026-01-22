@@ -131,83 +131,101 @@ export class FrameBuffer {
 	 * @returns {Promise<{ file: File, url: string, video: HTMLVideoElement, frameCount: number, outputWidth: number, outputHeight: number, duration: number, decodeQueue: Promise<void> }>}
 	 */
 	async loadClipMetadata(file, onProgress = () => {}) {
-		const mp4InfoPromise = new Promise((resolve, reject) => {
-			const mp4boxfile = MP4Box.createFile();
-
-			mp4boxfile.onReady = (info) => {
-				const videoTrack = info.tracks.find(t => t.type === 'video');
-				if (!videoTrack) {
-					reject(new Error('No video track found'));
-					return;
-				}
-
-				const totalSamples = videoTrack.nb_samples;
-				const nativeWidth = videoTrack.video.width;
-				const nativeHeight = videoTrack.video.height;
-
-				const outputSize = calculateOutputSize(nativeWidth, nativeHeight);
-
-				resolve({
-					totalSamples,
-					outputWidth: outputSize.width,
-					outputHeight: outputSize.height
-				});
-			};
-
-			mp4boxfile.onError = (e) => {
-				// Ignore non-fatal MP4Box parsing errors
-				if (e && typeof e === 'string' && (e.includes('BoxParser') || e.includes('Invalid box'))) {
-					console.warn('[FrameBuffer] MP4Box parsing warning (non-fatal):', e);
-					// Don't reject - continue processing
-				} else {
-					console.error('[FrameBuffer] MP4Box error:', e);
-					reject(e);
-				}
-			};
-
-			const reader = new FileReader();
-			reader.onload = (e) => {
-				try {
-					const buffer = e.target.result;
-					buffer.fileStart = 0;
-					mp4boxfile.appendBuffer(buffer);
-					mp4boxfile.flush();
-					onProgress(1);
-				} catch (error) {
-					if (error.message && (error.message.includes('BoxParser') || error.message.includes('Invalid box'))) {
-						console.warn('[FrameBuffer] MP4Box parsing warning (non-fatal):', error.message);
-					} else {
-						reject(error);
-					}
-				}
-			};
-			reader.onerror = reject;
-			reader.readAsArrayBuffer(file);
-		});
-
 		const url = URL.createObjectURL(file);
 		const video = document.createElement('video');
 		video.preload = 'auto';
 		video.muted = true;
 		video.playsInline = true;
 		video.src = url;
+		video.load();
 
 		const videoReadyPromise = new Promise((resolve, reject) => {
 			video.addEventListener('loadedmetadata', () => {
-				resolve({ duration: video.duration || 0 });
+				resolve({
+					duration: video.duration || 0,
+					videoWidth: video.videoWidth || 0,
+					videoHeight: video.videoHeight || 0
+				});
 			}, { once: true });
 			video.addEventListener('error', () => reject(new Error('Failed to load video metadata')), { once: true });
 		});
 
-		const [mp4Info, videoInfo] = await Promise.all([mp4InfoPromise, videoReadyPromise]);
+		let mp4Info = null;
+		const isMp4 = file.type === 'video/mp4' || file.name.toLowerCase().endsWith('.mp4');
+		if (isMp4) {
+			try {
+				mp4Info = await new Promise((resolve, reject) => {
+					const mp4boxfile = MP4Box.createFile();
+
+					mp4boxfile.onReady = (info) => {
+						const videoTrack = info.tracks.find(t => t.type === 'video');
+						if (!videoTrack) {
+							reject(new Error('No video track found'));
+							return;
+						}
+
+						const totalSamples = videoTrack.nb_samples;
+						const nativeWidth = videoTrack.video.width;
+						const nativeHeight = videoTrack.video.height;
+
+						const outputSize = calculateOutputSize(nativeWidth, nativeHeight);
+
+						resolve({
+							totalSamples,
+							outputWidth: outputSize.width,
+							outputHeight: outputSize.height
+						});
+					};
+
+					mp4boxfile.onError = (e) => {
+						// Ignore non-fatal MP4Box parsing errors
+						if (e && typeof e === 'string' && (e.includes('BoxParser') || e.includes('Invalid box'))) {
+							console.warn('[FrameBuffer] MP4Box parsing warning (non-fatal):', e);
+							// Don't reject - continue processing
+						} else {
+							console.error('[FrameBuffer] MP4Box error:', e);
+							reject(e);
+						}
+					};
+
+					const reader = new FileReader();
+					reader.onload = (e) => {
+						try {
+							const buffer = e.target.result;
+							buffer.fileStart = 0;
+							mp4boxfile.appendBuffer(buffer);
+							mp4boxfile.flush();
+							onProgress(1);
+						} catch (error) {
+							if (error.message && (error.message.includes('BoxParser') || error.message.includes('Invalid box'))) {
+								console.warn('[FrameBuffer] MP4Box parsing warning (non-fatal):', error.message);
+							} else {
+								reject(error);
+							}
+						}
+					};
+					reader.onerror = reject;
+					reader.readAsArrayBuffer(file);
+				});
+			} catch (error) {
+				console.warn('[FrameBuffer] Falling back to metadata-only frame count:', error);
+				mp4Info = null;
+			}
+		}
+
+		const videoInfo = await videoReadyPromise;
+		const outputSize = mp4Info
+			? { width: mp4Info.outputWidth, height: mp4Info.outputHeight }
+			: calculateOutputSize(videoInfo.videoWidth || 1920, videoInfo.videoHeight || 1080);
+		const frameCount = mp4Info?.totalSamples ?? Math.max(1, Math.round(videoInfo.duration * this.targetFps));
 
 		return {
 			file,
 			url,
 			video,
-			frameCount: mp4Info.totalSamples,
-			outputWidth: mp4Info.outputWidth,
-			outputHeight: mp4Info.outputHeight,
+			frameCount,
+			outputWidth: outputSize.width,
+			outputHeight: outputSize.height,
 			duration: videoInfo.duration,
 			decodeQueue: Promise.resolve()
 		};
