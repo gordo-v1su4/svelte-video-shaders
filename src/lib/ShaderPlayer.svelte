@@ -195,6 +195,8 @@
 				}
 			}
 			
+			frameBuffer.primeAroundFrame(globalFrameIndex);
+
 			// Get current frame from buffer
 			const bitmap = frameBuffer.getFrame(globalFrameIndex);
 			if (bitmap) {
@@ -207,6 +209,7 @@
 				texture.needsUpdate = true;
 			}
 		} else if (frameBuffer && frameBuffer.totalFrames > 0 && !isReady) {
+			frameBuffer.primeAroundFrame(0);
 			// Not playing but buffer ready - show first frame
 			// Update output dimensions from frame buffer
 			if (frameBuffer.outputWidth && frameBuffer.outputHeight) {
@@ -261,9 +264,10 @@
 	export function seek(frameIndex) {
 		globalFrameIndex = frameIndex;
 		accumulatedTime = 0;
+		frameBuffer?.primeAroundFrame(globalFrameIndex);
 	}
 
-export function seekToClip(clipIndex, audioTime = null) {
+	export function seekToClip(clipIndex, audioTime = null) {
 		if (!frameBuffer) return;
 		const clipInfo = frameBuffer.getClipInfo(clipIndex);
 		if (clipInfo) {
@@ -271,6 +275,7 @@ export function seekToClip(clipIndex, audioTime = null) {
 			clipLocalFrame = 0;
 			globalFrameIndex = clipInfo.startFrame;
 			accumulatedTime = 0;
+			frameBuffer.primeAroundFrame(globalFrameIndex);
 			// Record when this clip started (for relative frame calculation)
 			if (audioTime !== null) {
 				clipStartAudioTime = audioTime;
@@ -315,6 +320,7 @@ export function seekToClip(clipIndex, audioTime = null) {
 			// Fallback: use all frames
 			const targetFrame = Math.floor(audioTimeSeconds * fps);
 			globalFrameIndex = targetFrame % frameBuffer.totalFrames;
+			frameBuffer.primeAroundFrame(globalFrameIndex);
 			return globalFrameIndex;
 		}
 		
@@ -327,6 +333,7 @@ export function seekToClip(clipIndex, audioTime = null) {
 		
 		// Convert to global frame index
 		globalFrameIndex = clipInfo.startFrame + clipLocalFrame;
+		frameBuffer.primeAroundFrame(globalFrameIndex);
 		
 		// Reset accumulated time since we're externally controlled
 		accumulatedTime = 0;
@@ -450,6 +457,7 @@ export function seekToClip(clipIndex, audioTime = null) {
 			accumulatedTime = 0;
 			beatIndex = 0;
 			isReady = false;
+			frameBuffer.primeAroundFrame(0);
 		}
 	});
 </script>
@@ -491,8 +499,6 @@ export function seekToClip(clipIndex, audioTime = null) {
 		font-size: 1.2rem;
 	}
 </style>
-
-
 
 
 

@@ -1,5 +1,5 @@
 /**
- * Frame Buffer - Pre-decodes all video clips into ImageBitmap arrays for instant access
+ * Frame Buffer - Pre-decodes video frames into a sliding window around playback
  * Enables seamless retiming, speed ramps, jump cuts, and reverse playback
  */
 import * as MP4Box from 'mp4box';
@@ -42,17 +42,31 @@ function calculateOutputSize(videoWidth, videoHeight, maxWidth = null, maxHeight
 	return { width: outputWidth, height: outputHeight };
 }
 
+function makeFrameKey(clipIndex, localFrame) {
+	return `${clipIndex}:${localFrame}`;
+}
+
 export class FrameBuffer {
-	constructor() {
-		/** @type {Map<number, ImageBitmap[]>} */
+	constructor({ prefetchSeconds = 2, maxFrames = null, targetFps = 24 } = {}) {
+		/** @type {Map<number, { file: File, url: string, video: HTMLVideoElement, frameCount: number, outputWidth: number, outputHeight: number, duration: number, decodeQueue: Promise<void> }>} */
 		this.clips = new Map();
 		
 		/** @type {number[]} - cumulative frame counts for global indexing */
 		this.clipOffsets = [0];
 		
+		/** @type {Map<string, { clipIndex: number, localFrame: number, bitmap: ImageBitmap }>} */
+		this.frameCache = new Map();
+		
+		/** @type {Map<string, Promise<ImageBitmap | null>>} */
+		this.pendingDecodes = new Map();
+		
 		this.totalFrames = 0;
 		this.isLoading = false;
 		this.loadProgress = 0;
+		
+		this.prefetchSeconds = prefetchSeconds;
+		this.maxFrames = maxFrames;
+		this.targetFps = targetFps;
 		
 		// Output dimensions (will be set per video based on native resolution)
 		this.outputWidth = 1920;
@@ -63,82 +77,62 @@ export class FrameBuffer {
 		this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
 	}
 
+	get maxCacheFrames() {
+		const derivedMax = Math.ceil(this.prefetchSeconds * this.targetFps);
+		return Math.max(1, this.maxFrames ?? derivedMax);
+	}
+
+	get prefetchRadius() {
+		return Math.max(1, Math.floor(this.maxCacheFrames / 2));
+	}
+
 	/**
-	 * Pre-decode all video files into memory
+	 * Prepare video files for on-demand decoding
 	 * @param {File[]} files - Array of video files to decode
 	 * @param {(progress: number, status: string) => void} onProgress - Progress callback
 	 * @returns {Promise<void>}
 	 */
 	async preloadClips(files, onProgress = () => {}) {
 		this.isLoading = true;
+		this.dispose();
 		this.clips.clear();
 		this.clipOffsets = [0];
 		this.totalFrames = 0;
 
-		let totalDecoded = 0;
+		let totalPrepared = 0;
 		const totalFiles = files.length;
 
 		for (let i = 0; i < files.length; i++) {
 			const file = files[i];
-			onProgress(totalDecoded / totalFiles, `Decoding ${file.name}...`);
+			onProgress(totalPrepared / totalFiles, `Indexing ${file.name}...`);
 			
-			const frames = await this.decodeVideo(file, (frameProgress) => {
-				const overallProgress = (i + frameProgress) / totalFiles;
-				onProgress(overallProgress, `Decoding ${file.name}... ${Math.round(frameProgress * 100)}%`);
+			const clip = await this.loadClipMetadata(file, (progress) => {
+				const overallProgress = (i + progress) / totalFiles;
+				onProgress(overallProgress, `Indexing ${file.name}... ${Math.round(progress * 100)}%`);
 			});
 			
-			this.clips.set(i, frames);
-			this.totalFrames += frames.length;
+			this.clips.set(i, clip);
+			this.totalFrames += clip.frameCount;
 			this.clipOffsets.push(this.totalFrames);
 			
-			totalDecoded++;
-			console.log(`Clip ${i} decoded: ${frames.length} frames`);
+			totalPrepared++;
+			console.log(`Clip ${i} indexed: ${clip.frameCount} frames`);
 		}
 
 		this.isLoading = false;
-		onProgress(1, `Ready - ${this.totalFrames} frames loaded`);
-		console.log(`All clips decoded. Total: ${this.totalFrames} frames across ${files.length} clips`);
+		onProgress(1, `Ready - ${this.totalFrames} frames indexed`);
+		console.log(`All clips indexed. Total: ${this.totalFrames} frames across ${files.length} clips`);
 	}
 
 	/**
-	 * Decode a single video file into ImageBitmap array
-	 * @param {File} file 
+	 * Read video metadata without decoding frames
+	 * @param {File} file
 	 * @param {(progress: number) => void} onProgress
-	 * @returns {Promise<ImageBitmap[]>}
+	 * @returns {Promise<{ file: File, url: string, video: HTMLVideoElement, frameCount: number, outputWidth: number, outputHeight: number, duration: number, decodeQueue: Promise<void> }>}
 	 */
-	async decodeVideo(file, onProgress = () => {}) {
-		return new Promise((resolve, reject) => {
-			// Use Map to track frame indices and ensure proper ordering
-			const frameMap = new Map(); // Map<frameIndex, ImageBitmap>
-			let totalSamples = 0;
-			let samplesSubmitted = 0;
-			let allSamplesExtracted = false;
-			let frameIndex = 0; // Track frame order
-			let pendingBitmaps = 0; // Track how many ImageBitmaps are being created
-			
+	async loadClipMetadata(file, onProgress = () => {}) {
+		const mp4InfoPromise = new Promise((resolve, reject) => {
 			const mp4boxfile = MP4Box.createFile();
-			let videoDecoder = null;
-
-			const checkComplete = () => {
-				if (allSamplesExtracted && frameMap.size >= totalSamples) {
-					// Convert Map to ordered array
-					const frames = [];
-					let nullFrames = 0;
-					for (let i = 0; i < totalSamples; i++) {
-						const frame = frameMap.get(i);
-						frames.push(frame || null);
-						if (!frame) nullFrames++;
-					}
-					
-					if (nullFrames > 0) {
-						console.warn(`[FrameBuffer] Warning: ${nullFrames} frames failed to allocate (memory limit). Video may have gaps.`);
-						console.warn(`[FrameBuffer] Consider using shorter videos or reducing resolution.`);
-					}
-					
-					videoDecoder?.close();
-					resolve(frames);
-				}
-			};
 
 			mp4boxfile.onReady = (info) => {
 				const videoTrack = info.tracks.find(t => t.type === 'video');
@@ -147,127 +141,17 @@ export class FrameBuffer {
 					return;
 				}
 
-				totalSamples = videoTrack.nb_samples;
+				const totalSamples = videoTrack.nb_samples;
 				const nativeWidth = videoTrack.video.width;
 				const nativeHeight = videoTrack.video.height;
-				
-				console.log(`Video: ${nativeWidth}x${nativeHeight}, ${totalSamples} samples`);
 
-				// Calculate optimal output size based on screen and video resolution
 				const outputSize = calculateOutputSize(nativeWidth, nativeHeight);
-				this.outputWidth = outputSize.width;
-				this.outputHeight = outputSize.height;
-				
-				// Resize canvas to output size
-				this.canvas.width = this.outputWidth;
-				this.canvas.height = this.outputHeight;
-				
-				const mbPerFrame = (this.outputWidth * this.outputHeight * 4) / 1024 / 1024;
-				console.log(`Output size: ${this.outputWidth}x${this.outputHeight} (${mbPerFrame.toFixed(2)}MB per frame)`);
 
-				const config = {
-					codec: videoTrack.codec,
-					codedWidth: nativeWidth,
-					codedHeight: nativeHeight,
-				};
-
-				// Extract codec-specific description
-				if (videoTrack.codec.startsWith('avc1')) {
-					const trak = mp4boxfile.getTrackById(videoTrack.id);
-					const avcC = trak?.mdia?.minf?.stbl?.stsd?.entries?.[0]?.avcC;
-					if (avcC) {
-						config.description = mp4boxfile.stream.buffer.slice(
-							avcC.start + 8,
-							avcC.start + avcC.size
-						);
-					}
-				} else if (videoTrack.codec.startsWith('hvc1') || videoTrack.codec.startsWith('hev1')) {
-					const trak = mp4boxfile.getTrackById(videoTrack.id);
-					const hvcC = trak?.mdia?.minf?.stbl?.stsd?.entries?.[0]?.hvcC;
-					if (hvcC) {
-						config.description = mp4boxfile.stream.buffer.slice(
-							hvcC.start + 8,
-							hvcC.start + hvcC.size
-						);
-					}
-				}
-
-				videoDecoder = new VideoDecoder({
-					output: (frame) => {
-						// Capture frame index to ensure proper ordering
-						const currentFrameIndex = frameIndex++;
-						
-						// Synchronous frame handling to avoid race conditions
-						this.ctx.clearRect(0, 0, this.outputWidth, this.outputHeight);
-						// Draw frame and resize to output dimensions
-						this.ctx.drawImage(frame, 0, 0, this.outputWidth, this.outputHeight);
-						
-						// Use sync canvas copy instead of async createImageBitmap
-						const imageData = this.ctx.getImageData(0, 0, this.outputWidth, this.outputHeight);
-						
-						// Throttle ImageBitmap creation to prevent memory exhaustion
-						pendingBitmaps++;
-						
-						// Create ImageBitmap with error handling for memory issues
-						createImageBitmap(imageData)
-							.then(bitmap => {
-								pendingBitmaps--;
-								// Store frame at correct index to maintain order
-								frameMap.set(currentFrameIndex, bitmap);
-								onProgress(frameMap.size / totalSamples);
-								checkComplete();
-							})
-							.catch(error => {
-								pendingBitmaps--;
-								console.error(`[FrameBuffer] Failed to create ImageBitmap for frame ${currentFrameIndex}:`, error);
-								
-								// Check if it's a memory error
-								if (error.name === 'InvalidStateError' || error.message.includes('allocation') || error.message.includes('memory')) {
-									console.warn(`[FrameBuffer] Memory limit reached at frame ${currentFrameIndex}/${totalSamples}. Consider using shorter videos or lower resolution.`);
-								}
-								
-								// Store null to maintain frame count, but skip the bitmap
-								frameMap.set(currentFrameIndex, null);
-								onProgress(frameMap.size / totalSamples);
-								
-								// Continue processing - don't reject the entire decode
-								checkComplete();
-							});
-						
-						frame.close();
-					},
-					error: (e) => {
-						console.error('Decode error:', e);
-						reject(e);
-					}
+				resolve({
+					totalSamples,
+					outputWidth: outputSize.width,
+					outputHeight: outputSize.height
 				});
-
-				videoDecoder.configure(config);
-				mp4boxfile.setExtractionOptions(videoTrack.id, null, { nbSamples: 200 });
-				mp4boxfile.start();
-			};
-
-			mp4boxfile.onSamples = (trackId, ref, samples) => {
-				for (const sample of samples) {
-					if (videoDecoder?.state === 'configured') {
-						videoDecoder.decode(new EncodedVideoChunk({
-							type: sample.is_sync ? 'key' : 'delta',
-							timestamp: sample.cts,
-							duration: sample.duration,
-							data: sample.data
-						}));
-						samplesSubmitted++;
-					}
-				}
-				
-				// Check if we've submitted all samples
-				if (samplesSubmitted >= totalSamples) {
-					allSamplesExtracted = true;
-					// Flush decoder to ensure all frames are output
-					videoDecoder?.flush().then(() => {
-						checkComplete();
-					}).catch(reject);
-				}
 			};
 
 			mp4boxfile.onError = (e) => {
@@ -281,7 +165,6 @@ export class FrameBuffer {
 				}
 			};
 
-			// Read file
 			const reader = new FileReader();
 			reader.onload = (e) => {
 				try {
@@ -289,11 +172,10 @@ export class FrameBuffer {
 					buffer.fileStart = 0;
 					mp4boxfile.appendBuffer(buffer);
 					mp4boxfile.flush();
+					onProgress(1);
 				} catch (error) {
-					// Ignore MP4Box parsing warnings (they're usually non-fatal)
 					if (error.message && (error.message.includes('BoxParser') || error.message.includes('Invalid box'))) {
 						console.warn('[FrameBuffer] MP4Box parsing warning (non-fatal):', error.message);
-						// Continue anyway - the file might still decode
 					} else {
 						reject(error);
 					}
@@ -302,51 +184,226 @@ export class FrameBuffer {
 			reader.onerror = reject;
 			reader.readAsArrayBuffer(file);
 		});
+
+		const url = URL.createObjectURL(file);
+		const video = document.createElement('video');
+		video.preload = 'auto';
+		video.muted = true;
+		video.playsInline = true;
+		video.src = url;
+
+		const videoReadyPromise = new Promise((resolve, reject) => {
+			video.addEventListener('loadedmetadata', () => {
+				resolve({ duration: video.duration || 0 });
+			}, { once: true });
+			video.addEventListener('error', () => reject(new Error('Failed to load video metadata')), { once: true });
+		});
+
+		const [mp4Info, videoInfo] = await Promise.all([mp4InfoPromise, videoReadyPromise]);
+
+		return {
+			file,
+			url,
+			video,
+			frameCount: mp4Info.totalSamples,
+			outputWidth: mp4Info.outputWidth,
+			outputHeight: mp4Info.outputHeight,
+			duration: videoInfo.duration,
+			decodeQueue: Promise.resolve()
+		};
+	}
+
+	/**
+	 * Decode a single frame for a clip on demand
+	 * @param {number} clipIndex
+	 * @param {number} localFrame
+	 * @returns {Promise<ImageBitmap | null>}
+	 */
+	async decodeFrameAt(clipIndex, localFrame) {
+		const clip = this.clips.get(clipIndex);
+		if (!clip) return null;
+
+		const wrappedFrame = ((localFrame % clip.frameCount) + clip.frameCount) % clip.frameCount;
+		const key = makeFrameKey(clipIndex, wrappedFrame);
+		const cached = this.frameCache.get(key);
+		if (cached) {
+			this.touchFrame(key, cached);
+			return cached.bitmap;
+		}
+
+		const pending = this.pendingDecodes.get(key);
+		if (pending) return pending;
+
+		const decodePromise = clip.decodeQueue
+			.then(async () => {
+				const existing = this.frameCache.get(key);
+				if (existing) {
+					this.touchFrame(key, existing);
+					return existing.bitmap;
+				}
+
+				const frameTime = this.frameToTime(clip, wrappedFrame);
+				await this.seekVideoToTime(clip.video, frameTime);
+
+				this.canvas.width = clip.outputWidth;
+				this.canvas.height = clip.outputHeight;
+				this.ctx.clearRect(0, 0, clip.outputWidth, clip.outputHeight);
+				this.ctx.drawImage(clip.video, 0, 0, clip.outputWidth, clip.outputHeight);
+
+				const bitmap = await createImageBitmap(this.canvas);
+				this.storeFrame(key, clipIndex, wrappedFrame, bitmap);
+				return bitmap;
+			})
+			.catch((error) => {
+				console.error(`[FrameBuffer] Failed to decode frame ${wrappedFrame} for clip ${clipIndex}:`, error);
+				return null;
+			})
+			.finally(() => {
+				this.pendingDecodes.delete(key);
+			});
+
+		clip.decodeQueue = decodePromise.then(() => undefined).catch(() => undefined);
+		this.pendingDecodes.set(key, decodePromise);
+
+		return decodePromise;
+	}
+
+	frameToTime(clip, localFrame) {
+		if (!clip.duration || clip.duration <= 0) {
+			return localFrame / this.targetFps;
+		}
+
+		const estimatedTime = localFrame / this.targetFps;
+		const maxTime = Math.max(0, clip.duration - 1 / this.targetFps);
+		return Math.min(estimatedTime, maxTime);
+	}
+
+	seekVideoToTime(video, time) {
+		return new Promise((resolve, reject) => {
+			if (!Number.isFinite(time)) {
+				reject(new Error('Invalid seek time'));
+				return;
+			}
+
+			const currentDelta = Math.abs(video.currentTime - time);
+			if (currentDelta < 0.0001 && video.readyState >= 2) {
+				if (typeof video.requestVideoFrameCallback === 'function') {
+					video.requestVideoFrameCallback(() => resolve());
+				} else {
+					requestAnimationFrame(() => resolve());
+				}
+				return;
+			}
+
+			const onSeeked = () => {
+				if (typeof video.requestVideoFrameCallback === 'function') {
+					video.requestVideoFrameCallback(() => resolve());
+				} else {
+					requestAnimationFrame(() => resolve());
+				}
+			};
+
+			const onError = () => reject(new Error('Video seek failed'));
+
+			video.addEventListener('seeked', onSeeked, { once: true });
+			video.addEventListener('error', onError, { once: true });
+			video.currentTime = time;
+		});
+	}
+
+	storeFrame(key, clipIndex, localFrame, bitmap) {
+		this.frameCache.delete(key);
+		this.frameCache.set(key, { clipIndex, localFrame, bitmap });
+		this.evictIfNeeded();
+	}
+
+	touchFrame(key, cachedEntry) {
+		this.frameCache.delete(key);
+		this.frameCache.set(key, cachedEntry);
+	}
+
+	evictIfNeeded() {
+		const maxFrames = this.maxCacheFrames;
+		while (this.frameCache.size > maxFrames) {
+			const oldestKey = this.frameCache.keys().next().value;
+			const entry = this.frameCache.get(oldestKey);
+			if (entry?.bitmap) {
+				entry.bitmap.close();
+			}
+			this.frameCache.delete(oldestKey);
+		}
+	}
+
+	/**
+	 * Prime the buffer for frames around a global frame index
+	 * @param {number} globalFrame
+	 */
+	primeAroundFrame(globalFrame) {
+		if (this.totalFrames === 0) return;
+
+		const radius = this.prefetchRadius;
+		const start = globalFrame - radius;
+		const end = globalFrame + radius;
+
+		for (let frame = start; frame <= end; frame++) {
+			const wrapped = ((frame % this.totalFrames) + this.totalFrames) % this.totalFrames;
+			const localInfo = this.globalToLocal(wrapped);
+			if (!localInfo) continue;
+			void this.decodeFrameAt(localInfo.clipIndex, localInfo.localFrame);
+		}
 	}
 
 	/**
 	 * Get frame by global index (across all clips)
-	 * @param {number} globalIndex 
+	 * @param {number} globalIndex
 	 * @returns {ImageBitmap | null}
 	 */
 	getFrame(globalIndex) {
 		if (this.totalFrames === 0) return null;
 		
-		// Wrap around for looping
-		const wrappedIndex = ((globalIndex % this.totalFrames) + this.totalFrames) % this.totalFrames;
-		
-		// Find which clip this frame belongs to
-		for (let clipIndex = 0; clipIndex < this.clips.size; clipIndex++) {
-			const clipStart = this.clipOffsets[clipIndex];
-			const clipEnd = this.clipOffsets[clipIndex + 1];
-			
-			if (wrappedIndex >= clipStart && wrappedIndex < clipEnd) {
-				const localFrame = wrappedIndex - clipStart;
-				return this.clips.get(clipIndex)?.[localFrame] || null;
-			}
+		const localInfo = this.globalToLocal(globalIndex);
+		if (!localInfo) return null;
+
+		const clip = this.clips.get(localInfo.clipIndex);
+		if (!clip) return null;
+
+		const key = makeFrameKey(localInfo.clipIndex, localInfo.localFrame);
+		const cached = this.frameCache.get(key);
+		if (cached) {
+			this.touchFrame(key, cached);
+			this.outputWidth = clip.outputWidth;
+			this.outputHeight = clip.outputHeight;
+			return cached.bitmap;
 		}
-		
+
 		return null;
 	}
 
 	/**
 	 * Get frame from specific clip
-	 * @param {number} clipIndex 
-	 * @param {number} localFrame 
+	 * @param {number} clipIndex
+	 * @param {number} localFrame
 	 * @returns {ImageBitmap | null}
 	 */
 	getFrameAt(clipIndex, localFrame) {
 		const clip = this.clips.get(clipIndex);
 		if (!clip) return null;
-		
-		// Wrap within clip
-		const wrappedFrame = ((localFrame % clip.length) + clip.length) % clip.length;
-		return clip[wrappedFrame] || null;
+
+		const wrappedFrame = ((localFrame % clip.frameCount) + clip.frameCount) % clip.frameCount;
+		const key = makeFrameKey(clipIndex, wrappedFrame);
+		const cached = this.frameCache.get(key);
+		if (cached) {
+			this.touchFrame(key, cached);
+			this.outputWidth = clip.outputWidth;
+			this.outputHeight = clip.outputHeight;
+			return cached.bitmap;
+		}
+		return null;
 	}
 
 	/**
 	 * Get clip info
-	 * @param {number} clipIndex 
+	 * @param {number} clipIndex
 	 * @returns {{ frameCount: number, startFrame: number, endFrame: number } | null}
 	 */
 	getClipInfo(clipIndex) {
@@ -354,7 +411,7 @@ export class FrameBuffer {
 		if (!clip) return null;
 		
 		return {
-			frameCount: clip.length,
+			frameCount: clip.frameCount,
 			startFrame: this.clipOffsets[clipIndex],
 			endFrame: this.clipOffsets[clipIndex + 1] - 1
 		};
@@ -362,7 +419,7 @@ export class FrameBuffer {
 
 	/**
 	 * Convert global frame index to clip + local frame
-	 * @param {number} globalIndex 
+	 * @param {number} globalIndex
 	 * @returns {{ clipIndex: number, localFrame: number } | null}
 	 */
 	globalToLocal(globalIndex) {
@@ -384,11 +441,24 @@ export class FrameBuffer {
 	}
 
 	/**
-	 * Clean up all ImageBitmaps
+	 * Clean up all ImageBitmaps and videos
 	 */
 	dispose() {
-		for (const [_, frames] of this.clips) {
-			frames.forEach(bitmap => bitmap.close());
+		for (const entry of this.frameCache.values()) {
+			entry.bitmap.close();
+		}
+		this.frameCache.clear();
+		this.pendingDecodes.clear();
+
+		for (const clip of this.clips.values()) {
+			if (clip.video) {
+				clip.video.pause();
+				clip.video.removeAttribute('src');
+				clip.video.load();
+			}
+			if (clip.url) {
+				URL.revokeObjectURL(clip.url);
+			}
 		}
 		this.clips.clear();
 		this.clipOffsets = [0];
