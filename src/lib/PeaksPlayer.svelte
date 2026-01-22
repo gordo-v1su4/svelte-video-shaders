@@ -23,6 +23,7 @@
 		onSegmentStart = (segment) => {},
 		onSegmentEnd = (segment) => {},
 		onSegmentClick = (segment) => {},
+		onPreviewTime = (time) => {},
 		mediaElement = null, // External audio element
 		grid = [] // 1/32 note grid markers
 	} = $props();
@@ -32,6 +33,10 @@
 	// audioRef is now just a local reference to mediaElement for convenience, or we use mediaElement directly
 	let peaksInstance;
 	let isReady = $state(false);
+	let previewTime = $state(null);
+	let previewX = $state(0);
+	let previewLabelX = $state(0);
+	let previewTarget = $state(null);
 	
 	const id = Math.random().toString(36).substr(2, 9);
 	const zoomId = `peaks-zoom-${id}`;
@@ -44,6 +49,33 @@
 		const secs = Math.floor(seconds % 60);
 		const ms = Math.floor((seconds % 1) * 100);
 		return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+	}
+
+	function updatePreview(event, viewName, containerEl) {
+		if (!peaksInstance || !containerEl) return;
+		const rect = containerEl.getBoundingClientRect();
+		if (!rect.width) return;
+		const localX = Math.min(Math.max(event.clientX - rect.left, 0), rect.width);
+		const view = peaksInstance.views.getView(viewName);
+		const viewStart = typeof view?.getStartTime === 'function' ? view.getStartTime() : 0;
+		const viewEndFallback = peaksInstance.player?.getDuration?.() || duration || 0;
+		const viewEnd = typeof view?.getEndTime === 'function' ? view.getEndTime() : viewEndFallback;
+		if (!viewEnd || viewEnd <= viewStart) return;
+
+		const time = viewStart + (localX / rect.width) * (viewEnd - viewStart);
+		const labelInset = 32;
+		const labelX = Math.min(Math.max(localX, labelInset), rect.width - labelInset);
+		previewTime = time;
+		previewX = localX;
+		previewLabelX = labelX;
+		previewTarget = viewName;
+		onPreviewTime(time);
+	}
+
+	function clearPreview() {
+		previewTime = null;
+		previewTarget = null;
+		onPreviewTime(null);
 	}
 
 	let mounted = $state(false);
@@ -627,12 +659,40 @@
          </button>
         </div>
 	</div>
-	<div bind:this={zoomviewContainer} id={zoomId} class="peaks-zoomview" style:height="{zoomHeight}px"></div>
+	<div
+		bind:this={zoomviewContainer}
+		id={zoomId}
+		class="peaks-zoomview"
+		style:height="{zoomHeight}px"
+		on:mousemove={(event) => updatePreview(event, 'zoomview', zoomviewContainer)}
+		on:mouseleave={clearPreview}
+	>
+		{#if previewTarget === 'zoomview' && previewTime !== null}
+			<div class="preview-playhead" style:left="{previewX}px"></div>
+			<div class="preview-label" style:left="{previewLabelX}px">
+				{formatTime(previewTime)}
+			</div>
+		{/if}
+	</div>
 
 	<div class="controls-header">
 		<span class="label">Overview</span>
 	</div>
-	<div bind:this={overviewContainer} id={overviewId} class="peaks-overview" style:height="{overviewHeight}px"></div>
+	<div
+		bind:this={overviewContainer}
+		id={overviewId}
+		class="peaks-overview"
+		style:height="{overviewHeight}px"
+		on:mousemove={(event) => updatePreview(event, 'overview', overviewContainer)}
+		on:mouseleave={clearPreview}
+	>
+		{#if previewTarget === 'overview' && previewTime !== null}
+			<div class="preview-playhead" style:left="{previewX}px"></div>
+			<div class="preview-label" style:left="{previewLabelX}px">
+				{formatTime(previewTime)}
+			</div>
+		{/if}
+	</div>
 
 	{#if !audioFile}
 		<div class="placeholder-overlay">
@@ -673,6 +733,33 @@
 		width: 100%;
 		border-radius: 4px;
         position: relative;
+	}
+
+	.preview-playhead {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		width: 1px;
+		background: rgba(255, 255, 255, 0.7);
+		box-shadow: 0 0 6px rgba(168, 130, 255, 0.6);
+		pointer-events: none;
+		z-index: 5;
+	}
+
+	.preview-label {
+		position: absolute;
+		top: 6px;
+		transform: translateX(-50%);
+		background: rgba(15, 15, 15, 0.85);
+		border: 1px solid rgba(168, 130, 255, 0.6);
+		border-radius: 4px;
+		padding: 2px 6px;
+		font-size: 0.7rem;
+		font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Mono', monospace;
+		color: #d8c8ff;
+		pointer-events: none;
+		z-index: 6;
+		white-space: nowrap;
 	}
 
 	.controls-header {
