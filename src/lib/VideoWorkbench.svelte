@@ -33,7 +33,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	import { AudioAnalyzer } from '$lib/audio-utils.js';
 	import { EssentiaService } from '$lib/essentia-service.js';
 	import { parseMIDIFile } from '$lib/midi-utils.js';
-	import { frameBuffer } from '$lib/frame-buffer.js';
+import { frameBuffer } from './webcodecs-frame-buffer.js';
 
 	// --- Shader State ---
 	const shaders = {
@@ -1184,8 +1184,13 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				preloadProgress = progress;
 				preloadStatus = status;
 			});
+			
 			isBufferReady = true;
-			console.log('Frame buffer ready:', frameBuffer.totalFrames, 'frames');
+			preloadProgress = 1;
+			console.log('[VideoWorkbench] Frame buffer ready:', frameBuffer.totalFrames, 'frames');
+			
+			// Prime first frame on-demand (don't wait, let ShaderPlayer handle it)
+			frameBuffer.primeAroundFrame(0);
 		} catch (err) {
 			console.error('Failed to preload videos:', err);
 			preloadStatus = 'Error: ' + err.message;

@@ -47,7 +47,7 @@ function makeFrameKey(clipIndex, localFrame) {
 }
 
 export class FrameBuffer {
-	constructor({ prefetchSeconds = 2, maxFrames = null, targetFps = 24 } = {}) {
+	constructor({ prefetchSeconds = 5, maxFrames = 240, targetFps = 24 } = {}) {
 		/** @type {Map<number, { file: File, url: string, video: HTMLVideoElement, frameCount: number, outputWidth: number, outputHeight: number, duration: number, decodeQueue: Promise<void> }>} */
 		this.clips = new Map();
 		
@@ -303,8 +303,12 @@ export class FrameBuffer {
 				return;
 			}
 
+			// Add timeout to prevent hanging
+			const timeout = setTimeout(() => resolve(), 500);
+
 			const currentDelta = Math.abs(video.currentTime - time);
 			if (currentDelta < 0.0001 && video.readyState >= 2) {
+				clearTimeout(timeout);
 				if (typeof video.requestVideoFrameCallback === 'function') {
 					video.requestVideoFrameCallback(() => resolve());
 				} else {
@@ -314,6 +318,7 @@ export class FrameBuffer {
 			}
 
 			const onSeeked = () => {
+				clearTimeout(timeout);
 				if (typeof video.requestVideoFrameCallback === 'function') {
 					video.requestVideoFrameCallback(() => resolve());
 				} else {
@@ -321,7 +326,10 @@ export class FrameBuffer {
 				}
 			};
 
-			const onError = () => reject(new Error('Video seek failed'));
+			const onError = () => {
+				clearTimeout(timeout);
+				reject(new Error('Video seek failed'));
+			};
 
 			video.addEventListener('seeked', onSeeked, { once: true });
 			video.addEventListener('error', onError, { once: true });
@@ -369,6 +377,62 @@ export class FrameBuffer {
 			if (!localInfo) continue;
 			void this.decodeFrameAt(localInfo.clipIndex, localInfo.localFrame);
 		}
+	}
+
+	/**
+	 * Ensure the first frame of a clip is decoded and ready
+	 * @param {number} clipIndex
+	 * @returns {Promise<ImageBitmap | null>}
+	 */
+	async ensureFirstFrameReady(clipIndex = 0) {
+		const clip = this.clips.get(clipIndex);
+		if (!clip) {
+			console.warn(`[FrameBuffer] ensureFirstFrameReady: Clip ${clipIndex} not found`);
+			return null;
+		}
+		
+		// Ensure video metadata is loaded first
+		await new Promise((resolve, reject) => {
+			if (clip.video.readyState >= 1) {
+				// Already has metadata
+				resolve();
+				return;
+			}
+			
+			const timeout = setTimeout(() => {
+				clip.video.removeEventListener('loadedmetadata', onReady);
+				clip.video.removeEventListener('error', onError);
+				reject(new Error('Video metadata load timeout'));
+			}, 5000);
+			
+			const onReady = () => {
+				clearTimeout(timeout);
+				clip.video.removeEventListener('error', onError);
+				resolve();
+			};
+			
+			const onError = () => {
+				clearTimeout(timeout);
+				clip.video.removeEventListener('loadedmetadata', onReady);
+				reject(new Error('Video metadata load failed'));
+			};
+			
+			clip.video.addEventListener('loadedmetadata', onReady, { once: true });
+			clip.video.addEventListener('error', onError, { once: true });
+		}).catch((error) => {
+			console.warn(`[FrameBuffer] Metadata load issue for clip ${clipIndex}:`, error.message);
+		});
+		
+		// Now decode the first frame with timeout
+		return Promise.race([
+			this.decodeFrameAt(clipIndex, 0),
+			new Promise((_, reject) => 
+				setTimeout(() => reject(new Error('First frame decode timeout')), 5000)
+			)
+		]).catch((error) => {
+			console.warn(`[FrameBuffer] Could not decode first frame for clip ${clipIndex}:`, error.message);
+			return null;
+		});
 	}
 
 	/**
