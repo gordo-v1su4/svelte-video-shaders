@@ -895,27 +895,40 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 	let fxTriggerActive = $state(0); // Current FX trigger level (0-1)
 	
 	let previousTime = 0;
+	let nextMarkerIndex = $state(0);
+	
+	const findNextMarkerIndex = (triggers, time) => {
+		const nextIndex = triggers.findIndex(marker => marker > time);
+		return nextIndex === -1 ? triggers.length : nextIndex;
+	};
 	
 	$effect(() => {
 		const time = audioCurrentTime;
 		const triggers = filteredOnsets; // Capture for reactivity
 		
 		// Reset tracking on seek or pause (approximate)
-		if (!isPlaying || Math.abs(time - previousTime) > 1.0) {
+		if (!isPlaying || time < previousTime || Math.abs(time - previousTime) > 1.0) {
 			previousTime = time;
+			nextMarkerIndex = findNextMarkerIndex(triggers, time);
 			return;
 		}
 		
 		if (time > previousTime) {
-			// Check if we crossed any onset (simple linear check for robustness)
-			const hit = triggers.some(onset => onset > previousTime && onset <= time);
-			
 			// Debug: log every ~1 second to avoid spam
 			if (Math.floor(time) !== Math.floor(previousTime)) {
 				console.log(`[Trigger] time=${time.toFixed(2)}, triggers=${triggers.length}, enableCycling=${enableVideoCycling}`);
 			}
 			
-			if (hit) {
+			while (nextMarkerIndex < triggers.length) {
+				const marker = triggers[nextMarkerIndex];
+				if (marker > time) {
+					break;
+				}
+				if (marker <= previousTime) {
+					nextMarkerIndex++;
+					continue;
+				}
+				
 				isBeatActive = true;
 				markerCounter++;
 				setTimeout(() => isBeatActive = false, 100); // Visual blink duration
@@ -941,19 +954,21 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				if (enableFXTriggers) {
 					fxTriggerActive = 1.0; // Full spike
 				}
-			}
-			
-			// === TRIGGER: Glitch Mode (high-energy micro-jumps) ===
-			if (enableGlitchMode && shaderPlayerRef) {
-				// Check if we're in a high-energy section
-				const sectionEnergy = currentSection.energy || 0;
-				const isHighEnergy = sectionEnergy > glitchEnergyThreshold;
 				
-				if (isHighEnergy && hit) {
-					// Rapid micro-jumps
-					const microJump = Math.floor(Math.random() * glitchFrameRange * 2) - glitchFrameRange;
-					shaderPlayerRef.jumpFrames(microJump);
+				// === TRIGGER: Glitch Mode (high-energy micro-jumps) ===
+				if (enableGlitchMode && shaderPlayerRef) {
+					// Check if we're in a high-energy section
+					const sectionEnergy = currentSection.energy || 0;
+					const isHighEnergy = sectionEnergy > glitchEnergyThreshold;
+					
+					if (isHighEnergy) {
+						// Rapid micro-jumps
+						const microJump = Math.floor(Math.random() * glitchFrameRange * 2) - glitchFrameRange;
+						shaderPlayerRef.jumpFrames(microJump);
+					}
 				}
+				
+				nextMarkerIndex++;
 			}
 		}
 		previousTime = time;
