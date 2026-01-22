@@ -8,7 +8,8 @@
 		uniforms = $bindable({}),
 		filtersEnabled = true,
 		analysisData = { beats: [], bpm: 0 },
-		enableLooping = true
+		enableLooping = true,
+		onClipComplete = null
 	} = $props();
 
 	// Output dimensions (will match frame buffer)
@@ -37,6 +38,8 @@
 	let currentClipIndex = 0;
 	let clipLocalFrame = 0; // Frame within current clip
 	let clipStartAudioTime = 0; // Audio time when this clip started
+	let clipLoopCount = 0;
+	let hasSignaledClipEnd = false;
 
 	// Audio-reactive state
 	let beatIndex = 0;
@@ -273,6 +276,8 @@
 		if (clipInfo) {
 			currentClipIndex = clipIndex;
 			clipLocalFrame = 0;
+			clipLoopCount = 0;
+			hasSignaledClipEnd = false;
 			globalFrameIndex = clipInfo.startFrame;
 			accumulatedTime = 0;
 			frameBuffer.primeAroundFrame(globalFrameIndex);
@@ -325,11 +330,51 @@
 		}
 		
 		// Calculate time elapsed since this clip started
-		const elapsedTime = audioTimeSeconds - clipStartAudioTime;
-		
+		const elapsedTime = Math.max(0, audioTimeSeconds - clipStartAudioTime);
+		const clipDurationSeconds = clipInfo.frameCount / fps;
+		const maxClipFrame = clipInfo.frameCount - 1;
+		if (elapsedTime < clipDurationSeconds) {
+			clipLoopCount = 0;
+			hasSignaledClipEnd = false;
+		}
+
+		if (!enableLooping && elapsedTime >= clipDurationSeconds) {
+			clipLocalFrame = Math.max(0, maxClipFrame);
+			globalFrameIndex = clipInfo.startFrame + clipLocalFrame;
+			accumulatedTime = 0;
+
+			if (!hasSignaledClipEnd) {
+				hasSignaledClipEnd = true;
+				isPlaying = false;
+				if (typeof onClipComplete === 'function') {
+					onClipComplete({
+						clipIndex: currentClipIndex,
+						elapsedTime,
+						loopCount: clipLoopCount
+					});
+				}
+			}
+
+			return globalFrameIndex;
+		}
+
 		// Calculate frame within current clip based on elapsed time (loop within clip)
 		const targetFrame = Math.floor(elapsedTime * fps);
 		clipLocalFrame = ((targetFrame % clipInfo.frameCount) + clipInfo.frameCount) % clipInfo.frameCount;
+
+		if (enableLooping && clipDurationSeconds > 0) {
+			const nextLoopCount = Math.floor(elapsedTime / clipDurationSeconds);
+			if (nextLoopCount > clipLoopCount) {
+				clipLoopCount = nextLoopCount;
+				if (typeof onClipComplete === 'function') {
+					onClipComplete({
+						clipIndex: currentClipIndex,
+						elapsedTime,
+						loopCount: clipLoopCount
+					});
+				}
+			}
+		}
 		
 		// Convert to global frame index
 		globalFrameIndex = clipInfo.startFrame + clipLocalFrame;
