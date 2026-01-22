@@ -1249,6 +1249,23 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime);
 	}
 
+	let lastActiveVideoId = null;
+	$effect(() => {
+		if (!$activeVideo) {
+			lastActiveVideoId = null;
+			return;
+		}
+
+		if (!shaderPlayerRef || $videoAssets.length === 0) return;
+		if ($activeVideo.id === lastActiveVideoId) return;
+
+		const globalIndex = $videoAssets.findIndex((asset) => asset.id === $activeVideo.id);
+		if (globalIndex < 0) return;
+
+		lastActiveVideoId = $activeVideo.id;
+		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime);
+	});
+
     // Removed time-based cycling logic as we now use onVideoEnd
     /*
 	function startVideoCycling() { ... }
