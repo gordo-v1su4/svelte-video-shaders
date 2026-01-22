@@ -522,6 +522,8 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	let enableSpeedRamping = $state(false);
 	let speedRampSensitivity = $state(2.0); // How much energy affects speed
 	let baseSpeed = $state(1.0); // Minimum/Base speed
+	let audioRampedTime = $state(0);
+	let lastAudioTime = $state(0);
 	const ESSENTIA_HOP_SIZE = 512;
 	const ESSENTIA_SAMPLE_RATE = 44100;
 	const SECONDS_PER_FRAME = ESSENTIA_HOP_SIZE / ESSENTIA_SAMPLE_RATE;
@@ -538,11 +540,29 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 			// === AUDIO AS MASTER CLOCK ===
 			// Sync video frame to audio time (Phase 2 feature)
 			if (audioMasterEnabled && shaderPlayerRef) {
-				shaderPlayerRef.setAudioTime(audioCurrentTime, TARGET_FPS);
+				if (enableSpeedRamping && analysisData.energy?.curve) {
+					const frameIndex = Math.floor(audioCurrentTime / SECONDS_PER_FRAME);
+					const energy = analysisData.energy.curve[frameIndex] ?? 0;
+					const newSpeed = baseSpeed + (energy * speedRampSensitivity);
+					const deltaTime = audioCurrentTime - lastAudioTime;
+
+					if (deltaTime <= 0 || deltaTime > 1) {
+						audioRampedTime = audioCurrentTime;
+					} else {
+						audioRampedTime += deltaTime * newSpeed;
+					}
+
+					lastAudioTime = audioCurrentTime;
+					shaderPlayerRef.setAudioTime(audioRampedTime, TARGET_FPS);
+				} else {
+					audioRampedTime = audioCurrentTime;
+					lastAudioTime = audioCurrentTime;
+					shaderPlayerRef.setAudioTime(audioCurrentTime, TARGET_FPS);
+				}
 			}
 			
 			// Handle Speed Ramping (adjusts playback speed, not position)
-			if (enableSpeedRamping && analysisData.energy?.curve && shaderPlayerRef) {
+			if (!audioMasterEnabled && enableSpeedRamping && analysisData.energy?.curve && shaderPlayerRef) {
 				const frameIndex = Math.floor(audioCurrentTime / SECONDS_PER_FRAME);
 				if (frameIndex >= 0 && frameIndex < analysisData.energy.curve.length) {
 					const energy = analysisData.energy.curve[frameIndex];
