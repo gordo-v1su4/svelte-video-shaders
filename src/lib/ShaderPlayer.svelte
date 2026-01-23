@@ -42,6 +42,7 @@
 	let clipStartRampedTime = 0; // Remapped time when this clip started (for speed ramping)
 	let clipLoopCount = 0;
 	let hasSignaledClipEnd = false;
+	let jumpFrameOffset = 0; // Accumulated jump cut offset (applied to frame calculation)
 
 	// Audio-reactive state
 	let beatIndex = 0;
@@ -313,6 +314,7 @@
 					clipStartRampedTime = latestSeek.rampedTime !== null && latestSeek.rampedTime !== undefined 
 						? latestSeek.rampedTime 
 						: latestSeek.audioTime;
+					jumpFrameOffset = 0; // Reset jump offset on clip switch
 				}
 			}
 		}
@@ -346,7 +348,40 @@
 	}
 
 	export function jumpFrames(delta) {
-		globalFrameIndex += delta;
+		// If externally controlled (audio master mode), accumulate jump offset
+		// Otherwise, directly modify globalFrameIndex
+		if (isExternallyControlled) {
+			// Accumulate jump offset - will be applied in setAudioTime()
+			jumpFrameOffset += delta;
+		} else {
+			// Direct mode - modify globalFrameIndex and clamp to clip boundaries
+			if (frameBuffer) {
+				const clipInfo = frameBuffer.getClipInfo(currentClipIndex);
+				if (clipInfo) {
+					// Calculate new local frame within clip
+					const newLocalFrame = clipLocalFrame + delta;
+					// Clamp to clip boundaries (will loop if enableLooping is true)
+					if (enableLooping) {
+						clipLocalFrame = ((newLocalFrame % clipInfo.frameCount) + clipInfo.frameCount) % clipInfo.frameCount;
+					} else {
+						clipLocalFrame = Math.max(0, Math.min(clipInfo.frameCount - 1, newLocalFrame));
+					}
+					globalFrameIndex = clipInfo.startFrame + clipLocalFrame;
+				} else {
+					// Fallback: modify global index directly
+					globalFrameIndex += delta;
+					if (frameBuffer.totalFrames > 0) {
+						if (enableLooping) {
+							globalFrameIndex = ((globalFrameIndex % frameBuffer.totalFrames) + frameBuffer.totalFrames) % frameBuffer.totalFrames;
+						} else {
+							globalFrameIndex = Math.max(0, Math.min(frameBuffer.totalFrames - 1, globalFrameIndex));
+						}
+					}
+				}
+			} else {
+				globalFrameIndex += delta;
+			}
+		}
 	}
 
 	export function getCurrentFrame() {
@@ -420,7 +455,14 @@
 		}
 
 		// Calculate frame within current clip based on elapsed time (loop within clip)
-		const targetFrame = Math.floor(elapsedTime * fps);
+		let targetFrame = Math.floor(elapsedTime * fps);
+		
+		// Apply jump cut offset if any
+		if (jumpFrameOffset !== 0) {
+			targetFrame += jumpFrameOffset;
+			jumpFrameOffset = 0; // Reset after applying
+		}
+		
 		clipLocalFrame = ((targetFrame % clipInfo.frameCount) + clipInfo.frameCount) % clipInfo.frameCount;
 
 		if (enableLooping && clipDurationSeconds > 0) {
