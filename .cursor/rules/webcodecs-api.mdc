@@ -223,10 +223,175 @@ if (track.codec.startsWith('avc1')) {
 }
 ```
 
+## 6. SvelteKit Integration Patterns
+
+When using WebCodecs in SvelteKit, you must handle Server-Side Rendering (SSR) correctly.
+
+### SSR Gating with onMount
+
+**All WebCodecs code must be gated behind `onMount` or browser checks:**
+
+```javascript
+// ✅ Correct: WebCodecs code in onMount (browser-only)
+import { onMount } from 'svelte';
+
+onMount(() => {
+  // Safe to use WebCodecs here - only runs in browser
+  const decoder = new VideoDecoder({
+    output: (frame) => {
+      // Handle frame
+      frame.close();
+    },
+    error: (e) => console.error(e)
+  });
+  
+  return () => {
+    // Cleanup on component destroy
+    if (decoder && decoder.state !== 'closed') {
+      decoder.close();
+    }
+  };
+});
+
+// ❌ Incorrect: WebCodecs at top level will break SSR
+const decoder = new VideoDecoder({ ... }); // Error: window is not defined
+```
+
+### Browser Environment Check
+
+```javascript
+// ✅ Alternative: Browser check before using WebCodecs
+if (typeof window !== 'undefined' && window.VideoDecoder) {
+  const decoder = new VideoDecoder({ ... });
+}
+```
+
+## 7. ImageBitmap Conversion Pattern
+
+For persistent frame storage and WebGL integration, convert VideoFrames to ImageBitmaps:
+
+```javascript
+// ✅ Correct: Convert VideoFrame to ImageBitmap, then close immediately
+const videoDecoder = new VideoDecoder({
+  output: (frame) => {
+    // Create ImageBitmap copy (GPU-resident for WebGL)
+    createImageBitmap(frame).then(bitmap => {
+      // Store bitmap for later use
+      frames.push(bitmap);
+      // Update progress, etc.
+    }).catch(e => {
+      console.error('Failed to create ImageBitmap:', e);
+    }).finally(() => {
+      // CRITICAL: Always close VideoFrame immediately to free decoder buffers
+      frame.close();
+    });
+  },
+  error: (e) => console.error(e)
+});
+```
+
+**Why ImageBitmap?**
+- GPU-resident (stays on GPU for WebGL textures)
+- Persistent (can be stored in arrays for random access)
+- Safe (VideoFrame must be closed immediately, ImageBitmap can live longer)
+
+**Trade-off:** Slight overhead from conversion, but enables pre-decoded frame buffers for instant seeking.
+
+## 8. Queue Management for Rapid Seeks
+
+During rapid clip swapping or seeking, implement queue management to prevent jitter:
+
+```javascript
+// ✅ Correct: Queue management for rapid seeks
+let seekQueue = [];
+let isProcessingSeek = false;
+
+function seekToFrame(targetFrame) {
+  seekQueue.push(targetFrame);
+  
+  // If queue is too long, skip to latest
+  if (seekQueue.length > 3) {
+    seekQueue = [targetFrame]; // Keep only the latest
+  }
+  
+  processSeekQueue();
+}
+
+async function processSeekQueue() {
+  if (isProcessingSeek || seekQueue.length === 0) return;
+  
+  isProcessingSeek = true;
+  const targetFrame = seekQueue.pop();
+  seekQueue = []; // Clear queue, we're processing the latest
+  
+  // Perform seek operation
+  await performSeek(targetFrame);
+  
+  isProcessingSeek = false;
+  
+  // Process any new seeks that arrived during processing
+  if (seekQueue.length > 0) {
+    processSeekQueue();
+  }
+}
+```
+
+**Benefits:**
+- Prevents decoder from being overwhelmed
+- Ensures UI stays responsive
+- Skips intermediate seeks to maintain "tactile" feel
+
+## 9. CSS-First Rendering for Performance
+
+For UI elements that update frequently (progress bars, opacity), use CSS Custom Properties instead of Svelte reactive state:
+
+```javascript
+// ✅ Correct: CSS Custom Properties for 60fps updates
+function updateProgress(percent) {
+  const progressBar = document.querySelector('.progress-bar');
+  if (progressBar) {
+    progressBar.style.setProperty('--progress', `${percent}%`);
+  }
+}
+
+// In CSS:
+.progress-bar::before {
+  width: var(--progress);
+  transition: width 0.1s;
+}
+
+// ❌ Incorrect: Reactive state causes re-renders at 60fps
+let progress = $state(0); // Triggers Svelte reactivity every frame
+```
+
+**Why?** Keeps Svelte out of the 60fps render loop, allowing browser's native CSS engine to handle visual updates efficiently.
+
+## 10. Web Workers Consideration
+
+For heavy decoding operations, consider moving to Web Workers:
+
+```javascript
+// ✅ Good: Pre-decode-all during load (acceptable on main thread)
+// All frames decoded upfront, then accessed instantly
+await frameBuffer.preloadClips(videoFiles);
+
+// ⚠️ Consider: Real-time decoding during playback
+// If decoding happens during playback, move to Web Worker:
+const worker = new Worker('/video-decoder-worker.js');
+worker.postMessage({ action: 'decode', chunk: encodedChunk });
+worker.onmessage = (e) => {
+  const frame = e.data.frame;
+  // Use frame, then close
+  frame.close();
+};
+```
+
+**Current Approach:** Pre-decode-all during load is acceptable on main thread since it's a one-time operation. Real-time decoding during playback could benefit from Web Workers to prevent UI freezes.
+
 ## References
 
 - [W3C WebCodecs AVC Registration](https://www.w3.org/TR/webcodecs-avc-codec-registration/)
 - [WebCodecs API Specification](https://www.w3.org/TR/webcodecs/)
 - [MP4Box.js Documentation](https://github.com/gpac/mp4box.js)
-- [frame-buffer.js](mdc:src/lib/frame-buffer.js) - Pre-decoded frame buffer implementation
+- [webcodecs-frame-buffer.js](mdc:src/lib/webcodecs-frame-buffer.js) - Pre-decoded frame buffer implementation
 - [ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte) - WebCodecs + Three.js integration

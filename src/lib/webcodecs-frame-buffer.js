@@ -96,7 +96,7 @@ function extractCodecDescription(mp4boxFile, track) {
 
 export class WebCodecsFrameBuffer {
 	constructor({ targetFps = 24 } = {}) {
-		/** @type {Map<number, ImageBitmap[]>} - Decoded frames per clip */
+		/** @type {Map<number, ImageBitmap[]>} - Decoded frames per clip (GPU-resident via ImageBitmap) */
 		this.clips = new Map();
 
 		/** @type {number[]} - cumulative frame counts for global indexing */
@@ -152,8 +152,9 @@ export class WebCodecsFrameBuffer {
 	}
 
 	/**
-	 * Decode a single video file into ImageBitmap array
+	 * Decode a single video file into ImageBitmap array (GPU-resident for WebGL)
 	 * Based on the working implementation from commit b8e027b6
+	 * VideoFrames are converted to ImageBitmap and closed immediately to free decoder buffers
 	 * @param {File} file
 	 * @param {(progress: number) => void} onProgress
 	 * @returns {Promise<ImageBitmap[]>}
@@ -217,7 +218,7 @@ export class WebCodecsFrameBuffer {
 				videoDecoder = new VideoDecoder({
 					output: (frame) => {
 						// CRITICAL: Must close VideoFrame to free decoder buffers!
-						// Convert to ImageBitmap for persistent storage (like original working code)
+						// Create ImageBitmap copy (GPU-resident for WebGL) then close original
 						createImageBitmap(frame).then(bitmap => {
 							frames.push(bitmap);
 							if (frames.length === 1 || frames.length % 50 === 0) {
@@ -228,7 +229,7 @@ export class WebCodecsFrameBuffer {
 						}).catch(e => {
 							console.error('[WebCodecsFrameBuffer] Failed to create ImageBitmap:', e);
 						}).finally(() => {
-							// Always close the VideoFrame to free decoder resources
+							// Always close the VideoFrame immediately to free decoder buffers
 							frame.close();
 						});
 					},
@@ -376,7 +377,7 @@ export class WebCodecsFrameBuffer {
 				const localFrame = wrappedIndex - clipStart;
 				const clip = this.clips.get(clipIndex);
 				if (clip && clip[0]) {
-					// ImageBitmap uses width/height, not displayWidth/displayHeight
+					// ImageBitmap uses width/height
 					this.outputWidth = clip[0].width || this.outputWidth;
 					this.outputHeight = clip[0].height || this.outputHeight;
 				}
@@ -400,7 +401,7 @@ export class WebCodecsFrameBuffer {
 		// Wrap within clip
 		const wrappedFrame = ((localFrame % clip.length) + clip.length) % clip.length;
 		if (clip[0]) {
-			// ImageBitmap uses width/height, not displayWidth/displayHeight
+			// ImageBitmap uses width/height
 			this.outputWidth = clip[0].width || this.outputWidth;
 			this.outputHeight = clip[0].height || this.outputHeight;
 		}
@@ -480,9 +481,10 @@ export class WebCodecsFrameBuffer {
 
 	/**
 	 * Clean up all ImageBitmaps and resources
+	 * ImageBitmaps are closed here to free GPU memory
 	 */
 	dispose() {
-		// Close all ImageBitmaps
+		// Close all ImageBitmaps to free GPU memory
 		for (const [_, frames] of this.clips) {
 			for (const frame of frames) {
 				if (frame && typeof frame.close === 'function') {

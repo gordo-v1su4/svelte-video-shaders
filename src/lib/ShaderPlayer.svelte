@@ -45,13 +45,17 @@
 	let beatIndex = 0;
 	let playbackStartTime = 0;
 
-	// VideoFrame-backed texture (WebCodecs, GPU-only)
+	// Queue management for rapid seeks (prevents jitter during rapid clip swaps)
+	let seekQueue = [];
+	let isProcessingSeek = false;
+
+	// VideoFrame-backed texture (WebCodecs, GPU-resident for maximum performance)
 
 	// Default shaders
 	const vertexShader = `
 		varying vec2 v_uv;
 		void main() {
-			// Flip V coordinate for ImageBitmap (opposite of VideoFrame)
+			// Flip V coordinate (works for both VideoFrame and ImageBitmap)
 			v_uv = vec2(uv.x, 1.0 - uv.y);
 			gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 		}
@@ -106,7 +110,7 @@
 		renderer.setSize(854, 480, false);
 		mesh.scale.set(1, 1, 1);
 
-		// Create texture once (image set to ImageBitmap per render)
+		// Create texture once (image set to VideoFrame per render - GPU-resident)
 		texture = new THREE.Texture();
 		texture.minFilter = THREE.LinearFilter;
 		texture.magFilter = THREE.LinearFilter;
@@ -114,7 +118,7 @@
 		texture.wrapT = THREE.ClampToEdgeWrapping;
 		texture.format = THREE.RGBAFormat;
 		texture.generateMipmaps = false;
-		// ImageBitmap coordinate system - UV flip handled in shader
+		// VideoFrames use standard texture coordinates (flipY = false)
 		texture.flipY = false;
 		material.uniforms.u_texture.value = texture;
 
@@ -193,7 +197,7 @@
 			
 			frameBuffer.primeAroundFrame(globalFrameIndex);
 
-			// Get current frame from buffer (VideoFrame from WebCodecs)
+			// Get current frame from buffer (VideoFrame - GPU-resident)
 			const videoFrame = frameBuffer.getFrame(globalFrameIndex);
 			if (videoFrame) {
 				texture.image = videoFrame;
@@ -260,28 +264,70 @@
 	}
 
 	export function seek(frameIndex) {
-		globalFrameIndex = frameIndex;
-		accumulatedTime = 0;
-		frameBuffer?.primeAroundFrame(globalFrameIndex);
+		// Add to queue for queue management
+		seekQueue.push({ type: 'seek', frameIndex });
+		
+		// If queue is too long, skip to latest
+		if (seekQueue.length > 3) {
+			seekQueue = [{ type: 'seek', frameIndex }]; // Keep only the latest
+		}
+		
+		processSeekQueue();
+	}
+	
+	/**
+	 * Process seek queue - ensures only latest seek is executed if queue is too long
+	 * Prevents jitter during rapid clip swaps
+	 */
+	function processSeekQueue() {
+		if (isProcessingSeek || seekQueue.length === 0) return;
+		
+		isProcessingSeek = true;
+		const latestSeek = seekQueue.pop();
+		seekQueue = []; // Clear queue, we're processing the latest
+		
+		// Perform the seek operation
+		if (latestSeek.type === 'seek') {
+			globalFrameIndex = latestSeek.frameIndex;
+			accumulatedTime = 0;
+			frameBuffer?.primeAroundFrame(globalFrameIndex);
+		} else if (latestSeek.type === 'seekToClip') {
+			// Handle seekToClip directly (no queue needed, but keep for consistency)
+			const clipInfo = frameBuffer?.getClipInfo(latestSeek.clipIndex);
+			if (clipInfo) {
+				currentClipIndex = latestSeek.clipIndex;
+				clipLocalFrame = 0;
+				clipLoopCount = 0;
+				hasSignaledClipEnd = false;
+				globalFrameIndex = clipInfo.startFrame;
+				accumulatedTime = 0;
+				frameBuffer.primeAroundFrame(globalFrameIndex);
+				if (latestSeek.audioTime !== null && latestSeek.audioTime !== undefined) {
+					clipStartAudioTime = latestSeek.audioTime;
+				}
+			}
+		}
+		
+		isProcessingSeek = false;
+		
+		// Process any new seeks that arrived during processing
+		if (seekQueue.length > 0) {
+			processSeekQueue();
+		}
 	}
 
 	export function seekToClip(clipIndex, audioTime = null) {
 		if (!frameBuffer) return;
-		const clipInfo = frameBuffer.getClipInfo(clipIndex);
-		if (clipInfo) {
-			currentClipIndex = clipIndex;
-			clipLocalFrame = 0;
-			clipLoopCount = 0;
-			hasSignaledClipEnd = false;
-			globalFrameIndex = clipInfo.startFrame;
-			accumulatedTime = 0;
-			frameBuffer.primeAroundFrame(globalFrameIndex);
-			// Record when this clip started (for relative frame calculation)
-			if (audioTime !== null) {
-				clipStartAudioTime = audioTime;
-			}
-			console.log(`[ShaderPlayer] seekToClip(${clipIndex}): startFrame=${clipInfo.startFrame}, frameCount=${clipInfo.frameCount}, audioTime=${audioTime?.toFixed(2)}`);
+		
+		// Add to queue for queue management
+		seekQueue.push({ type: 'seekToClip', clipIndex, audioTime });
+		
+		// If queue is too long, skip to latest
+		if (seekQueue.length > 3) {
+			seekQueue = [{ type: 'seekToClip', clipIndex, audioTime }]; // Keep only the latest
 		}
+		
+		processSeekQueue();
 	}
 
 	export function setSpeed(speed) {

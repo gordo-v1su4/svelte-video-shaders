@@ -16,6 +16,9 @@ export default defineConfig(({ ssrBuild }) => ({
 			}
 		}
 	],
+	optimizeDeps: {
+		exclude: ['mp4box'] // Prevent Vite from pre-bundling mp4box (required for ESM compatibility)
+	},
 	build: {
 		chunkSizeWarningLimit: 1500,
 		// Only apply manualChunks to the client build; SSR treats some deps as external

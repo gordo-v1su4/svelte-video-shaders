@@ -75,6 +75,14 @@ export class EssentiaService {
             console.log(`[EssentiaService] ✅ Analysis complete in ${elapsed}s:`, result);
             console.log(`[EssentiaService] BPM: ${result.bpm}, Beats: ${result.beats?.length || 0}, Onsets: ${result.onsets?.length || 0}, Confidence: ${result.confidence}`);
             console.log(`[EssentiaService] Structure: ${result.structure?.sections?.length || 0} sections, Classification: ${result.classification ? 'available' : 'none'}`);
+            
+            // Verify energy curve is present (for speed ramping)
+            if (result.energy?.curve) {
+                console.log(`[EssentiaService] ✅ Energy curve available: ${result.energy.curve.length} samples (mean: ${result.energy.mean?.toFixed(3)}, std: ${result.energy.std?.toFixed(3)})`);
+            } else {
+                console.warn(`[EssentiaService] ⚠️ Energy curve not available in API response - speed ramping will not work`);
+            }
+            
             return result;
         } catch (e) {
             console.error('[EssentiaService] ❌ Analysis failed:', e);

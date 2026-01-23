@@ -12,6 +12,22 @@ This rule documents the correct way to integrate and use [mp4box.js](https://git
 - Required for frame-accurate, real-time video playback and shader effects
 - Works in browsers and with modern build tools (Vite)
 
+## Vite Configuration (Required)
+
+**Critical:** mp4box must be excluded from Vite's dependency optimization:
+
+```javascript
+// vite.config.js
+export default defineConfig({
+  optimizeDeps: {
+    exclude: ['mp4box'] // Prevent Vite from pre-bundling (required for ESM compatibility)
+  },
+  // ... rest of config
+});
+```
+
+**Why?** mp4box uses ESM and requires raw module loading. Vite's pre-bundling can cause resolution errors or HMR issues.
+
 ## Import Pattern
 
 **Always use the Vite-compatible import:**
@@ -39,14 +55,20 @@ import MP4Box from 'mp4box';
    - `onSamples`: Feed extracted samples to the decoder
    ```javascript
    mp4boxfile.onReady = (info) => {
-     const track = info.videoTracks[0];
-     if (VideoDecoder.isConfigSupported(track.codec)) {
+     // ✅ Correct: Use info.tracks.find() to get video track
+     const videoTrack = info.tracks.find(t => t.type === 'video');
+     if (!videoTrack) {
+       console.error('No video track found');
+       return;
+     }
+     
+     if (VideoDecoder.isConfigSupported(videoTrack.codec)) {
        videoDecoder.configure({
-         codec: track.codec,
-         codedWidth: track.track_width,
-         codedHeight: track.track_height
+         codec: videoTrack.codec,
+         codedWidth: videoTrack.video?.width || videoTrack.track_width,
+         codedHeight: videoTrack.video?.height || videoTrack.track_height
        });
-       mp4boxfile.setExtractionOptions(track.id, null, { nbSamples: 100 });
+       mp4boxfile.setExtractionOptions(videoTrack.id, null, { nbSamples: 100 });
        mp4boxfile.start();
      }
    };
@@ -87,9 +109,11 @@ import MP4Box from 'mp4box';
 
 ## Best Practices
 - **Always check codec support** with `VideoDecoder.isConfigSupported()` before configuring
+- **Use `info.tracks.find()`** instead of `info.videoTracks[0]` for track access (more reliable)
 - **Buffer enough samples** (e.g., `nbSamples: 100`) for smooth playback
 - **Properly clean up**: call `mp4boxfile.stop()` and release resources on component destroy
-- **Reference:** See [ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte) for a full implementation
+- **Exclude from Vite optimizeDeps**: Add `mp4box` to `optimizeDeps.exclude` in vite.config.js
+- **Reference:** See [webcodecs-frame-buffer.js](mdc:src/lib/webcodecs-frame-buffer.js) for a full implementation
 
 ## Good Example
 ```javascript
@@ -103,7 +127,15 @@ mp4boxfile.onSamples = (track_id, ref, samples) => { /* ... */ };
 ## Bad Example
 ```javascript
 import MP4Box from 'mp4box'; // ❌ Not Vite-compatible
-// ...missing event handlers or improper buffer feeding
+
+// ❌ Bad: Using info.videoTracks[0] (may not exist)
+mp4boxfile.onReady = (info) => {
+  const track = info.videoTracks[0]; // May be undefined
+  // ...
+};
+
+// ❌ Bad: Missing Vite optimizeDeps exclusion
+// vite.config.js without optimizeDeps.exclude: ['mp4box']
 ```
 
 ## References

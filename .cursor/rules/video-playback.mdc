@@ -11,10 +11,11 @@ This rule covers video playback implementation using WebCodecs, mp4box, and thre
 
 ### Technology Stack
 - **WebCodecs API**: Native browser video decoding (Chrome 94+, Edge 94+, Safari 16.4+)
-- **mp4box.js**: MP4 container demuxing and sample extraction
-- **Frame Buffer**: Pre-decoded ImageBitmap arrays for seamless retiming
+- **mp4box.js**: MP4 container demuxing and sample extraction (requires Vite optimizeDeps exclusion)
+- **Frame Buffer**: Pre-decoded ImageBitmap arrays for seamless retiming (GPU-resident for WebGL)
 - **three.js**: WebGL2 rendering with shader materials
 - **Audio-reactive**: Real-time FFT drives shader uniforms and playback speed
+- **SvelteKit**: SSR-safe implementation with onMount gating
 
 ### Import Pattern
 ```javascript
@@ -84,18 +85,48 @@ if (VideoDecoder.isConfigSupported(track.codec)) {
 }
 ```
 
-### 3. Frame Processing
+### 3. Frame Processing with ImageBitmap
+
+**Current Implementation:** VideoFrames are converted to ImageBitmaps for persistent storage:
+
 ```javascript
-// ✅ Good: Update three.js texture with VideoFrame
-function onVideoFrame(frame) {
-  if (mesh && mesh.material.uniforms.u_texture.value) {
-    mesh.material.uniforms.u_texture.value.image = frame;
-    mesh.material.uniforms.u_texture.value.needsUpdate = true;
+// ✅ Good: Convert VideoFrame to ImageBitmap, then close VideoFrame immediately
+const videoDecoder = new VideoDecoder({
+  output: (frame) => {
+    // Create ImageBitmap copy (GPU-resident for WebGL)
+    createImageBitmap(frame).then(bitmap => {
+      // Store ImageBitmap in frame buffer
+      frames.push(bitmap);
+      onProgress(frames.length / totalSamples);
+    }).catch(e => {
+      console.error('Failed to create ImageBitmap:', e);
+    }).finally(() => {
+      // ✅ CRITICAL: Always close VideoFrame immediately to free decoder buffers
+      frame.close();
+    });
+  },
+  error: (e) => console.error('[Decoder]', e)
+});
+```
+
+**Using ImageBitmap in Three.js:**
+
+```javascript
+// ✅ Good: Update three.js texture with ImageBitmap from frame buffer
+function render() {
+  const bitmap = frameBuffer.getFrame(globalFrameIndex);
+  if (bitmap && texture) {
+    texture.image = bitmap; // ImageBitmap works directly with Three.js textures
+    texture.needsUpdate = true;
   }
-  // ✅ CRITICAL: Always close VideoFrame to prevent memory leaks
-  frame.close();
+  renderer.render(scene, camera);
 }
 ```
+
+**Why ImageBitmap?**
+- GPU-resident (stays on GPU for WebGL textures)
+- Persistent (can be stored in arrays for random access)
+- VideoFrame must be closed immediately, ImageBitmap can live longer
 
 ## Three.js Integration
 
@@ -210,29 +241,51 @@ if (!window.VideoDecoder || !window.MP4Box) {
 
 ## Memory Management
 
-### 1. Resource Cleanup
+### 1. Resource Cleanup (SvelteKit onMount)
+
 ```javascript
-// ✅ Good: Proper cleanup in onDestroy
-onDestroy(() => {
-  window.removeEventListener('resize', handleResize);
-  cancelAnimationFrame(animationFrameId);
-  if (renderer) renderer.dispose();
-  if (videoDecoder) videoDecoder.close();
-  if (mp4boxfile) mp4boxfile.stop();
+// ✅ Good: Proper cleanup in onMount return function (SvelteKit pattern)
+import { onMount } from 'svelte';
+
+onMount(() => {
+  // Initialize WebCodecs decoder (browser-only)
+  const videoDecoder = new VideoDecoder({ ... });
+  
+  // Setup render loop
+  function render() { ... }
+  render();
+  
+  // Cleanup function returned from onMount
+  return () => {
+    cancelAnimationFrame(animationFrameId);
+    if (renderer) renderer.dispose();
+    if (texture) texture.dispose();
+    if (videoDecoder && videoDecoder.state !== 'closed') {
+      videoDecoder.close();
+    }
+    if (mp4boxfile) mp4boxfile.stop();
+  };
 });
 ```
 
-### 2. VideoFrame Management
+### 2. ImageBitmap Management
+
 ```javascript
-// ✅ Good: Always close VideoFrames
-function onVideoFrame(frame) {
-  // Use frame
-  mesh.material.uniforms.u_texture.value.image = frame;
-  mesh.material.uniforms.u_texture.value.needsUpdate = true;
-  // ✅ CRITICAL: Close frame
-  frame.close();
+// ✅ Good: ImageBitmap cleanup in frame buffer dispose
+dispose() {
+  // Close all ImageBitmaps to free GPU memory
+  for (const [_, frames] of this.clips) {
+    for (const frame of frames) {
+      if (frame && typeof frame.close === 'function') {
+        frame.close(); // ImageBitmap.close() frees GPU memory
+      }
+    }
+  }
+  this.clips.clear();
 }
 ```
+
+**Note:** VideoFrames are closed immediately after ImageBitmap conversion during decoding. ImageBitmaps are closed when the frame buffer is disposed.
 
 ## Performance Optimizations
 
@@ -314,28 +367,36 @@ camera = new THREE.OrthographicCamera(-width/2, width/2, height/2, -height/2, 0.
 
 For seamless retiming, speed ramps, and jump cuts, use the pre-decoded frame buffer approach:
 
-### 1. Frame Buffer Setup
-```javascript
-import { FrameBuffer } from '$lib/frame-buffer.js';
+### 1. Frame Buffer Setup (WebCodecs with ImageBitmap)
 
-const frameBuffer = new FrameBuffer();
+```javascript
+import { WebCodecsFrameBuffer } from '$lib/webcodecs-frame-buffer.js';
+
+// Create frame buffer instance
+const frameBuffer = new WebCodecsFrameBuffer({ targetFps: 24 });
 
 // Pre-decode all videos with progress callback
+// VideoFrames are converted to ImageBitmaps and stored
 await frameBuffer.preloadClips(videoFiles, (progress, status) => {
   console.log(`${status}: ${(progress * 100).toFixed(0)}%`);
 });
 
 console.log(`Ready: ${frameBuffer.totalFrames} frames`);
+console.log(`Output dimensions: ${frameBuffer.outputWidth}x${frameBuffer.outputHeight}`);
 ```
 
-### 2. Frame Access
-```javascript
-// ✅ Good: Random access to any frame
-const frame = frameBuffer.getFrame(globalFrameIndex);
-const localFrame = frameBuffer.getFrameAt(clipIndex, localFrameIndex);
+### 2. Frame Access (ImageBitmap)
 
-// ✅ Good: Jump to specific clip
-frameBuffer.seekToClip(clipIndex);
+```javascript
+// ✅ Good: Random access to any frame (returns ImageBitmap)
+const bitmap = frameBuffer.getFrame(globalFrameIndex);
+const localBitmap = frameBuffer.getFrameAt(clipIndex, localFrameIndex);
+
+// ImageBitmap can be used directly with Three.js textures
+if (bitmap) {
+  texture.image = bitmap;
+  texture.needsUpdate = true;
+}
 ```
 
 ### 3. ShaderPlayer Integration
@@ -418,10 +479,53 @@ if (bassLevel > beatSensitivity) {
 - **Markers**: Press M to add marker at playhead
 - **Snap to beats**: Toggle for beat-aligned editing
 
+## Vite Configuration
+
+### Required: mp4box Exclusion
+
+**Critical:** mp4box must be excluded from Vite's dependency optimization:
+
+```javascript
+// vite.config.js
+export default defineConfig({
+  optimizeDeps: {
+    exclude: ['mp4box'] // Prevent Vite from pre-bundling (required for ESM compatibility)
+  },
+  // ... rest of config
+});
+```
+
+**Why?** mp4box uses ESM and requires raw module loading. Vite's pre-bundling can cause resolution errors or HMR issues.
+
+## SvelteKit SSR Patterns
+
+### All WebCodecs Code Must Be in onMount
+
+```javascript
+// ✅ Correct: WebCodecs in onMount (browser-only)
+import { onMount } from 'svelte';
+
+onMount(() => {
+  // Safe to use WebCodecs APIs here
+  if (typeof window !== 'undefined' && window.VideoDecoder) {
+    const decoder = new VideoDecoder({ ... });
+    // ... setup code
+  }
+  
+  return () => {
+    // Cleanup
+  };
+});
+
+// ❌ Incorrect: WebCodecs at top level breaks SSR
+const decoder = new VideoDecoder({ ... }); // Error: window is not defined
+```
+
 ## References
 - [ShaderPlayer.svelte](mdc:src/lib/ShaderPlayer.svelte)
-- [frame-buffer.js](mdc:src/lib/frame-buffer.js)
+- [webcodecs-frame-buffer.js](mdc:src/lib/webcodecs-frame-buffer.js) - WebCodecs + ImageBitmap implementation
 - [WaveformDisplay.svelte](mdc:src/lib/WaveformDisplay.svelte)
 - [audio-utils.js](mdc:src/lib/audio-utils.js)
 - [essentia-service.js](mdc:src/lib/essentia-service.js)
+- [webcodecs-api.mdc](mdc:.cursor/rules/webcodecs-api.mdc) - WebCodecs API best practices
 - [stack-and-dependencies.mdc](mdc:.cursor/rules/stack-and-dependencies.mdc)
