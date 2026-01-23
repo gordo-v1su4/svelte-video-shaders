@@ -1,0 +1,137 @@
+---
+description: Package manager usage - Bun only, never npm/pnpm/yarn
+globs:
+alwaysApply: true
+---
+# Package Manager: Bun Only
+
+**CRITICAL RULE:** This project **MUST** use **Bun** as the package manager. Never use npm, pnpm, yarn, or any other package manager.
+
+## Why Bun?
+
+- **Speed**: 10-100x faster than npm for installs
+- **Native TypeScript**: No transpilation needed
+- **Built-in bundler**: Faster builds
+- **Better compatibility**: Works seamlessly with SvelteKit and Vite
+- **Project requirement**: `package.json` specifies `"packageManager": "bun@1.3.3"`
+
+## Required Commands
+
+**Always use Bun commands:**
+
+```bash
+# ✅ CORRECT: Use bun
+bun install
+bun add <package>
+bun add -d <package>  # dev dependency
+bun remove <package>
+bun run <script>
+bun run dev
+bun run build
+bun run test
+
+# ❌ NEVER USE:
+npm install
+npm install <package>
+npm run dev
+npx <command>
+pnpm install
+yarn install
+```
+
+## Package Manager Detection
+
+The project enforces Bun usage via `package.json`:
+
+```json
+{
+  "packageManager": "bun@1.3.3"
+}
+```
+
+This tells package managers (like Corepack) to use Bun automatically.
+
+## Common Tasks
+
+### Installing Dependencies
+```bash
+# ✅ Correct
+bun install
+
+# ❌ Wrong
+npm install
+pnpm install
+yarn install
+```
+
+### Adding a Package
+```bash
+# ✅ Correct
+bun add three
+bun add -d @types/three
+
+# ❌ Wrong
+npm install three
+npm install --save-dev @types/three
+```
+
+### Running Scripts
+```bash
+# ✅ Correct
+bun run dev
+bun run build
+bun run test
+
+# ❌ Wrong
+npm run dev
+npm run build
+npm run test
+```
+
+### Running Binaries
+```bash
+# ✅ Correct
+bunx playwright install
+bunx storybook dev
+
+# ❌ Wrong
+npx playwright install
+npx storybook dev
+```
+
+## Documentation Updates
+
+**When writing documentation, README files, or comments:**
+
+- ✅ Always use `bun install`, `bun run dev`, etc.
+- ❌ Never mention npm, pnpm, or yarn commands
+- ✅ Reference Bun in setup instructions
+- ✅ Use `bunx` instead of `npx` for running binaries
+
+## Error Prevention
+
+If you see npm/pnpm/yarn commands in:
+- README files
+- Documentation
+- Code comments
+- Script files
+- CI/CD configurations
+
+**Replace them immediately with Bun equivalents.**
+
+## Verification
+
+Check that Bun is being used:
+```bash
+# Verify Bun version
+bun --version
+
+# Check package manager lock file
+# Should see: bun.lock (NOT package-lock.json, yarn.lock, or pnpm-lock.yaml)
+```
+
+## References
+
+- [Bun Documentation](https://bun.sh/docs)
+- [package.json](mdc:package.json) - Contains `packageManager` field
+- [stack-and-dependencies.mdc](mdc:.cursor/rules/stack-and-dependencies.mdc) - Project stack overview
