@@ -33,11 +33,13 @@
 	let playbackSpeed = 1.0;
 	let lastRenderTime = 0;
 	let accumulatedTime = 0;
+	let isExternallyControlled = false; // When true, render loop skips frame advancement (setAudioTime controls it)
 	
 	// Clip-based playback (for video cycling)
 	let currentClipIndex = 0;
 	let clipLocalFrame = 0; // Frame within current clip
-	let clipStartAudioTime = 0; // Audio time when this clip started
+	let clipStartAudioTime = 0; // Real audio time when this clip started (for marker detection)
+	let clipStartRampedTime = 0; // Remapped time when this clip started (for speed ramping)
 	let clipLoopCount = 0;
 	let hasSignaledClipEnd = false;
 
@@ -146,13 +148,16 @@
 		// Only advance frames if playing and buffer is ready
 		if (isPlaying && frameBuffer && frameBuffer.totalFrames > 0) {
 
-
-			// Accumulate time and advance frames
-			accumulatedTime += deltaTime * playbackSpeed;
-			const framesToAdvance = Math.floor(accumulatedTime / FRAME_DURATION_MS);
-			if (framesToAdvance > 0) {
-				globalFrameIndex += framesToAdvance;
-				accumulatedTime -= framesToAdvance * FRAME_DURATION_MS;
+			// Skip frame advancement if externally controlled (audio master mode)
+			// setAudioTime() will handle frame advancement in this case
+			if (!isExternallyControlled) {
+				// Accumulate time and advance frames
+				accumulatedTime += deltaTime * playbackSpeed;
+				const framesToAdvance = Math.floor(accumulatedTime / FRAME_DURATION_MS);
+				if (framesToAdvance > 0) {
+					globalFrameIndex += framesToAdvance;
+					accumulatedTime -= framesToAdvance * FRAME_DURATION_MS;
+				}
 			}
 
 			// Handle looping or stopping at end
@@ -303,7 +308,11 @@
 				accumulatedTime = 0;
 				frameBuffer.primeAroundFrame(globalFrameIndex);
 				if (latestSeek.audioTime !== null && latestSeek.audioTime !== undefined) {
-					clipStartAudioTime = latestSeek.audioTime;
+					clipStartAudioTime = latestSeek.audioTime; // Real audio time (for marker detection)
+					// Use remapped time if provided (for speed ramping), otherwise use real time
+					clipStartRampedTime = latestSeek.rampedTime !== null && latestSeek.rampedTime !== undefined 
+						? latestSeek.rampedTime 
+						: latestSeek.audioTime;
 				}
 			}
 		}
@@ -316,15 +325,15 @@
 		}
 	}
 
-	export function seekToClip(clipIndex, audioTime = null) {
+	export function seekToClip(clipIndex, audioTime = null, rampedTime = null) {
 		if (!frameBuffer) return;
 		
 		// Add to queue for queue management
-		seekQueue.push({ type: 'seekToClip', clipIndex, audioTime });
+		seekQueue.push({ type: 'seekToClip', clipIndex, audioTime, rampedTime });
 		
 		// If queue is too long, skip to latest
 		if (seekQueue.length > 3) {
-			seekQueue = [{ type: 'seekToClip', clipIndex, audioTime }]; // Keep only the latest
+			seekQueue = [{ type: 'seekToClip', clipIndex, audioTime, rampedTime }]; // Keep only the latest
 		}
 		
 		processSeekQueue();
@@ -332,6 +341,8 @@
 
 	export function setSpeed(speed) {
 		playbackSpeed = speed;
+		// When using setSpeed (not setAudioTime), we're in internal control mode
+		isExternallyControlled = false;
 	}
 
 	export function jumpFrames(delta) {
@@ -360,6 +371,9 @@
 	export function setAudioTime(audioTimeSeconds, fps = 24) {
 		if (!frameBuffer || frameBuffer.totalFrames === 0) return 0;
 		
+		// Mark as externally controlled to prevent render loop from advancing frames
+		isExternallyControlled = true;
+		
 		// Get current clip info
 		const clipInfo = frameBuffer.getClipInfo(currentClipIndex);
 		if (!clipInfo) {
@@ -370,8 +384,14 @@
 			return globalFrameIndex;
 		}
 		
-		// Calculate time elapsed since this clip started
-		const elapsedTime = Math.max(0, audioTimeSeconds - clipStartAudioTime);
+		// Update clipStartRampedTime if this is the first call after clip switch
+		// (when audioTimeSeconds is close to clipStartAudioTime, sync the remapped start time)
+		if (Math.abs(audioTimeSeconds - clipStartAudioTime) < 0.1) {
+			clipStartRampedTime = audioTimeSeconds;
+		}
+		
+		// Calculate time elapsed since this clip started (use remapped time for looping)
+		const elapsedTime = Math.max(0, audioTimeSeconds - clipStartRampedTime);
 		const clipDurationSeconds = clipInfo.frameCount / fps;
 		const maxClipFrame = clipInfo.frameCount - 1;
 		if (elapsedTime < clipDurationSeconds) {

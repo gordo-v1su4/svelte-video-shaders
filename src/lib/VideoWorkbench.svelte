@@ -1233,7 +1233,9 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		
 		activeVideo.set(nextVid);
 		// Pass current audio time so clip knows when it started
-		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime);
+		// If speed ramping is active, also pass remapped time for proper clip looping
+		const clipStartTime = enableSpeedRamping && audioMasterEnabled ? audioRampedTime : audioCurrentTime;
+		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, clipStartTime);
 	}
 
 	function previousVideo() {
