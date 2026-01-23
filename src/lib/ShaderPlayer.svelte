@@ -105,7 +105,7 @@
 		renderer.setSize(854, 480, false);
 		mesh.scale.set(1, 1, 1);
 
-		// Create texture once (image set to VideoFrame per render)
+		// Create texture once (image set to ImageBitmap per render)
 		texture = new THREE.Texture();
 		texture.minFilter = THREE.LinearFilter;
 		texture.magFilter = THREE.LinearFilter;
@@ -113,6 +113,8 @@
 		texture.wrapT = THREE.ClampToEdgeWrapping;
 		texture.format = THREE.RGBAFormat;
 		texture.generateMipmaps = false;
+		// ImageBitmap needs flipY = true to display correctly (opposite of VideoFrame)
+		texture.flipY = true;
 		material.uniforms.u_texture.value = texture;
 
 		// Start render loop
@@ -204,8 +206,6 @@
 				if (OUTPUT_WIDTH !== frameBuffer.outputWidth || OUTPUT_HEIGHT !== frameBuffer.outputHeight) {
 					OUTPUT_WIDTH = frameBuffer.outputWidth;
 					OUTPUT_HEIGHT = frameBuffer.outputHeight;
-					textureCanvas.width = OUTPUT_WIDTH;
-					textureCanvas.height = OUTPUT_HEIGHT;
 					// Update resolution uniform directly on material (don't trigger bindable update)
 					if (material?.uniforms?.u_resolution) {
 						if (material.uniforms.u_resolution.value instanceof THREE.Vector2) {
