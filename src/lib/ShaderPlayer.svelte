@@ -51,7 +51,8 @@
 	const vertexShader = `
 		varying vec2 v_uv;
 		void main() {
-			v_uv = uv;
+			// Flip V coordinate for ImageBitmap (opposite of VideoFrame)
+			v_uv = vec2(uv.x, 1.0 - uv.y);
 			gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 		}
 	`;
@@ -113,8 +114,8 @@
 		texture.wrapT = THREE.ClampToEdgeWrapping;
 		texture.format = THREE.RGBAFormat;
 		texture.generateMipmaps = false;
-		// ImageBitmap needs flipY = true to display correctly (opposite of VideoFrame)
-		texture.flipY = true;
+		// ImageBitmap coordinate system - UV flip handled in shader
+		texture.flipY = false;
 		material.uniforms.u_texture.value = texture;
 
 		// Start render loop
