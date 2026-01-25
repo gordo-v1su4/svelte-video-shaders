@@ -1,9 +1,11 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import { playwright } from '@vitest/browser-playwright';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig(({ ssrBuild }) => ({
 	plugins: [
+		tailwindcss(),
 		sveltekit(),
 		{
 			name: 'configure-response-headers',

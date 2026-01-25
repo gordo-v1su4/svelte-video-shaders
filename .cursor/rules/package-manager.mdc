@@ -1,4 +1,4 @@
----
+---                                                                                                                       
 description: Package manager usage - Bun only, never npm/pnpm/yarn
 globs:
 alwaysApply: true
