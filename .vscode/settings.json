@@ -21,5 +21,13 @@
 		"reportMissingModuleSource": "none",
 		"reportMissingTypeStubs": "none"
 	},
-	"cursorpyright.analysis.typeCheckingMode": "basic"
+	"cursorpyright.analysis.typeCheckingMode": "basic",
+	"files.exclude": {
+		"**/clerk-dark-mode/**": true
+	},
+	"search.exclude": {
+		"**/clerk-dark-mode/**": true
+	},
+	"typescript.preferences.excludePackageJsonAutoImports": "off",
+	"typescript.tsserver.experimental.enableProjectDiagnostics": false
 }

@@ -2,11 +2,19 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import { playwright } from '@vitest/browser-playwright';
 import tailwindcss from '@tailwindcss/vite';
+import { visualizer } from 'rollup-plugin-visualizer';
 
 export default defineConfig(({ ssrBuild }) => ({
 	plugins: [
 		tailwindcss(),
 		sveltekit(),
+		// Visualizer only for client builds
+		!ssrBuild && visualizer({
+			filename: 'stats.html',
+			gzipSize: true,
+			brotliSize: true,
+			open: false
+		}),
 		{
 			name: 'configure-response-headers',
 			configureServer: (server) => {
@@ -50,29 +58,38 @@ export default defineConfig(({ ssrBuild }) => ({
 								return;
 							}
 							
-							// Three.js - large 3D library (check for package name)
-							if (normalizedId.includes('/three') && !normalizedId.includes('/three-')) {
+							// Clerk - authentication library (check first, most specific)
+							if (normalizedId.includes('@clerk/clerk-js') || 
+							    normalizedId.includes('@clerk/')) {
+								return 'vendor-clerk';
+							}
+							
+							// Three.js - large 3D library
+							if (normalizedId.includes('/three/build/') ||
+							    normalizedId.includes('/three/src/') ||
+							    (normalizedId.includes('/three') && !normalizedId.includes('/three-'))) {
 								return 'vendor-three';
 							}
 							
+							// MediaBunny - media demuxing library (split into its own chunk)
+							if (normalizedId.includes('/mediabunny/')) {
+								return 'vendor-mediabunny';
+							}
+							
 							// Peaks.js - audio waveform library
-							if (normalizedId.includes('/peaks.js')) {
+							if (normalizedId.includes('/peaks.js/')) {
 								return 'vendor-peaks';
 							}
 							
 							// Essentia.js - audio analysis library
-							if (normalizedId.includes('/essentia.js')) {
+							if (normalizedId.includes('/essentia.js/')) {
 								return 'vendor-essentia';
 							}
 							
-							// Clerk - authentication library
-							if (normalizedId.includes('/@clerk/')) {
-								return 'vendor-clerk';
-							}
-							
-							// Tweakpane - UI controls library
-							if (normalizedId.includes('/svelte-tweakpane-ui') ||
-							    normalizedId.includes('/tweakpane')) {
+							// Tweakpane - UI controls library (including @tweakpane/core)
+							if (normalizedId.includes('/svelte-tweakpane-ui/') ||
+							    normalizedId.includes('/tweakpane/dist/') ||
+							    normalizedId.includes('/@tweakpane/')) {
 								return 'vendor-tweakpane';
 							}
 							
@@ -84,15 +101,15 @@ export default defineConfig(({ ssrBuild }) => ({
 								return 'vendor-ui';
 							}
 							
-							// Media libraries
-							if (normalizedId.includes('/mediabunny/') ||
-							    normalizedId.includes('/mp4box')) {
-								return 'vendor-media';
+							// MP4Box - video processing
+							if (normalizedId.includes('/mp4box')) {
+								return 'vendor-mp4box';
 							}
 							
 							// SvelteKit and Svelte core
 							if (normalizedId.includes('/@sveltejs/') ||
-							    normalizedId.includes('/svelte/')) {
+							    normalizedId.includes('/svelte/src/') ||
+							    normalizedId.includes('/svelte/internal/')) {
 								return 'vendor-svelte';
 							}
 							

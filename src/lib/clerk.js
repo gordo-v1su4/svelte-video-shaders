@@ -1,9 +1,18 @@
-import { Clerk } from '@clerk/clerk-js';
 import { writable } from 'svelte/store';
 import { browser } from '$app/environment';
 
 // Clerk instance store
 export const clerk = writable(null);
+
+// Lazy-load Clerk - only import when actually needed
+let ClerkClass = null;
+async function loadClerk() {
+	if (!ClerkClass) {
+		const clerkModule = await import('@clerk/clerk-js');
+		ClerkClass = clerkModule.Clerk;
+	}
+	return ClerkClass;
+}
 
 // Get the publishable key - use dynamic import to avoid build-time errors
 // Supports both SvelteKit naming (PUBLIC_) and Next.js naming (NEXT_PUBLIC_)
@@ -28,6 +37,7 @@ export async function initClerk() {
 	}
 
 	try {
+		const Clerk = await loadClerk();
 		const clerkInstance = new Clerk(publishableKey);
 		await clerkInstance.load();
 		clerk.set(clerkInstance);
