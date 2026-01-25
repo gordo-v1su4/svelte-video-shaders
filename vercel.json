@@ -1,5 +1,13 @@
 {
 	"buildCommand": "bun run build",
 	"outputDirectory": "build",
-	"framework": "sveltekit"
+	"routes": [
+		{
+			"handle": "filesystem"
+		},
+		{
+			"src": "/(.*)",
+			"dest": "/index.html"
+		}
+	]
 }
