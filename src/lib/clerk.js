@@ -1,22 +1,34 @@
 import { Clerk } from '@clerk/clerk-js';
 import { writable } from 'svelte/store';
 import { browser } from '$app/environment';
-import { PUBLIC_CLERK_PUBLISHABLE_KEY } from '$env/static/public';
 
 // Clerk instance store
 export const clerk = writable(null);
+
+// Get the publishable key - use dynamic import to avoid build-time errors
+// Supports both SvelteKit naming (PUBLIC_) and Next.js naming (NEXT_PUBLIC_)
+async function getPublishableKey() {
+	try {
+		const { env } = await import('$env/dynamic/public');
+		return env.PUBLIC_CLERK_PUBLISHABLE_KEY || env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+	} catch {
+		return null;
+	}
+}
 
 // Initialize Clerk
 export async function initClerk() {
 	if (!browser) return null;
 	
-	if (!PUBLIC_CLERK_PUBLISHABLE_KEY) {
-		console.error('[Clerk] PUBLIC_CLERK_PUBLISHABLE_KEY is not set');
+	const publishableKey = await getPublishableKey();
+	
+	if (!publishableKey) {
+		console.error('[Clerk] PUBLIC_CLERK_PUBLISHABLE_KEY is not set. Add it to your environment variables.');
 		return null;
 	}
 
 	try {
-		const clerkInstance = new Clerk(PUBLIC_CLERK_PUBLISHABLE_KEY);
+		const clerkInstance = new Clerk(publishableKey);
 		await clerkInstance.load();
 		clerk.set(clerkInstance);
 		return clerkInstance;
