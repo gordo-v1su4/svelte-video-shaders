@@ -27,6 +27,8 @@
 	let renderer, scene, camera, material, mesh;
 	let texture = null;
 	let animationFrameId;
+	let lastTextureWidth = 0;
+	let lastTextureHeight = 0;
 
 	// Playback state - this is the heart of retiming
 	let globalFrameIndex = 0;
@@ -206,6 +208,19 @@
 			// Get current frame from buffer (VideoFrame - GPU-resident)
 			const videoFrame = frameBuffer.getFrame(globalFrameIndex);
 			if (videoFrame) {
+				// Check if frame dimensions changed - force WebGL texture reallocation
+				const frameWidth = videoFrame.width;
+				const frameHeight = videoFrame.height;
+				if (frameWidth !== lastTextureWidth || frameHeight !== lastTextureHeight) {
+					// Delete the WebGL texture directly to force reallocation (faster than recreating THREE.Texture)
+					const properties = renderer.properties.get(texture);
+					if (properties?.__webglTexture) {
+						renderer.getContext().deleteTexture(properties.__webglTexture);
+						properties.__webglTexture = undefined;
+					}
+					lastTextureWidth = frameWidth;
+					lastTextureHeight = frameHeight;
+				}
 				texture.image = videoFrame;
 				texture.needsUpdate = true;
 				isReady = true;
@@ -231,6 +246,19 @@
 			frameBuffer.primeAroundFrame(globalFrameIndex);
 			const videoFrame = frameBuffer.getFrame(globalFrameIndex);
 			if (videoFrame) {
+				// Check if frame dimensions changed - force WebGL texture reallocation
+				const frameWidth = videoFrame.width;
+				const frameHeight = videoFrame.height;
+				if (frameWidth !== lastTextureWidth || frameHeight !== lastTextureHeight) {
+					// Delete the WebGL texture directly to force reallocation (faster than recreating THREE.Texture)
+					const properties = renderer.properties.get(texture);
+					if (properties?.__webglTexture) {
+						renderer.getContext().deleteTexture(properties.__webglTexture);
+						properties.__webglTexture = undefined;
+					}
+					lastTextureWidth = frameWidth;
+					lastTextureHeight = frameHeight;
+				}
 				texture.image = videoFrame;
 				texture.needsUpdate = true;
 				if (!isReady) {

@@ -16,6 +16,7 @@
 		showOnsets = $bindable(true), // Toggle for showing Essentia onsets
 		showMIDIMarkers = $bindable(true), // Toggle for showing MIDI markers
 		sections = [], // Song structure sections (intro, verse, chorus, etc.)
+		loopSectionIndex = -1, // Index of section being looped (-1 = none)
 		currentTime = $bindable(0),
 		duration = $bindable(0),
 		isPlaying = $bindable(false),
@@ -235,7 +236,7 @@
 			renderMarkersSync(showOnsets, showMIDIMarkers, onsets, midiMarkers, grid);
 			
 			// Render section overlays if available
-			renderSections(sections);
+			renderSections(sections, loopSectionIndex);
 		});
 	}
 
@@ -271,13 +272,14 @@
 			const _sectionsFp = sectionsFingerprint;
 			const _showOnsets = showOnsets;
 			const _showMIDI = showMIDIMarkers;
+			const _loopSectionIndex = loopSectionIndex;
 			
 			// Capture current array values to avoid stale closures
 			const currentOnsets = onsets ? [...onsets] : [];
 			const currentMidi = midiMarkers ? [...midiMarkers] : [];
 			const currentGrid = grid ? [...grid] : [];
 			
-			console.log(`[PeaksPlayer] $effect triggered: onsetsFp=${_onsetsFp}, midiFp=${_midiFp}, showOnsets=${_showOnsets}, showMIDI=${_showMIDI}`);
+			console.log(`[PeaksPlayer] $effect triggered: onsetsFp=${_onsetsFp}, midiFp=${_midiFp}, showOnsets=${_showOnsets}, showMIDI=${_showMIDI}, loopSectionIndex=${_loopSectionIndex}`);
 			
 			// Increment version and render synchronously
 			renderVersion++;
@@ -285,9 +287,9 @@
 			// Render with captured values to avoid stale closure issues
 			renderMarkersSync(_showOnsets, _showMIDI, currentOnsets, currentMidi, currentGrid);
 			
-			// Re-render sections when they change
+			// Re-render sections when they change or loopSectionIndex changes
 			if (_sectionsFp !== 'empty') {
-				renderSections(sections);
+				renderSections(sections, _loopSectionIndex);
 			}
 		}
 	});
@@ -358,7 +360,7 @@
 			console.log(`[PeaksPlayer] ❌ Skipping onsets: show=${shouldShowOnsets}, count=${onsetData?.length || 0}`);
 		}
 
-        // 3. MIDI Markers (Blue) - reduced opacity
+        // 3. MIDI Markers (Blue) - match onset opacity
 		if (shouldShowMIDI && midiData && midiData.length > 0) {
 			console.log(`[PeaksPlayer] ✅ Adding ${midiData.length} MIDI markers`);
 			midiData.forEach((time, i) => {
@@ -368,7 +370,7 @@
 						time: pointTime,
 						labelText: '',
 						editable: false,
-						color: 'rgba(100, 200, 255, 0.3)',  // 30% opacity blue
+						color: 'rgba(100, 200, 255, 0.25)',  // 25% opacity blue (matches onset opacity)
 					});
 				}
 			});
@@ -440,7 +442,7 @@
 		}
 	}
 	
-	function renderSections(sectionsData) {
+	function renderSections(sectionsData, activeLoopIndex = -1) {
 		if (!peaksInstance || !sectionsData || sectionsData.length === 0) {
 			return;
 		}
@@ -467,8 +469,23 @@
 			'default': 'rgba(200, 200, 200, 0.25)'
 		};
 		
+		// Highlight color for looped section - brighter and more vibrant
+		const loopHighlightColor = 'rgba(0, 255, 200, 0.6)'; // Cyan highlight
+		
 		try {
 			sectionsData.forEach((section, index) => {
+				// Validate section times
+				if (!section || typeof section.start !== 'number' || typeof section.end !== 'number') {
+					console.warn(`[PeaksPlayer] Invalid section at index ${index}:`, section);
+					return;
+				}
+				
+				// Ensure end time is after start time
+				if (section.end <= section.start) {
+					console.warn(`[PeaksPlayer] Section ${index} has invalid time range: ${section.start} - ${section.end}`);
+					return;
+				}
+				
 				const label = section.label?.toLowerCase() || '';
 				let color = sectionColors.default;
 				
@@ -480,17 +497,70 @@
 					}
 				}
 				
-				peaksInstance.segments.add({
+				// If this section is being looped, use highlight color
+				const isLooped = activeLoopIndex >= 0 && index === activeLoopIndex;
+				const finalColor = isLooped ? loopHighlightColor : color;
+				
+				// Add emoji or indicator to label if looped
+				const labelText = isLooped 
+					? `🔁 ${section.label.toUpperCase()}` 
+					: section.label.toUpperCase();
+				
+				// Create segment with explicit times - ensure we're only highlighting this specific section
+				const segmentConfig = {
 					id: `section-${index}`,
 					startTime: section.start,
 					endTime: section.end,
-					labelText: section.label.toUpperCase(),
-					color: color,
+					labelText: labelText,
+					color: finalColor,
 					editable: false
-				});
+				};
+				
+				// Add data attribute for CSS targeting if looped
+				if (isLooped) {
+					segmentConfig.data = { isLooped: true };
+				}
+				
+				peaksInstance.segments.add(segmentConfig);
 			});
 			
-			console.log(`[PeaksPlayer] ✅ Added ${sectionsData.length} section segments`);
+			console.log(`[PeaksPlayer] ✅ Added ${sectionsData.length} section segments${activeLoopIndex >= 0 ? ` (looping section ${activeLoopIndex})` : ''}`);
+			
+			// Update label colors for looped sections after a short delay to allow DOM to update
+			if (activeLoopIndex >= 0) {
+				setTimeout(() => {
+					try {
+						const zoomEl = document.querySelector(`#${zoomId}`);
+						const overviewEl = document.querySelector(`#${overviewId}`);
+						
+						// Find segment labels that contain the loop emoji and style them
+						[zoomEl, overviewEl].forEach(container => {
+							if (!container) return;
+							
+							// Peaks.js creates segment labels in SVG text elements
+							const textElements = container.querySelectorAll('text');
+							textElements.forEach(textEl => {
+								if (textEl.textContent?.includes('🔁')) {
+									textEl.setAttribute('fill', '#00ffc8');
+									textEl.style.fill = '#00ffc8';
+									textEl.style.fontWeight = '600';
+								}
+							});
+							
+							// Also check for segment overlay labels in div elements
+							const labelDivs = container.querySelectorAll('[class*="label"], [class*="segment"]');
+							labelDivs.forEach(div => {
+								if (div.textContent?.includes('🔁')) {
+									div.style.color = '#00ffc8';
+									div.style.fontWeight = '600';
+								}
+							});
+						});
+					} catch (e) {
+						console.warn('[PeaksPlayer] Error updating label colors:', e);
+					}
+				}, 100);
+			}
 			
 			// Also reduce marker opacity in overview after sections are added
 			// Use multiple attempts with increasing delays
@@ -688,6 +758,8 @@
 		id={zoomId}
 		class="peaks-zoomview"
 		style:height="{zoomHeight}px"
+		role="img"
+		aria-label="Audio waveform zoom view"
 		onmousemove={(event) => updatePreview(event, 'zoomview', zoomviewContainer)}
 		onmouseleave={clearPreview}
 	>
@@ -707,6 +779,8 @@
 		id={overviewId}
 		class="peaks-overview"
 		style:height="{overviewHeight}px"
+		role="img"
+		aria-label="Audio waveform overview"
 		onmousemove={(event) => updatePreview(event, 'overview', overviewContainer)}
 		onmouseleave={clearPreview}
 	>
@@ -981,6 +1055,20 @@
         font-size: 0.85rem;
         transition: background 0.2s;
     }
+
+	/* Style for looped section labels - make them cyan to match the highlight */
+	/* Target Peaks.js segment labels that contain the loop emoji */
+	:global(.peaks-segment-label),
+	:global([class*="peaks-segment"][class*="label"]) {
+		transition: color 0.2s ease;
+	}
+	
+	/* Use attribute selector to target segments with loop emoji in label */
+	:global(.peaks-segment[data-is-looped="true"] .peaks-segment-label) {
+		color: #00ffc8 !important;
+		fill: #00ffc8 !important;
+		font-weight: 600 !important;
+	}
 
     .controls-toolbar button:hover {
         background: #444;

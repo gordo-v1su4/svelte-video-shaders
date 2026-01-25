@@ -118,11 +118,27 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			.filter(t => !isNaN(t) && t >= 0)
 			.filter(t => !audioDuration || t <= audioDuration);
 		
-		// Apply density filtering (keep every Nth marker based on density)
+		// Apply density filtering using time-interval approach (same as onset density)
 		if (density < 1.0) {
-			const keepRatio = density;
-			const step = Math.max(1, Math.round(1 / keepRatio));
-			markers = markers.filter((_, i) => i % step === 0);
+			const bpm = analysisData.bpm > 0 ? analysisData.bpm : 120;
+			const secondsPerBeat = 60 / bpm;
+			const interval32 = secondsPerBeat / 8; // 1/32 note duration
+			
+			// Map density slider (0.0-1.0) to interval multiplier
+			const scaler = 1 + (1 - density) * 31;
+			const effectiveMinInterval = interval32 * scaler;
+			
+			let result = [];
+			let lastTime = -effectiveMinInterval; // Ensure first can be picked
+			
+			for (const marker of markers) {
+				if (marker - lastTime >= effectiveMinInterval) {
+					result.push(marker);
+					lastTime = marker;
+				}
+			}
+			
+			markers = result;
 		}
 		
 		// Apply random skip
@@ -2500,8 +2516,9 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 			<!-- Section Loop Dropdown -->
 			{#if analysisData.structure?.sections?.length > 0}
 				<div class="section-loop-controls">
-					<label class="section-loop-label">Loop Section:</label>
+					<label class="section-loop-label" for="section-loop-select">Loop Section:</label>
 					<select 
+						id="section-loop-select"
 						class="section-loop-dropdown"
 						bind:value={loopSectionIndex}
 						onchange={handleSectionLoopChange}
@@ -2529,6 +2546,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				bind:showMIDIMarkers={showMIDIMarkers}
 				segments={[]} 
 				sections={analysisData.structure?.sections || []}
+				loopSectionIndex={loopSectionIndex}
 				grid={gridMarkers}
 				onRestart={restartPlayback}
 				onNextVideo={nextVideo}
@@ -2622,7 +2640,6 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 	}
 	.placeholder { text-align: center; }
 	.playback-controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
-	.thumbnail-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-bottom: 1rem; }
 	.thumbnail-button { background-color: #333; border: 2px solid #444; border-radius: 4px; padding: 0; cursor: pointer; transition: all 0.2s ease; font-family: inherit; color: inherit; width: 100%; aspect-ratio: 16 / 9; background-size: cover; background-position: center; position: relative; display: flex; align-items: flex-end; justify-content: center; }
 	.thumbnail-button:hover { border-color: #666; }
 	.thumbnail-button.active { border-color: #00aaff; }

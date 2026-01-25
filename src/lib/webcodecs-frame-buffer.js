@@ -172,9 +172,10 @@ export class WebCodecsFrameBuffer {
 			let videoDecoder = null;
 
 			let decoderClosed = false;
+			let flushInProgress = false;
 			
 			const checkComplete = () => {
-				if (allSamplesExtracted && frames.length >= totalSamples && !decoderClosed) {
+				if (allSamplesExtracted && frames.length >= totalSamples && !decoderClosed && !flushInProgress) {
 					decoderClosed = true;
 					try {
 						videoDecoder?.close();
@@ -275,8 +276,10 @@ export class WebCodecsFrameBuffer {
 				if (samplesSubmitted >= totalSamples && !allSamplesExtracted) {
 					allSamplesExtracted = true;
 					console.log('[WebCodecsFrameBuffer] All samples submitted, flushing decoder...');
+					flushInProgress = true;
 					// Flush decoder to ensure all frames are output
 					videoDecoder?.flush().then(() => {
+						flushInProgress = false;
 						console.log(`[WebCodecsFrameBuffer] Flush complete, ${frames.length}/${totalSamples} frames decoded`);
 						// Wait a bit more for any remaining frames, then check completion
 						const waitForFrames = () => {
@@ -307,7 +310,14 @@ export class WebCodecsFrameBuffer {
 						};
 						waitForFrames();
 					}).catch((e) => {
-						console.error('[WebCodecsFrameBuffer] Flush failed:', e);
+						flushInProgress = false;
+						// Check if error is due to decoder being closed (expected race condition)
+						if (e.name === 'AbortError' && e.message?.includes('close')) {
+							// This is expected when decoder closes before flush completes - not an error
+							console.log('[WebCodecsFrameBuffer] Flush aborted (decoder closed early, all frames already decoded)');
+						} else {
+							console.error('[WebCodecsFrameBuffer] Flush failed:', e);
+						}
 						// Still try to resolve with partial frames
 						if (frames.length > 0 && !decoderClosed) {
 							decoderClosed = true;
