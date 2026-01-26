@@ -12,9 +12,9 @@
 		onClipComplete = null
 	} = $props();
 
-	// Output dimensions (will match frame buffer)
-	let OUTPUT_WIDTH = 1920;
-	let OUTPUT_HEIGHT = 1080;
+	// Output dimensions (match frame buffer - 1280x720 max, 16:9 aspect)
+	let OUTPUT_WIDTH = 1280;
+	let OUTPUT_HEIGHT = 720;
 	const TARGET_FPS = 24;
 	const FRAME_DURATION_MS = 1000 / TARGET_FPS;
 
@@ -27,8 +27,6 @@
 	let renderer, scene, camera, material, mesh;
 	let texture = null;
 	let animationFrameId;
-	let lastTextureWidth = 0;
-	let lastTextureHeight = 0;
 
 	// Playback state - this is the heart of retiming
 	let globalFrameIndex = 0;
@@ -50,9 +48,7 @@
 	let beatIndex = 0;
 	let playbackStartTime = 0;
 
-	// Queue management for rapid seeks (prevents jitter during rapid clip swaps)
-	let seekQueue = [];
-	let isProcessingSeek = false;
+	// Clip switch is now instant (no queue needed for pre-decoded frames)
 
 	// VideoFrame-backed texture (WebCodecs, GPU-resident for maximum performance)
 
@@ -76,8 +72,12 @@
 	onMount(() => {
 		if (!canvas) return;
 
-		// Initialize Three.js
-		renderer = new THREE.WebGLRenderer({ canvas });
+		// Initialize Three.js with DPR clamping to avoid GPU memory spikes
+		// (especially important on high-DPI displays and mobile)
+		const maxDPR = Math.min(window.devicePixelRatio || 1, 2);
+		
+		renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+		renderer.setPixelRatio(maxDPR);
 		scene = new THREE.Scene();
 		camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
 		camera.position.z = 1;
@@ -148,13 +148,11 @@
 			material.uniforms.u_time.value = currentTime * 0.001;
 		}
 
-		// Only advance frames if playing and buffer is ready
-		if (isPlaying && frameBuffer && frameBuffer.totalFrames > 0) {
-
-			// Skip frame advancement if externally controlled (audio master mode)
-			// setAudioTime() will handle frame advancement in this case
-			if (!isExternallyControlled) {
-				// Accumulate time and advance frames
+		// Get frame and render - this is the hot path, keep it simple
+		if (frameBuffer && frameBuffer.totalFrames > 0) {
+			
+			// Advance frames if playing and NOT externally controlled
+			if (isPlaying && !isExternallyControlled) {
 				accumulatedTime += deltaTime * playbackSpeed;
 				const framesToAdvance = Math.floor(accumulatedTime / FRAME_DURATION_MS);
 				if (framesToAdvance > 0) {
@@ -163,111 +161,20 @@
 				}
 			}
 
-			// Handle looping or stopping at end
-			if (frameBuffer.totalFrames > 0) {
-				if (enableLooping) {
-					// Wrap globalFrameIndex for seamless looping
-					// Use modulo for positive wrapping (seamless loop)
-					globalFrameIndex = globalFrameIndex % frameBuffer.totalFrames;
-					// Handle negative indices (for reverse playback or glitch effects)
-					if (globalFrameIndex < 0) {
-						globalFrameIndex = globalFrameIndex + frameBuffer.totalFrames;
-					}
-				} else {
-					// No looping - clamp to valid range and stop at end
-					if (globalFrameIndex >= frameBuffer.totalFrames) {
-						globalFrameIndex = frameBuffer.totalFrames - 1;
-						// Stop playback when reaching the end
-						if (isPlaying) {
-							isPlaying = false;
-						}
-					} else if (globalFrameIndex < 0) {
-						globalFrameIndex = 0;
-					}
-				}
+			// Handle looping/clamping
+			if (enableLooping) {
+				globalFrameIndex = ((globalFrameIndex % frameBuffer.totalFrames) + frameBuffer.totalFrames) % frameBuffer.totalFrames;
+			} else {
+				globalFrameIndex = Math.max(0, Math.min(frameBuffer.totalFrames - 1, globalFrameIndex));
 			}
-			
-			// Update output dimensions from frame buffer if changed
-			if (frameBuffer.outputWidth && frameBuffer.outputHeight) {
-				if (OUTPUT_WIDTH !== frameBuffer.outputWidth || OUTPUT_HEIGHT !== frameBuffer.outputHeight) {
-					OUTPUT_WIDTH = frameBuffer.outputWidth;
-					OUTPUT_HEIGHT = frameBuffer.outputHeight;
-					// Update resolution uniform directly on material (don't trigger bindable update)
-					if (material?.uniforms?.u_resolution) {
-						if (material.uniforms.u_resolution.value instanceof THREE.Vector2) {
-							material.uniforms.u_resolution.value.set(OUTPUT_WIDTH, OUTPUT_HEIGHT);
-						} else {
-							material.uniforms.u_resolution.value = [OUTPUT_WIDTH, OUTPUT_HEIGHT];
-						}
-					}
-				}
-			}
-			
-			frameBuffer.primeAroundFrame(globalFrameIndex);
 
-			// Get current frame from buffer (VideoFrame - GPU-resident)
-			const videoFrame = frameBuffer.getFrame(globalFrameIndex);
-			if (videoFrame) {
-				// Check if frame dimensions changed - force WebGL texture reallocation
-				const frameWidth = videoFrame.width;
-				const frameHeight = videoFrame.height;
-				if (frameWidth !== lastTextureWidth || frameHeight !== lastTextureHeight) {
-					// Delete the WebGL texture directly to force reallocation (faster than recreating THREE.Texture)
-					const properties = renderer.properties.get(texture);
-					if (properties?.__webglTexture) {
-						renderer.getContext().deleteTexture(properties.__webglTexture);
-						properties.__webglTexture = undefined;
-					}
-					lastTextureWidth = frameWidth;
-					lastTextureHeight = frameHeight;
-				}
-				texture.image = videoFrame;
+			// Get frame directly from pre-decoded buffer (instant - no async)
+			const frame = frameBuffer.getFrame(globalFrameIndex);
+			if (frame) {
+				// Direct texture update - all frames are same size (1280x720)
+				texture.image = frame;
 				texture.needsUpdate = true;
 				isReady = true;
-			}
-		} else if (frameBuffer && frameBuffer.totalFrames > 0) {
-			// Not playing - still show the current frame (paused state)
-			// Update output dimensions from frame buffer if changed
-			if (frameBuffer.outputWidth && frameBuffer.outputHeight) {
-				if (OUTPUT_WIDTH !== frameBuffer.outputWidth || OUTPUT_HEIGHT !== frameBuffer.outputHeight) {
-					OUTPUT_WIDTH = frameBuffer.outputWidth;
-					OUTPUT_HEIGHT = frameBuffer.outputHeight;
-					// Update resolution uniform directly on material (don't trigger bindable update)
-					if (material?.uniforms?.u_resolution) {
-						if (material.uniforms.u_resolution.value instanceof THREE.Vector2) {
-							material.uniforms.u_resolution.value.set(OUTPUT_WIDTH, OUTPUT_HEIGHT);
-						} else {
-							material.uniforms.u_resolution.value = [OUTPUT_WIDTH, OUTPUT_HEIGHT];
-						}
-					}
-				}
-			}
-			
-			frameBuffer.primeAroundFrame(globalFrameIndex);
-			const videoFrame = frameBuffer.getFrame(globalFrameIndex);
-			if (videoFrame) {
-				// Check if frame dimensions changed - force WebGL texture reallocation
-				const frameWidth = videoFrame.width;
-				const frameHeight = videoFrame.height;
-				if (frameWidth !== lastTextureWidth || frameHeight !== lastTextureHeight) {
-					// Delete the WebGL texture directly to force reallocation (faster than recreating THREE.Texture)
-					const properties = renderer.properties.get(texture);
-					if (properties?.__webglTexture) {
-						renderer.getContext().deleteTexture(properties.__webglTexture);
-						properties.__webglTexture = undefined;
-					}
-					lastTextureWidth = frameWidth;
-					lastTextureHeight = frameHeight;
-				}
-				texture.image = videoFrame;
-				texture.needsUpdate = true;
-				if (!isReady) {
-					console.log('[ShaderPlayer] Paused render: Frame ready!', globalFrameIndex);
-					isReady = true;
-				}
-			} else {
-				// Throttle debug logs
-				if (Math.random() < 0.01) console.log('[ShaderPlayer] Paused render: Waiting for frame', globalFrameIndex);
 			}
 		}
 
@@ -298,75 +205,37 @@
 	}
 
 	export function seek(frameIndex) {
-		// Add to queue for queue management
-		seekQueue.push({ type: 'seek', frameIndex });
-		
-		// If queue is too long, skip to latest
-		if (seekQueue.length > 3) {
-			seekQueue = [{ type: 'seek', frameIndex }]; // Keep only the latest
-		}
-		
-		processSeekQueue();
-	}
-	
-	/**
-	 * Process seek queue - ensures only latest seek is executed if queue is too long
-	 * Prevents jitter during rapid clip swaps
-	 */
-	function processSeekQueue() {
-		if (isProcessingSeek || seekQueue.length === 0) return;
-		
-		isProcessingSeek = true;
-		const latestSeek = seekQueue.pop();
-		seekQueue = []; // Clear queue, we're processing the latest
-		
-		// Perform the seek operation
-		if (latestSeek.type === 'seek') {
-			globalFrameIndex = latestSeek.frameIndex;
-			accumulatedTime = 0;
-			frameBuffer?.primeAroundFrame(globalFrameIndex);
-		} else if (latestSeek.type === 'seekToClip') {
-			// Handle seekToClip directly (no queue needed, but keep for consistency)
-			const clipInfo = frameBuffer?.getClipInfo(latestSeek.clipIndex);
-			if (clipInfo) {
-				currentClipIndex = latestSeek.clipIndex;
-				clipLocalFrame = 0;
-				clipLoopCount = 0;
-				hasSignaledClipEnd = false;
-				globalFrameIndex = clipInfo.startFrame;
-				accumulatedTime = 0;
-				frameBuffer.primeAroundFrame(globalFrameIndex);
-				if (latestSeek.audioTime !== null && latestSeek.audioTime !== undefined) {
-					clipStartAudioTime = latestSeek.audioTime; // Real audio time (for marker detection)
-					// Use remapped time if provided (for speed ramping), otherwise use real time
-					clipStartRampedTime = latestSeek.rampedTime !== null && latestSeek.rampedTime !== undefined 
-						? latestSeek.rampedTime 
-						: latestSeek.audioTime;
-					jumpFrameOffset = 0; // Reset jump offset on clip switch
-				}
-			}
-		}
-		
-		isProcessingSeek = false;
-		
-		// Process any new seeks that arrived during processing
-		if (seekQueue.length > 0) {
-			processSeekQueue();
-		}
+		// Direct seek - instant for pre-decoded frames
+		globalFrameIndex = frameIndex;
+		accumulatedTime = 0;
 	}
 
+	/**
+	 * Switch to a different clip - INSTANT for pre-decoded frames
+	 * No queuing, no delays - just set the state directly
+	 */
 	export function seekToClip(clipIndex, audioTime = null, rampedTime = null) {
 		if (!frameBuffer) return;
 		
-		// Add to queue for queue management
-		seekQueue.push({ type: 'seekToClip', clipIndex, audioTime, rampedTime });
+		const clipInfo = frameBuffer.getClipInfo(clipIndex);
+		if (!clipInfo) return;
 		
-		// If queue is too long, skip to latest
-		if (seekQueue.length > 3) {
-			seekQueue = [{ type: 'seekToClip', clipIndex, audioTime, rampedTime }]; // Keep only the latest
+		// Instant state update - no async, no queuing
+		currentClipIndex = clipIndex;
+		clipLocalFrame = 0;
+		clipLoopCount = 0;
+		hasSignaledClipEnd = false;
+		globalFrameIndex = clipInfo.startFrame;
+		accumulatedTime = 0;
+		jumpFrameOffset = 0;
+		
+		// Set timing for audio sync
+		if (audioTime !== null && audioTime !== undefined) {
+			clipStartAudioTime = audioTime;
+			clipStartRampedTime = (rampedTime !== null && rampedTime !== undefined) 
+				? rampedTime 
+				: audioTime;
 		}
-		
-		processSeekQueue();
 	}
 
 	export function setSpeed(speed) {
@@ -426,7 +295,7 @@
 
 	/**
 	 * Set the video frame based on audio time (audio-as-master-clock)
-	 * Now respects current clip - uses time relative to when clip started
+	 * FAST PATH: Just calculates frame index, no async operations
 	 * @param {number} audioTimeSeconds - Current audio time in seconds
 	 * @param {number} fps - Video frame rate (default 24)
 	 * @returns {number} The frame index that was set
@@ -434,85 +303,33 @@
 	export function setAudioTime(audioTimeSeconds, fps = 24) {
 		if (!frameBuffer || frameBuffer.totalFrames === 0) return 0;
 		
-		// Mark as externally controlled to prevent render loop from advancing frames
 		isExternallyControlled = true;
 		
-		// Get current clip info
 		const clipInfo = frameBuffer.getClipInfo(currentClipIndex);
 		if (!clipInfo) {
-			// Fallback: use all frames
-			const targetFrame = Math.floor(audioTimeSeconds * fps);
-			globalFrameIndex = targetFrame % frameBuffer.totalFrames;
-			frameBuffer.primeAroundFrame(globalFrameIndex);
+			// Fallback: simple global frame calculation
+			globalFrameIndex = Math.floor(audioTimeSeconds * fps) % frameBuffer.totalFrames;
 			return globalFrameIndex;
 		}
 		
-		// Update clipStartRampedTime if this is the first call after clip switch
-		// (when audioTimeSeconds is close to clipStartAudioTime, sync the remapped start time)
-		if (Math.abs(audioTimeSeconds - clipStartAudioTime) < 0.1) {
-			clipStartRampedTime = audioTimeSeconds;
-		}
-		
-		// Calculate time elapsed since this clip started (use remapped time for looping)
+		// Calculate time elapsed since this clip started
 		const elapsedTime = Math.max(0, audioTimeSeconds - clipStartRampedTime);
 		const clipDurationSeconds = clipInfo.frameCount / fps;
-		const maxClipFrame = clipInfo.frameCount - 1;
-		if (elapsedTime < clipDurationSeconds) {
-			clipLoopCount = 0;
-			hasSignaledClipEnd = false;
-		}
-
-		if (!enableLooping && elapsedTime >= clipDurationSeconds) {
-			clipLocalFrame = Math.max(0, maxClipFrame);
-			globalFrameIndex = clipInfo.startFrame + clipLocalFrame;
-			accumulatedTime = 0;
-
-			if (!hasSignaledClipEnd) {
-				hasSignaledClipEnd = true;
-				isPlaying = false;
-				if (typeof onClipComplete === 'function') {
-					onClipComplete({
-						clipIndex: currentClipIndex,
-						elapsedTime,
-						loopCount: clipLoopCount
-					});
-				}
-			}
-
-			return globalFrameIndex;
-		}
-
-		// Calculate frame within current clip based on elapsed time (loop within clip)
+		
+		// Calculate frame within clip (with looping)
 		let targetFrame = Math.floor(elapsedTime * fps);
 		
 		// Apply jump cut offset if any
 		if (jumpFrameOffset !== 0) {
 			targetFrame += jumpFrameOffset;
-			jumpFrameOffset = 0; // Reset after applying
+			jumpFrameOffset = 0;
 		}
 		
+		// Wrap frame within clip bounds
 		clipLocalFrame = ((targetFrame % clipInfo.frameCount) + clipInfo.frameCount) % clipInfo.frameCount;
-
-		if (enableLooping && clipDurationSeconds > 0) {
-			const nextLoopCount = Math.floor(elapsedTime / clipDurationSeconds);
-			if (nextLoopCount > clipLoopCount) {
-				clipLoopCount = nextLoopCount;
-				if (typeof onClipComplete === 'function') {
-					onClipComplete({
-						clipIndex: currentClipIndex,
-						elapsedTime,
-						loopCount: clipLoopCount
-					});
-				}
-			}
-		}
 		
 		// Convert to global frame index
 		globalFrameIndex = clipInfo.startFrame + clipLocalFrame;
-		frameBuffer.primeAroundFrame(globalFrameIndex);
-		
-		// Reset accumulated time since we're externally controlled
-		accumulatedTime = 0;
 		
 		return globalFrameIndex;
 	}

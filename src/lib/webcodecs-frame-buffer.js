@@ -95,7 +95,7 @@ function extractCodecDescription(mp4boxFile, track) {
 }
 
 export class WebCodecsFrameBuffer {
-	constructor({ targetFps = 24 } = {}) {
+	constructor({ targetFps = 24, maxWidth = 1280, maxHeight = 720 } = {}) {
 		/** @type {Map<number, ImageBitmap[]>} - Decoded frames per clip (GPU-resident via ImageBitmap) */
 		this.clips = new Map();
 
@@ -108,13 +108,106 @@ export class WebCodecsFrameBuffer {
 
 		this.targetFps = targetFps;
 
-		// Output dimensions (will be set per video)
-		this.outputWidth = 1920;
-		this.outputHeight = 1080;
+		// Max output dimensions - clips larger than this are downscaled
+		// Clips smaller are kept at original size (but cropped to 16:9)
+		this.maxWidth = maxWidth;
+		this.maxHeight = maxHeight;
+		this.targetAspect = 16 / 9; // Always 16:9 aspect ratio
+		
+		// Output dimensions (set per-batch based on largest clip, capped at max)
+		this.outputWidth = maxWidth;
+		this.outputHeight = maxHeight;
+		
+		// Reusable OffscreenCanvas for frame normalization (GPU-accelerated)
+		this.normalizationCanvas = null;
+		this.normalizationCtx = null;
+	}
+	
+	/**
+	 * Get or create the normalization canvas at the current output dimensions
+	 * Uses OffscreenCanvas for GPU-accelerated resizing
+	 */
+	getNormalizationCanvas() {
+		// Recreate canvas if dimensions changed
+		if (!this.normalizationCanvas || 
+			this.normalizationCanvas.width !== this.outputWidth || 
+			this.normalizationCanvas.height !== this.outputHeight) {
+			this.normalizationCanvas = new OffscreenCanvas(this.outputWidth, this.outputHeight);
+			this.normalizationCtx = this.normalizationCanvas.getContext('2d', {
+				alpha: false,
+				willReadFrequently: false
+			});
+			console.log(`[WebCodecsFrameBuffer] Created normalization canvas: ${this.outputWidth}x${this.outputHeight}`);
+		}
+		return { canvas: this.normalizationCanvas, ctx: this.normalizationCtx };
+	}
+	
+	/**
+	 * Normalize a frame to 16:9 aspect ratio at the output resolution
+	 * - Crops from center to achieve 16:9 if needed
+	 * - Scales to output dimensions
+	 * @param {VideoFrame | ImageBitmap} sourceFrame - Source frame (any aspect ratio)
+	 * @returns {Promise<ImageBitmap>} - Normalized frame at fixed output dimensions
+	 */
+	async normalizeFrame(sourceFrame) {
+		// VideoFrame uses displayWidth/displayHeight, ImageBitmap uses width/height
+		const srcWidth = sourceFrame.displayWidth || sourceFrame.width;
+		const srcHeight = sourceFrame.displayHeight || sourceFrame.height;
+		
+		if (!srcWidth || !srcHeight || srcWidth <= 0 || srcHeight <= 0) {
+			console.error('[WebCodecsFrameBuffer] Invalid frame dimensions:', srcWidth, srcHeight);
+			throw new Error('Invalid frame dimensions');
+		}
+		
+		const srcAspect = srcWidth / srcHeight;
+		
+		const { canvas, ctx } = this.getNormalizationCanvas();
+		
+		if (!ctx) {
+			console.error('[WebCodecsFrameBuffer] Failed to get canvas context');
+			throw new Error('Failed to get canvas context');
+		}
+		
+		// Calculate crop region to achieve 16:9 from source (center crop)
+		let cropX = 0, cropY = 0, cropW = srcWidth, cropH = srcHeight;
+		
+		if (srcAspect > this.targetAspect) {
+			// Source is wider than 16:9 - crop sides
+			cropW = Math.floor(srcHeight * this.targetAspect);
+			cropX = Math.floor((srcWidth - cropW) / 2);
+		} else if (srcAspect < this.targetAspect) {
+			// Source is taller than 16:9 - crop top/bottom
+			cropH = Math.floor(srcWidth / this.targetAspect);
+			cropY = Math.floor((srcHeight - cropH) / 2);
+		}
+		
+		// Validate crop dimensions
+		if (cropW <= 0 || cropH <= 0) {
+			console.error('[WebCodecsFrameBuffer] Invalid crop dimensions:', cropW, cropH);
+			throw new Error('Invalid crop dimensions');
+		}
+		
+		try {
+			// Draw cropped region scaled to output size
+			ctx.drawImage(
+				sourceFrame,
+				cropX, cropY, cropW, cropH,        // Source crop region
+				0, 0, this.outputWidth, this.outputHeight  // Destination (full canvas)
+			);
+			
+			// Create ImageBitmap from the normalized canvas
+			const bitmap = await createImageBitmap(canvas);
+			return bitmap;
+		} catch (e) {
+			console.error('[WebCodecsFrameBuffer] drawImage/createImageBitmap failed:', e);
+			throw e;
+		}
 	}
 
 	/**
 	 * Pre-decode all video files into memory
+	 * All frames are normalized to a fixed 16:9 aspect ratio at maxWidth x maxHeight
+	 * This prevents WebGL texture dimension mismatch errors during video swaps
 	 * @param {File[]} files - Array of video files to decode
 	 * @param {(progress: number, status: string) => void} onProgress - Progress callback
 	 * @returns {Promise<void>}
@@ -126,29 +219,45 @@ export class WebCodecsFrameBuffer {
 		this.clipOffsets = [0];
 		this.totalFrames = 0;
 
-		let totalDecoded = 0;
+		// Set fixed output dimensions (all frames will be this size)
+		this.outputWidth = this.maxWidth;
+		this.outputHeight = this.maxHeight;
+		
+		// Reset normalization canvas to ensure correct dimensions
+		this.normalizationCanvas = null;
+		this.normalizationCtx = null;
+
+		console.log(`[WebCodecsFrameBuffer] Normalizing all videos to ${this.outputWidth}x${this.outputHeight} (16:9)`);
+		console.log(`[WebCodecsFrameBuffer] Processing ${files.length} files...`);
+		
 		const totalFiles = files.length;
 
 		for (let i = 0; i < files.length; i++) {
 			const file = files[i];
-			onProgress(totalDecoded / totalFiles, `Decoding ${file.name}...`);
+			onProgress(i / totalFiles, `Decoding ${file.name}...`);
 
-			const frames = await this.decodeVideo(file, (frameProgress) => {
-				const overallProgress = (i + frameProgress) / totalFiles;
-				onProgress(overallProgress, `Decoding ${file.name}... ${Math.round(frameProgress * 100)}%`);
-			});
+			try {
+				const frames = await this.decodeVideo(file, (frameProgress) => {
+					const overallProgress = (i + frameProgress) / totalFiles;
+					onProgress(overallProgress, `Decoding ${file.name}... ${Math.round(frameProgress * 100)}%`);
+				});
 
-			this.clips.set(i, frames);
-			this.totalFrames += frames.length;
-			this.clipOffsets.push(this.totalFrames);
-
-			totalDecoded++;
-			console.log(`[WebCodecsFrameBuffer] Clip ${i} decoded: ${frames.length} frames`);
+				if (frames.length > 0) {
+					this.clips.set(i, frames);
+					this.totalFrames += frames.length;
+					this.clipOffsets.push(this.totalFrames);
+					console.log(`[WebCodecsFrameBuffer] Clip ${i} (${file.name}): ${frames.length} frames`);
+				} else {
+					console.warn(`[WebCodecsFrameBuffer] Clip ${i} (${file.name}): No frames decoded!`);
+				}
+			} catch (err) {
+				console.error(`[WebCodecsFrameBuffer] Failed to decode ${file.name}:`, err);
+			}
 		}
 
 		this.isLoading = false;
 		onProgress(1, `Ready - ${this.totalFrames} frames loaded`);
-		console.log(`[WebCodecsFrameBuffer] All clips decoded. Total: ${this.totalFrames} frames across ${files.length} clips`);
+		console.log(`[WebCodecsFrameBuffer] All clips decoded. Total: ${this.totalFrames} frames across ${this.clips.size} clips`);
 	}
 
 	/**
@@ -182,9 +291,8 @@ export class WebCodecsFrameBuffer {
 					} catch (e) {
 						// Ignore if already closed
 					}
-					// Update output dimensions from the decoded video
-					this.outputWidth = videoWidth;
-					this.outputHeight = videoHeight;
+					// Output dimensions are fixed (all frames normalized to target size)
+					console.log(`[WebCodecsFrameBuffer] Decode complete: ${frames.length} frames normalized to ${this.outputWidth}x${this.outputHeight}`);
 					resolve(frames);
 				}
 			};
@@ -216,27 +324,40 @@ export class WebCodecsFrameBuffer {
 					config.description = description;
 				}
 
+				let decodeErrorCount = 0;
+				const MAX_DECODE_ERRORS = 10; // Allow some decode errors before giving up
+				
 				videoDecoder = new VideoDecoder({
 					output: (frame) => {
 						// CRITICAL: Must close VideoFrame to free decoder buffers!
-						// Create ImageBitmap copy (GPU-resident for WebGL) then close original
-						createImageBitmap(frame).then(bitmap => {
-							frames.push(bitmap);
+						// Normalize frame to fixed 16:9 aspect ratio and resolution
+						// This prevents WebGL texture dimension mismatch errors during video swaps
+						this.normalizeFrame(frame).then(normalizedBitmap => {
+							frames.push(normalizedBitmap);
 							if (frames.length === 1 || frames.length % 50 === 0) {
-								console.log(`[WebCodecsFrameBuffer] Frame decoded: ${frames.length}/${totalSamples}`);
+								console.log(`[WebCodecsFrameBuffer] Frame decoded: ${frames.length}/${totalSamples} (normalized to ${this.outputWidth}x${this.outputHeight})`);
 							}
 							onProgress(frames.length / totalSamples);
 							checkComplete();
 						}).catch(e => {
-							console.error('[WebCodecsFrameBuffer] Failed to create ImageBitmap:', e);
+							console.error('[WebCodecsFrameBuffer] Failed to normalize frame:', e);
+							// Still count this as progress even if normalization fails
+							onProgress(frames.length / totalSamples);
+							checkComplete();
 						}).finally(() => {
 							// Always close the VideoFrame immediately to free decoder buffers
 							frame.close();
 						});
 					},
 					error: (e) => {
-						console.error('[WebCodecsFrameBuffer] Decode error:', e);
-						// Don't reject immediately - try to continue with other frames
+						decodeErrorCount++;
+						// Only log first few errors to avoid spam
+						if (decodeErrorCount <= 3) {
+							console.warn('[WebCodecsFrameBuffer] Decode error (non-fatal):', e.message);
+						} else if (decodeErrorCount === 4) {
+							console.warn(`[WebCodecsFrameBuffer] Suppressing further decode errors...`);
+						}
+						// Don't reject - continue with other frames
 					}
 				});
 
@@ -311,14 +432,19 @@ export class WebCodecsFrameBuffer {
 						waitForFrames();
 					}).catch((e) => {
 						flushInProgress = false;
-						// Check if error is due to decoder being closed (expected race condition)
-						if (e.name === 'AbortError' && e.message?.includes('close')) {
-							// This is expected when decoder closes before flush completes - not an error
-							console.log('[WebCodecsFrameBuffer] Flush aborted (decoder closed early, all frames already decoded)');
+						// Check if error is due to decoder being closed or decode errors (both expected)
+						const isAbortError = e.name === 'AbortError' && e.message?.includes('close');
+						const isDecodeError = e.name === 'EncodingError' || e.message?.includes('Decoding error');
+						
+						if (isAbortError) {
+							console.log('[WebCodecsFrameBuffer] Flush aborted (decoder closed early)');
+						} else if (isDecodeError) {
+							// Decode errors during flush are expected if some frames failed
+							console.log(`[WebCodecsFrameBuffer] Flush completed with decode errors, got ${frames.length}/${totalSamples} frames`);
 						} else {
-							console.error('[WebCodecsFrameBuffer] Flush failed:', e);
+							console.warn('[WebCodecsFrameBuffer] Flush warning:', e.message);
 						}
-						// Still try to resolve with partial frames
+						// Still try to resolve with partial frames (this is expected behavior)
 						if (frames.length > 0 && !decoderClosed) {
 							decoderClosed = true;
 							try {
@@ -326,6 +452,7 @@ export class WebCodecsFrameBuffer {
 							} catch (closeErr) {
 								// Ignore if already closed
 							}
+							console.log(`[WebCodecsFrameBuffer] Resolving with ${frames.length} frames (some may have failed)`);
 							resolve(frames);
 						} else if (!decoderClosed) {
 							reject(e);
@@ -369,6 +496,7 @@ export class WebCodecsFrameBuffer {
 
 	/**
 	 * Get frame by global index (across all clips)
+	 * All frames are normalized to the same dimensions (16:9 at outputWidth x outputHeight)
 	 * @param {number} globalIndex
 	 * @returns {ImageBitmap | null}
 	 */
@@ -386,11 +514,7 @@ export class WebCodecsFrameBuffer {
 			if (wrappedIndex >= clipStart && wrappedIndex < clipEnd) {
 				const localFrame = wrappedIndex - clipStart;
 				const clip = this.clips.get(clipIndex);
-				if (clip && clip[0]) {
-					// ImageBitmap uses width/height
-					this.outputWidth = clip[0].width || this.outputWidth;
-					this.outputHeight = clip[0].height || this.outputHeight;
-				}
+				// All frames are already normalized to outputWidth x outputHeight
 				return clip?.[localFrame] || null;
 			}
 		}
@@ -400,6 +524,7 @@ export class WebCodecsFrameBuffer {
 
 	/**
 	 * Get frame from specific clip
+	 * All frames are normalized to the same dimensions (16:9 at outputWidth x outputHeight)
 	 * @param {number} clipIndex
 	 * @param {number} localFrame
 	 * @returns {ImageBitmap | null}
@@ -410,11 +535,7 @@ export class WebCodecsFrameBuffer {
 
 		// Wrap within clip
 		const wrappedFrame = ((localFrame % clip.length) + clip.length) % clip.length;
-		if (clip[0]) {
-			// ImageBitmap uses width/height
-			this.outputWidth = clip[0].width || this.outputWidth;
-			this.outputHeight = clip[0].height || this.outputHeight;
-		}
+		// All frames are already normalized to outputWidth x outputHeight
 		return clip[wrappedFrame] || null;
 	}
 
@@ -505,6 +626,10 @@ export class WebCodecsFrameBuffer {
 		this.clips.clear();
 		this.clipOffsets = [0];
 		this.totalFrames = 0;
+		
+		// Clean up normalization canvas
+		this.normalizationCanvas = null;
+		this.normalizationCtx = null;
 	}
 }
 

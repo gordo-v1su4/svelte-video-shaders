@@ -386,7 +386,7 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		u_colorShift: { value: 0.3 },
 		u_pulseSpeed: { value: 2.0 },
 		u_waveAmplitude: { value: 0.5 },
-		u_resolution: { value: [1920, 1080] },
+		u_resolution: { value: [1280, 720] },
 
 		// Water shader uniforms
 		u_factor: { value: 0.5 },
@@ -545,14 +545,108 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 
 	// Speed Ramping State
 	let enableSpeedRamping = $state(false);
-	let speedRampSensitivity = $state(2.0); // How much energy affects speed
-	let baseSpeed = $state(1.0); // Minimum/Base speed
-	let audioRampedTime = $state(0);
-	let lastAudioTime = $state(0);
+	let speedRampMinSpeed = $state(0.8); // Minimum speed (at low energy)
+	let speedRampMaxSpeed = $state(1.8); // Maximum speed (at high energy)
+	let speedRampSmoothing = $state(0.15); // EMA alpha (0 = no smoothing, higher = smoother)
+	let speedRampPunch = $state(1.4); // Gamma (1 = linear, >1 = punchy highs, <1 = punchy lows)
+	
+	// Pre-processed speed ramp data (computed once when params change)
+	let processedSpeedCurve = $state(null); // Float32Array of pre-computed speeds
+	let processedTimeRemap = $state(null); // Float32Array of cumulative time values
+	let speedCurveTimestep = $state(0); // Seconds per sample in the curve
+	
+	// Offset to handle smooth transitions when toggling speed ramping
+	let speedRampTimeOffset = $state(0); // Added to remapped time for continuity
+	let wasSpeedRampingEnabled = false; // Track previous state
+	
+	// Visual feedback for speed ramping
+	let currentSpeed = $state(1.0); // Current playback speed (for display)
+	let currentEnergy = $state(0); // Current energy level (for display)
+	
 	const ESSENTIA_HOP_SIZE = 512;
 	const ESSENTIA_SAMPLE_RATE = 44100;
 	const SECONDS_PER_FRAME = ESSENTIA_HOP_SIZE / ESSENTIA_SAMPLE_RATE;
 	const TARGET_FPS = 24; // Video frame rate for audio-to-frame sync
+	
+	/**
+	 * Pre-process energy curve into speed and time remap curves
+	 * Called once when Essentia data loads or when parameters change
+	 */
+	function preprocessSpeedCurve() {
+		if (!analysisData.energy?.curve || analysisData.energy.curve.length === 0) {
+			processedSpeedCurve = null;
+			processedTimeRemap = null;
+			console.log('[SpeedRamp] No energy curve available');
+			return;
+		}
+		
+		const rawCurve = analysisData.energy.curve;
+		const N = rawCurve.length;
+		const mean = analysisData.energy.mean ?? 0;
+		const std = analysisData.energy.std ?? 1;
+		// Use audio duration from the loaded audio element, or calculate from hop size
+		const duration = audioDuration > 0 ? audioDuration : (N * SECONDS_PER_FRAME);
+		const dt = duration / Math.max(1, N - 1);
+		speedCurveTimestep = dt;
+		
+		console.log(`[SpeedRamp] Pre-processing ${N} samples, duration=${duration.toFixed(2)}s, dt=${(dt*1000).toFixed(2)}ms`);
+		console.log(`[SpeedRamp] Params: min=${speedRampMinSpeed}x, max=${speedRampMaxSpeed}x, smooth=${speedRampSmoothing}, punch=${speedRampPunch}`);
+		
+		// Step 1: Z-score normalize using mean/std from Essentia
+		const normalized = new Float32Array(N);
+		for (let i = 0; i < N; i++) {
+			const z = (rawCurve[i] - mean) / (std || 1e-9);
+			// Map z-score (typically -2 to +2) to 0-1 range
+			normalized[i] = Math.max(0, Math.min(1, (z + 2) / 4));
+		}
+		
+		// Step 2: EMA smoothing (if enabled)
+		const smoothed = new Float32Array(N);
+		if (speedRampSmoothing > 0) {
+			const alpha = speedRampSmoothing;
+			smoothed[0] = normalized[0];
+			for (let i = 1; i < N; i++) {
+				smoothed[i] = alpha * normalized[i] + (1 - alpha) * smoothed[i - 1];
+			}
+		} else {
+			smoothed.set(normalized);
+		}
+		
+		// Step 3: Gamma correction (punch) and map to speed range
+		const speeds = new Float32Array(N);
+		const speedRange = speedRampMaxSpeed - speedRampMinSpeed;
+		for (let i = 0; i < N; i++) {
+			const shaped = Math.pow(smoothed[i], speedRampPunch);
+			speeds[i] = speedRampMinSpeed + speedRange * shaped;
+		}
+		
+		// Step 4: Compute cumulative time remap (integral of speed)
+		const timeRemap = new Float32Array(N);
+		timeRemap[0] = 0;
+		for (let i = 1; i < N; i++) {
+			const avgSpeed = (speeds[i - 1] + speeds[i]) * 0.5;
+			timeRemap[i] = timeRemap[i - 1] + avgSpeed * dt;
+		}
+		
+		processedSpeedCurve = speeds;
+		processedTimeRemap = timeRemap;
+		
+		// Debug: sample some values
+		const sampleIndices = [0, Math.floor(N/4), Math.floor(N/2), Math.floor(3*N/4), N-1];
+		console.log(`[SpeedRamp] Pre-processing complete. Speed range: ${Math.min(...speeds).toFixed(2)}x - ${Math.max(...speeds).toFixed(2)}x`);
+		console.log(`[SpeedRamp] Total remapped duration: ${timeRemap[N-1].toFixed(2)}s (original: ${duration.toFixed(2)}s)`);
+		console.log(`[SpeedRamp] Sample speeds:`, sampleIndices.map(i => `[${i}]=${speeds[i]?.toFixed(2)}x`).join(', '));
+		console.log(`[SpeedRamp] Sample timeRemap:`, sampleIndices.map(i => `[${i}]=${timeRemap[i]?.toFixed(2)}s`).join(', '));
+		console.log(`[SpeedRamp] Raw energy samples:`, sampleIndices.map(i => `[${i}]=${rawCurve[i]?.toFixed(4)}`).join(', '));
+		console.log(`[SpeedRamp] Energy stats: mean=${mean.toFixed(4)}, std=${std.toFixed(4)}`);
+	}
+	
+	// Re-process when parameters or audio data change
+	$effect(() => {
+		// Track all parameters that affect the curve (including audioDuration)
+		const _ = [speedRampMinSpeed, speedRampMaxSpeed, speedRampSmoothing, speedRampPunch, analysisData.energy, audioDuration];
+		preprocessSpeedCurve();
+	});
 
 	// Audio-as-master-clock: sync video to audio time
 	let audioMasterEnabled = $state(true); // Toggle for audio-synced playback
@@ -573,40 +667,69 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			// === AUDIO AS MASTER CLOCK ===
 			// Sync video frame to audio time (Phase 2 feature)
 			if (audioMasterEnabled && shaderPlayerRef) {
-				if (enableSpeedRamping && analysisData.energy?.curve) {
-					const frameIndex = Math.floor(audioCurrentTime / SECONDS_PER_FRAME);
-					const energy = analysisData.energy.curve[frameIndex] ?? 0;
-					const newSpeed = baseSpeed + (energy * speedRampSensitivity);
-					const deltaTime = audioCurrentTime - lastAudioTime;
-
-					if (deltaTime <= 0 || deltaTime > 1) {
-						audioRampedTime = audioCurrentTime;
-					} else {
-						audioRampedTime += deltaTime * newSpeed;
+				const canUseSpeedRamp = enableSpeedRamping && processedSpeedCurve && processedTimeRemap && speedCurveTimestep > 0;
+				
+				// Handle transition when speed ramping is toggled
+				if (canUseSpeedRamp && !wasSpeedRampingEnabled) {
+					// Just turned ON: calculate offset for continuity
+					const curveIndex = Math.floor(audioCurrentTime / speedCurveTimestep);
+					const clampedIndex = Math.max(0, Math.min(processedTimeRemap.length - 1, curveIndex));
+					const rawRemappedTime = processedTimeRemap[clampedIndex];
+					// Offset = what we were showing (audioCurrentTime) minus what remap would show
+					speedRampTimeOffset = audioCurrentTime - rawRemappedTime;
+					console.log(`[SpeedRamp] Enabled at audio=${audioCurrentTime.toFixed(2)}s, rawRemap=${rawRemappedTime.toFixed(2)}s, offset=${speedRampTimeOffset.toFixed(2)}s`);
+					wasSpeedRampingEnabled = true;
+				} else if (!canUseSpeedRamp && wasSpeedRampingEnabled) {
+					// Just turned OFF: reset offset
+					speedRampTimeOffset = 0;
+					wasSpeedRampingEnabled = false;
+					console.log(`[SpeedRamp] Disabled`);
+				}
+				
+				if (canUseSpeedRamp) {
+					// Use pre-processed curves - just lookup, no calculation
+					const curveIndex = Math.floor(audioCurrentTime / speedCurveTimestep);
+					const clampedIndex = Math.max(0, Math.min(processedSpeedCurve.length - 1, curveIndex));
+					
+					// Update visual feedback from pre-processed data
+					currentSpeed = processedSpeedCurve[clampedIndex];
+					// Energy is derived from speed for display (reverse the formula)
+					const speedRange = speedRampMaxSpeed - speedRampMinSpeed;
+					currentEnergy = speedRange > 0 ? (currentSpeed - speedRampMinSpeed) / speedRange : 0;
+					
+					// Use pre-computed time remap + offset for smooth transition
+					const remappedTime = processedTimeRemap[clampedIndex] + speedRampTimeOffset;
+					
+					// Debug: log every second
+					if (Math.floor(audioCurrentTime) !== Math.floor(audioCurrentTime - 0.016)) {
+						console.log(`[SpeedRamp] audio=${audioCurrentTime.toFixed(2)}s -> video=${remappedTime.toFixed(2)}s (speed=${currentSpeed.toFixed(2)}x)`);
 					}
-
-					lastAudioTime = audioCurrentTime;
-					shaderPlayerRef.setAudioTime(audioRampedTime, TARGET_FPS);
+					
+					shaderPlayerRef.setAudioTime(remappedTime, TARGET_FPS);
 				} else {
-					audioRampedTime = audioCurrentTime;
-					lastAudioTime = audioCurrentTime;
+					// No speed ramping or no curve - direct sync
+					currentSpeed = 1.0;
+					currentEnergy = 0;
 					shaderPlayerRef.setAudioTime(audioCurrentTime, TARGET_FPS);
 				}
 			}
 			
-			// Handle Speed Ramping (adjusts playback speed, not position)
-			if (!audioMasterEnabled && enableSpeedRamping && analysisData.energy?.curve && shaderPlayerRef) {
-				const frameIndex = Math.floor(audioCurrentTime / SECONDS_PER_FRAME);
-				if (frameIndex >= 0 && frameIndex < analysisData.energy.curve.length) {
-					const energy = analysisData.energy.curve[frameIndex];
-					// Formula: speed = base + (energy * sensitivity)
-					// Energy is 0-1 normalized
-					const newSpeed = baseSpeed + (energy * speedRampSensitivity);
-					shaderPlayerRef.setSpeed(newSpeed);
+			// Handle Speed Ramping when NOT using audio master clock (direct speed control)
+			if (!audioMasterEnabled && shaderPlayerRef) {
+				if (enableSpeedRamping && processedSpeedCurve) {
+					const curveIndex = Math.floor(audioCurrentTime / speedCurveTimestep);
+					const clampedIndex = Math.max(0, Math.min(processedSpeedCurve.length - 1, curveIndex));
+					
+					currentSpeed = processedSpeedCurve[clampedIndex];
+					const speedRange = speedRampMaxSpeed - speedRampMinSpeed;
+					currentEnergy = speedRange > 0 ? (currentSpeed - speedRampMinSpeed) / speedRange : 0;
+					
+					shaderPlayerRef.setSpeed(currentSpeed);
+				} else {
+					currentSpeed = 1.0;
+					currentEnergy = 0;
+					shaderPlayerRef.setSpeed(1.0);
 				}
-			} else if (shaderPlayerRef && !audioMasterEnabled) {
-				// Only set speed to 1.0 when NOT using audio master clock
-				shaderPlayerRef.setSpeed(1.0);
 			}
 
 			rafId = requestAnimationFrame(updateTime);
@@ -1158,10 +1281,24 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		const files = Array.from(event.currentTarget.files || []);
 		if (files.length === 0) return;
 
-		console.log('Processing', files.length, 'video files');
+		console.log('[VideoWorkbench] Processing', files.length, 'video files');
+		
+		// Filter out duplicates (by name and size)
+		const existingFiles = new Set($videoAssets.map(a => `${a.name}-${a.file?.size || 0}`));
+		const newFiles = files.filter(f => !existingFiles.has(`${f.name}-${f.size}`));
+		
+		if (newFiles.length < files.length) {
+			console.log(`[VideoWorkbench] Filtered out ${files.length - newFiles.length} duplicate files`);
+		}
+		
+		if (newFiles.length === 0) {
+			console.log('[VideoWorkbench] No new files to add');
+			if (fileInput) fileInput.value = '';
+			return;
+		}
 		
 		// Add to asset list for thumbnails
-		for (const file of files) {
+		for (const file of newFiles) {
 			const newAsset = {
 				id: crypto.randomUUID(),
 				file: file,
@@ -1250,7 +1387,12 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		activeVideo.set(nextVid);
 		// Pass current audio time so clip knows when it started
 		// If speed ramping is active, also pass remapped time for proper clip looping
-		const clipStartTime = enableSpeedRamping && audioMasterEnabled ? audioRampedTime : audioCurrentTime;
+		let clipStartTime = audioCurrentTime;
+		if (enableSpeedRamping && audioMasterEnabled && processedTimeRemap && speedCurveTimestep > 0) {
+			const curveIndex = Math.floor(audioCurrentTime / speedCurveTimestep);
+			const clampedIndex = Math.max(0, Math.min(processedTimeRemap.length - 1, curveIndex));
+			clipStartTime = processedTimeRemap[clampedIndex];
+		}
 		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, clipStartTime);
 	}
 
@@ -1421,6 +1563,40 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				<div class="beat-info">
 					{markerCounter} / {markerSwapThreshold}
 				</div>
+				
+				<!-- Speed Ramping Meter -->
+				{#if enableSpeedRamping && processedSpeedCurve}
+					<div class="speed-meter-container">
+						<div class="speed-meter-row">
+							<span class="speed-label">Speed:</span>
+							<span class="speed-value" class:fast={currentSpeed > 1.5} class:slow={currentSpeed < 0.8}>
+								{currentSpeed.toFixed(2)}x
+							</span>
+						</div>
+						<div class="speed-bar-track">
+							<div 
+								class="speed-bar-fill"
+								style="width: {Math.min(100, ((currentSpeed - speedRampMinSpeed) / (speedRampMaxSpeed - speedRampMinSpeed)) * 100)}%"
+							></div>
+						</div>
+						<div class="energy-meter-row">
+							<span class="energy-label">Energy:</span>
+							<div class="energy-bar-track">
+								<div 
+									class="energy-bar-fill"
+									style="width: {currentEnergy * 100}%"
+								></div>
+							</div>
+							<span class="energy-value">{(currentEnergy * 100).toFixed(0)}%</span>
+						</div>
+					</div>
+				{:else if enableSpeedRamping}
+					<div class="speed-meter-container">
+						<div class="info-text" style="font-size: 11px; color: #888; text-align: center;">
+							⏳ Waiting for energy curve...
+						</div>
+					</div>
+				{/if}
 			</div>
 		{/if}
 
@@ -1648,21 +1824,41 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							label="Enable Speed Ramping"
 						/>
 						<Tweakpane.Slider
-							bind:value={baseSpeed}
-							label="Base Speed"
-							min={0.1}
-							max={2.0}
+							bind:value={speedRampMinSpeed}
+							label="Min Speed"
+							min={0.25}
+							max={1.5}
+							step={0.05}
+						/>
+						<Tweakpane.Slider
+							bind:value={speedRampMaxSpeed}
+							label="Max Speed"
+							min={0.5}
+							max={3.0}
 							step={0.1}
 						/>
 						<Tweakpane.Slider
-							bind:value={speedRampSensitivity}
-							label="Sensitivity"
+							bind:value={speedRampSmoothing}
+							label="Smoothing"
 							min={0}
-							max={5.0}
+							max={0.5}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={speedRampPunch}
+							label="Punch"
+							min={0.5}
+							max={3.0}
 							step={0.1}
 						/>
-						<div class="info-text" style="font-size: 11px; color: #888; margin-top: 8px; padding: 4px;">
-							⚠️ Requires energy curve (not available in external API)
+						<div class="speed-range-info">
+							{#if processedSpeedCurve}
+								✅ Pre-processed: {speedRampMinSpeed.toFixed(2)}x → {speedRampMaxSpeed.toFixed(2)}x
+							{:else if analysisData.energy?.curve}
+								⏳ Processing energy curve...
+							{:else}
+								⚠️ Load audio for energy curve
+							{/if}
 						</div>
 					</Tweakpane.Folder>
 					
@@ -2623,6 +2819,103 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
             box-shadow: 0 0 12px #00ff88, 0 0 24px rgba(0, 255, 136, 0.5);
         }
     }
+
+	/* Speed Ramping Meter */
+	.speed-meter-container {
+		margin-top: 12px;
+		padding: 8px;
+		background: rgba(0, 0, 0, 0.3);
+		border-radius: 4px;
+		border: 1px solid #333;
+	}
+
+	.speed-meter-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 6px;
+	}
+
+	.speed-label {
+		font-size: 11px;
+		color: #888;
+	}
+
+	.speed-value {
+		font-family: 'SF Mono', monospace;
+		font-size: 14px;
+		font-weight: 600;
+		color: #00aaff;
+		transition: color 0.1s;
+	}
+
+	.speed-value.fast {
+		color: #ff6600;
+	}
+
+	.speed-value.slow {
+		color: #00ff88;
+	}
+
+	.speed-bar-track {
+		position: relative;
+		height: 8px;
+		background: #222;
+		border-radius: 4px;
+		overflow: visible;
+		margin-bottom: 8px;
+	}
+
+	.speed-bar-fill {
+		height: 100%;
+		background: linear-gradient(90deg, #00aaff, #ff6600);
+		border-radius: 4px;
+		transition: width 0.05s linear;
+	}
+
+	.energy-meter-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.energy-label {
+		font-size: 10px;
+		color: #666;
+		min-width: 40px;
+	}
+
+	.energy-bar-track {
+		flex: 1;
+		height: 6px;
+		background: #222;
+		border-radius: 3px;
+		overflow: hidden;
+	}
+
+	.energy-bar-fill {
+		height: 100%;
+		background: linear-gradient(90deg, #333, #00ff88, #ffff00, #ff6600);
+		transition: width 0.05s linear;
+	}
+
+	.energy-value {
+		font-family: 'SF Mono', monospace;
+		font-size: 10px;
+		color: #666;
+		min-width: 30px;
+		text-align: right;
+	}
+
+	.speed-range-info {
+		font-size: 11px;
+		color: #a882ff;
+		text-align: center;
+		padding: 4px;
+		background: rgba(90, 63, 192, 0.15);
+		border-radius: 3px;
+		margin: 4px 0;
+	}
 
 	.app-container { display: flex; height: 100vh; background-color: #1a1a1a; color: #fff; }
 	.sidebar { width: 350px; padding: 1rem; background-color: #242424; display: flex; flex-direction: column; gap: 1.5rem; overflow-y: auto; }
