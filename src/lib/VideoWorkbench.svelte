@@ -1333,14 +1333,26 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		preloadStatus = 'Starting...';
 
 		try {
-			await frameBuffer.preloadClips(allFiles, (progress, status) => {
+			const result = await frameBuffer.preloadClips(allFiles, (progress, status) => {
 				preloadProgress = progress;
 				preloadStatus = status;
 			});
 			
+			// Remove failed videos from asset list to keep indices in sync with frame buffer
+			if (result?.failedIndices?.length > 0) {
+				console.warn(`[VideoWorkbench] Removing ${result.failedIndices.length} failed videos from asset list`);
+				const failedSet = new Set(result.failedIndices);
+				videoAssets.update(assets => assets.filter((_, idx) => !failedSet.has(idx)));
+				
+				// Reset active video if it was removed
+				if ($activeVideo && failedSet.has($videoAssets.findIndex(a => a.id === $activeVideo.id))) {
+					activeVideo.set($videoAssets[0] || null);
+				}
+			}
+			
 			isBufferReady = true;
 			preloadProgress = 1;
-			console.log('[VideoWorkbench] Frame buffer ready:', frameBuffer.totalFrames, 'frames');
+			console.log('[VideoWorkbench] Frame buffer ready:', frameBuffer.totalFrames, 'frames across', frameBuffer.clips.size, 'clips');
 			
 			// Prime first frame on-demand (don't wait, let ShaderPlayer handle it)
 			frameBuffer.primeAroundFrame(0);

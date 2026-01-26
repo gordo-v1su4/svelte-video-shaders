@@ -121,6 +121,12 @@ export class WebCodecsFrameBuffer {
 		// Reusable OffscreenCanvas for frame normalization (GPU-accelerated)
 		this.normalizationCanvas = null;
 		this.normalizationCtx = null;
+		
+		// Track which original file indices succeeded/failed during preload
+		/** @type {number[]} - Original file indices that loaded successfully */
+		this.loadedFileIndices = [];
+		/** @type {number[]} - Original file indices that failed to load */
+		this.failedFileIndices = [];
 	}
 	
 	/**
@@ -218,6 +224,10 @@ export class WebCodecsFrameBuffer {
 		this.clips.clear();
 		this.clipOffsets = [0];
 		this.totalFrames = 0;
+		
+		// Reset file tracking arrays
+		this.loadedFileIndices = [];
+		this.failedFileIndices = [];
 
 		// Set fixed output dimensions (all frames will be this size)
 		this.outputWidth = this.maxWidth;
@@ -231,6 +241,10 @@ export class WebCodecsFrameBuffer {
 		console.log(`[WebCodecsFrameBuffer] Processing ${files.length} files...`);
 		
 		const totalFiles = files.length;
+		
+		// Use a separate counter for successful clips to ensure sequential indexing
+		// This prevents mismatch between clips Map keys and clipOffsets array indices
+		let successfulClipIndex = 0;
 
 		for (let i = 0; i < files.length; i++) {
 			const file = files[i];
@@ -243,21 +257,37 @@ export class WebCodecsFrameBuffer {
 				});
 
 				if (frames.length > 0) {
-					this.clips.set(i, frames);
+					// Use successfulClipIndex (not i) to ensure sequential keys
+					this.clips.set(successfulClipIndex, frames);
 					this.totalFrames += frames.length;
 					this.clipOffsets.push(this.totalFrames);
-					console.log(`[WebCodecsFrameBuffer] Clip ${i} (${file.name}): ${frames.length} frames`);
+					console.log(`[WebCodecsFrameBuffer] Clip ${successfulClipIndex} (${file.name}): ${frames.length} frames`);
+					successfulClipIndex++;
+					this.loadedFileIndices.push(i); // Track which original file indices succeeded
 				} else {
-					console.warn(`[WebCodecsFrameBuffer] Clip ${i} (${file.name}): No frames decoded!`);
+					console.warn(`[WebCodecsFrameBuffer] Skipping ${file.name}: No frames decoded`);
+					this.failedFileIndices.push(i);
 				}
 			} catch (err) {
-				console.error(`[WebCodecsFrameBuffer] Failed to decode ${file.name}:`, err);
+				console.error(`[WebCodecsFrameBuffer] Skipping ${file.name}: Decode failed -`, err.message || err);
+				this.failedFileIndices.push(i);
 			}
 		}
 
 		this.isLoading = false;
 		onProgress(1, `Ready - ${this.totalFrames} frames loaded`);
 		console.log(`[WebCodecsFrameBuffer] All clips decoded. Total: ${this.totalFrames} frames across ${this.clips.size} clips`);
+		
+		if (this.failedFileIndices.length > 0) {
+			console.warn(`[WebCodecsFrameBuffer] ${this.failedFileIndices.length} files failed to decode:`, this.failedFileIndices);
+		}
+		
+		// Return info about which files succeeded/failed
+		return {
+			successCount: this.clips.size,
+			failedIndices: [...this.failedFileIndices],
+			loadedIndices: [...this.loadedFileIndices]
+		};
 	}
 
 	/**
