@@ -14,12 +14,40 @@ Official Essentia Audio Analysis API deployed at: **https://essentia.v1su4.com**
 - **Version**: 2.0.0
 - **OpenAPI Version**: 3.1.0
 
+## Authentication
+
+The API requires API key authentication via HTTP header for all analysis endpoints:
+- **Header**: `X-API-Key`
+- **Required**: Yes (for analysis endpoints)
+- **Example**: `curl -H "X-API-Key: your-api-key" ...`
+
+Public endpoints (no authentication required):
+- `GET /health` - Health check
+- `GET /docs` - API documentation
+- `GET /redoc` - Alternative documentation
+
+Configure in your `.env` file:
+```bash
+VITE_ESSENTIA_API_KEY=your-api-key-here
+```
+
+Contact the API administrator to receive your API key.
+
 ## Endpoints
 
 ### POST /analyze/rhythm
 Extract BPM, beats, confidence, and high-quality onsets.
 
 **Request**: `multipart/form-data` with `file` (binary audio file)
+
+**Headers**: `X-API-Key: your-api-key`
+
+**Example**:
+```bash
+curl -X POST "https://essentia.v1su4.com/analyze/rhythm" \
+  -H "X-API-Key: your_api_key_here" \
+  -F "file=@audio.mp3"
+```
 
 **Response** (`RhythmAnalysis`):
 ```typescript
@@ -107,12 +135,15 @@ Check API health status.
 
 ## Usage in Project
 
-The API URL is configured via environment variable:
+The API URL and optional API key are configured via environment variables:
 ```bash
 VITE_ESSENTIA_API_URL=https://essentia.v1su4.com
+VITE_ESSENTIA_API_KEY=your-api-key-here
 ```
 
-See `src/lib/essentia-service.js` for the client implementation.
+The API key is optional. If not provided, requests will be made without authentication.
+
+See [src/lib/essentia-service.js](../src/lib/essentia-service.js) for the client implementation.
 
 ## Error Responses
 

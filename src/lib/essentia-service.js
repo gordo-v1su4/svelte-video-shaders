@@ -1,20 +1,37 @@
 /**
  * Audio Analysis Service - Calls Python Essentia API for beat detection
- * 
+ *
  * API URL can be configured via environment variable:
  * - VITE_ESSENTIA_API_URL (defaults to http://localhost:8000)
+ * - VITE_ESSENTIA_API_KEY (optional, for authenticated endpoints)
  * - For production, set this to your deployed API URL
- * 
+ *
  * To set: Create a .env file in the project root with:
  *   VITE_ESSENTIA_API_URL=http://your-api-server:8000
+ *   VITE_ESSENTIA_API_KEY=your-api-key-here
  */
 
 // SvelteKit/Vite public env vars are available at build time
 const API_URL = import.meta.env.VITE_ESSENTIA_API_URL || 'http://localhost:8000';
+const API_KEY = import.meta.env.VITE_ESSENTIA_API_KEY || '';
 
 // Log the API URL on module load to verify it's set correctly
 console.log(`[EssentiaService] Module loaded. API_URL: ${API_URL}`);
 console.log(`[EssentiaService] Environment variable VITE_ESSENTIA_API_URL:`, import.meta.env.VITE_ESSENTIA_API_URL);
+console.log(`[EssentiaService] API Key configured:`, API_KEY ? 'Yes' : 'No');
+
+/**
+ * Build fetch options with optional API key header
+ * @param {RequestInit} options - Base fetch options
+ * @returns {RequestInit} - Fetch options with API key header if configured
+ */
+function buildFetchOptions(options = {}) {
+    const headers = new Headers(options.headers || {});
+    if (API_KEY) {
+        headers.set('X-API-Key', API_KEY);
+    }
+    return { ...options, headers };
+}
 
 export class EssentiaService {
     constructor() {
@@ -25,7 +42,7 @@ export class EssentiaService {
         // Check if API is available
         console.log(`[EssentiaService] Initializing with API URL: ${API_URL}`);
         try {
-            const response = await fetch(`${API_URL}/health`);
+            const response = await fetch(`${API_URL}/health`, buildFetchOptions());
             if (response.ok) {
                 this.isReady = true;
                 console.log(`[EssentiaService] ✅ API connected successfully at ${API_URL}`);
@@ -58,10 +75,10 @@ export class EssentiaService {
 
         try {
             const startTime = performance.now();
-            const response = await fetch(`${API_URL}/analyze/full`, {
+            const response = await fetch(`${API_URL}/analyze/full`, buildFetchOptions({
                 method: 'POST',
                 body: formData
-            });
+            }));
 
             const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
 
