@@ -579,11 +579,23 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			console.log('[SpeedRamp] No energy curve available');
 			return;
 		}
-		
+
 		const rawCurve = analysisData.energy.curve;
 		const N = rawCurve.length;
-		const mean = analysisData.energy.mean ?? 0;
-		const std = analysisData.energy.std ?? 1;
+
+		// Calculate mean and std locally from the curve (API values are unreliable)
+		let sum = 0;
+		for (let i = 0; i < N; i++) {
+			sum += rawCurve[i];
+		}
+		const mean = sum / N;
+
+		let sqDiffSum = 0;
+		for (let i = 0; i < N; i++) {
+			const diff = rawCurve[i] - mean;
+			sqDiffSum += diff * diff;
+		}
+		const std = Math.sqrt(sqDiffSum / N) || 1; // Fallback to 1 if std is 0
 		// Use audio duration from the loaded audio element, or calculate from hop size
 		const duration = audioDuration > 0 ? audioDuration : (N * SECONDS_PER_FRAME);
 		const dt = duration / Math.max(1, N - 1);
@@ -638,7 +650,7 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		console.log(`[SpeedRamp] Sample speeds:`, sampleIndices.map(i => `[${i}]=${speeds[i]?.toFixed(2)}x`).join(', '));
 		console.log(`[SpeedRamp] Sample timeRemap:`, sampleIndices.map(i => `[${i}]=${timeRemap[i]?.toFixed(2)}s`).join(', '));
 		console.log(`[SpeedRamp] Raw energy samples:`, sampleIndices.map(i => `[${i}]=${rawCurve[i]?.toFixed(4)}`).join(', '));
-		console.log(`[SpeedRamp] Energy stats: mean=${mean.toFixed(4)}, std=${std.toFixed(4)}`);
+		console.log(`[SpeedRamp] Energy stats (local calc): mean=${mean.toFixed(4)}, std=${std.toFixed(4)}`);
 	}
 	
 	// Re-process when parameters or audio data change
