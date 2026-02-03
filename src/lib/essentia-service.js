@@ -76,7 +76,9 @@ export class EssentiaService {
 
         try {
             const startTime = performance.now();
-            const response = await fetch(`${API_URL}/analyze/full`, buildFetchOptions({
+            // Send API key as both header and query param (server may expect either)
+            const url = API_KEY ? `${API_URL}/analyze/full?x_api_key=${encodeURIComponent(API_KEY)}` : `${API_URL}/analyze/full`;
+            const response = await fetch(url, buildFetchOptions({
                 method: 'POST',
                 body: formData
             }));
