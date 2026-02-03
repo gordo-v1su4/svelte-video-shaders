@@ -17,6 +17,7 @@ const API_KEY = import.meta.env.VITE_ESSENTIA_API_KEY || '';
 
 // Log the API URL on module load to verify it's set correctly
 console.log(`[EssentiaService] Module loaded. API_URL: ${API_URL}`);
+console.log(`[EssentiaService] API_KEY configured: ${API_KEY ? 'Yes' : 'No'}`);
 console.log(`[EssentiaService] Environment variable VITE_ESSENTIA_API_URL:`, import.meta.env.VITE_ESSENTIA_API_URL);
 console.log(`[EssentiaService] API Key configured:`, API_KEY ? 'Yes' : 'No');
 
