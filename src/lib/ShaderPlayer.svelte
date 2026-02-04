@@ -428,14 +428,14 @@
 				try {
 					material.fragmentShader = newFragmentShader;
 					material.needsUpdate = true;
-					
+
+					// Force compilation to catch WebGL errors early
+					if (renderer && scene && camera) {
+						renderer.compile(scene, camera);
+					}
 					console.log('[ShaderPlayer] Shader updated, length:', newFragmentShader.length);
 				} catch (error) {
-					console.error('[ShaderPlayer] Error updating shader:', error);
-					console.error('[ShaderPlayer] Shader preview:', newFragmentShader.substring(0, 200));
-					
-					// Fallback to default shader on error - don't stop video playback
-					console.warn('[ShaderPlayer] Falling back to default shader to prevent video stop');
+					console.error('[ShaderPlayer] Shader compilation error:', error);
 					material.fragmentShader = defaultFragmentShader;
 					material.needsUpdate = true;
 				}

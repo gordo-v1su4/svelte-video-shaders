@@ -30,6 +30,7 @@ import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	import { gridFragmentShader, gridUniforms } from '$lib/shaders/grid-shader.js';
 	import { lensFlareFragmentShader, lensFlareUniforms } from '$lib/shaders/lens-flare-shader.js';
 	import { crtFragmentShader, crtUniforms } from '$lib/shaders/crt-shader.js';
+	import { anamorphicBreatheFragmentShader, anamorphicBreatheUniforms } from '$lib/shaders/anamorphic-breathe-shader.js';
 	import { AudioAnalyzer } from '$lib/audio-utils.js';
 	import { EssentiaService } from '$lib/essentia-service.js';
 	import { parseMIDIFile } from '$lib/midi-utils.js';
@@ -496,7 +497,19 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		u_scanlineSpeed: { value: 100.0 },
 		u_gridIntensity: { value: 0.1 },
 		u_vignetteIntensity: { value: 1.0 },
-		u_dither: { value: 0.1 }
+		u_dither: { value: 0.1 },
+
+		// Anamorphic Breathe uniforms
+		u_chromatic_enable: { value: 1.0 },
+		u_chromatic_amount: { value: 0.5 },
+		u_chromatic_speed: { value: 0.8 },
+		u_chromatic_style: { value: 1.0 },
+		u_defocus_enable: { value: 1.0 },
+		u_defocus_amount: { value: 0.4 },
+		u_defocus_speed: { value: 0.5 },
+		u_anamorphic_ratio: { value: 1.5 },
+		u_breathe_intensity: { value: 1.0 },
+		u_breathe_sync: { value: 1.0 }
 	});
 	const fragmentShader = $derived.by(() => {
 		let shader;
@@ -525,6 +538,7 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			case 'Grid': shader = gridFragmentShader; break;
 			case 'LensFlare': shader = lensFlareFragmentShader; break;
 			case 'CRT': shader = crtFragmentShader; break;
+			case 'AnamorphicBreathe': shader = anamorphicBreatheFragmentShader; break;
 			case 'Grayscale': shader = shaders.Grayscale; break;
 			default: shader = shaders.Vignette; break;
 		}
@@ -1511,6 +1525,81 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				break;
 		}
 	}
+
+	// Anamorphic Breathe state variables
+	let chromaticEnabled = $state(true);
+	let defocusEnabled = $state(true);
+	let chromaticStyle = $state(1); // 0 = circular, 1 = horizontal wave
+	let breatheSync = $state(true);
+
+	// Sync checkbox state to uniforms
+	$effect(() => {
+		uniforms.u_chromatic_enable.value = chromaticEnabled ? 1.0 : 0.0;
+	});
+	$effect(() => {
+		uniforms.u_defocus_enable.value = defocusEnabled ? 1.0 : 0.0;
+	});
+	$effect(() => {
+		uniforms.u_chromatic_style.value = chromaticStyle;
+	});
+	$effect(() => {
+		uniforms.u_breathe_sync.value = breatheSync ? 1.0 : 0.0;
+	});
+
+	// Anamorphic Breathe presets
+	function applyAnamorphicPreset(preset) {
+		switch (preset) {
+			case 'subtle':
+				chromaticEnabled = true;
+				defocusEnabled = true;
+				uniforms.u_chromatic_amount.value = 0.2;
+				uniforms.u_chromatic_speed.value = 0.5;
+				chromaticStyle = 1;
+				uniforms.u_defocus_amount.value = 0.15;
+				uniforms.u_defocus_speed.value = 0.3;
+				uniforms.u_anamorphic_ratio.value = 1.3;
+				uniforms.u_breathe_intensity.value = 0.6;
+				breatheSync = true;
+				break;
+			case 'dreamy':
+				chromaticEnabled = true;
+				defocusEnabled = true;
+				uniforms.u_chromatic_amount.value = 0.5;
+				uniforms.u_chromatic_speed.value = 0.6;
+				chromaticStyle = 1;
+				uniforms.u_defocus_amount.value = 0.5;
+				uniforms.u_defocus_speed.value = 0.4;
+				uniforms.u_anamorphic_ratio.value = 1.5;
+				uniforms.u_breathe_intensity.value = 1.0;
+				breatheSync = true;
+				break;
+			case 'trippy':
+				chromaticEnabled = true;
+				defocusEnabled = true;
+				uniforms.u_chromatic_amount.value = 1.2;
+				uniforms.u_chromatic_speed.value = 1.5;
+				chromaticStyle = 0; // circular for trippy
+				uniforms.u_defocus_amount.value = 0.3;
+				uniforms.u_defocus_speed.value = 0.8;
+				uniforms.u_anamorphic_ratio.value = 1.8;
+				uniforms.u_breathe_intensity.value = 1.5;
+				breatheSync = false; // async for more chaos
+				break;
+			case 'cinematic':
+				chromaticEnabled = true;
+				defocusEnabled = true;
+				uniforms.u_chromatic_amount.value = 0.3;
+				uniforms.u_chromatic_speed.value = 0.4;
+				chromaticStyle = 1;
+				uniforms.u_defocus_amount.value = 0.7;
+				uniforms.u_defocus_speed.value = 0.25;
+				uniforms.u_anamorphic_ratio.value = 2.0;
+				uniforms.u_breathe_intensity.value = 0.8;
+				breatheSync = true;
+				break;
+		}
+	}
+
 	// Sync Video Playback with shared IsPlaying state
 	$effect(() => {
 		if (shaderPlayerRef) {
@@ -1646,29 +1735,30 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 					label="Shader"
 					options={{
 						VHS: 'VHS',
-						XlsczN: 'XlsczN (Audio Reactive)',
+						XlsczN: 'XlsczN',
 						Water: 'Water',
-						ChromaticAberration: 'Chromatic Aberration',
+						ChromaticAberration: 'ChromaticAberration',
 						Glitch: 'Glitch',
 						Noise: 'Noise',
 						Vignette: 'Vignette',
 						Bloom: 'Bloom',
-						DepthOfField: 'Depth of Field',
-						Depth: 'Depth Visualization',
+						DepthOfField: 'DepthOfField',
+						Depth: 'Depth',
 						Sepia: 'Sepia',
 						Scanline: 'Scanline',
 						Pixelation: 'Pixelation',
-						DotScreen: 'Dot Screen',
-						HueSaturation: 'Hue Saturation',
-						BrightnessContrast: 'Brightness Contrast',
-						ColorDepth: 'Color Depth',
-						ColorAverage: 'Color Average',
-						TiltShift: 'Tilt Shift',
-						ToneMapping: 'Tone Mapping',
+						DotScreen: 'DotScreen',
+						HueSaturation: 'HueSaturation',
+						BrightnessContrast: 'BrightnessContrast',
+						ColorDepth: 'ColorDepth',
+						ColorAverage: 'ColorAverage',
+						TiltShift: 'TiltShift',
+						ToneMapping: 'ToneMapping',
 						ASCII: 'ASCII',
 						Grid: 'Grid',
-					LensFlare: 'Lens Flare',
-					CRT: 'CRT (More CRT-like)',
+						LensFlare: 'LensFlare',
+						CRT: 'CRT',
+						AnamorphicBreathe: 'AnamorphicBreathe',
 						Grayscale: 'Grayscale'
 					}}
 				/>
@@ -2686,6 +2776,88 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							min={0}
 							max={0.5}
 							step={0.01}
+						/>
+					</Tweakpane.Folder>
+				{/if}
+
+				{#if selectedShaderName === 'AnamorphicBreathe'}
+					<Tweakpane.Folder title="Anamorphic Breathe Presets" expanded={true}>
+						<div class="preset-buttons">
+							<Button title="Subtle" on:click={() => applyAnamorphicPreset('subtle')} />
+							<Button title="Dreamy" on:click={() => applyAnamorphicPreset('dreamy')} />
+							<Button title="Trippy" on:click={() => applyAnamorphicPreset('trippy')} />
+							<Button title="Cinematic" on:click={() => applyAnamorphicPreset('cinematic')} />
+						</div>
+					</Tweakpane.Folder>
+
+					<Tweakpane.Folder title="Chromatic Undulation" expanded={true}>
+						<Tweakpane.Checkbox
+							bind:value={chromaticEnabled}
+							label="Enable Chromatic"
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_chromatic_amount.value}
+							label="Amount"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_chromatic_speed.value}
+							label="Speed"
+							min={0.1}
+							max={3}
+							step={0.1}
+						/>
+						<Tweakpane.List
+							bind:value={chromaticStyle}
+							label="Style"
+							options={{
+								'Circular': 0,
+								'Horizontal Wave': 1
+							}}
+						/>
+					</Tweakpane.Folder>
+
+					<Tweakpane.Folder title="Anamorphic Defocus" expanded={true}>
+						<Tweakpane.Checkbox
+							bind:value={defocusEnabled}
+							label="Enable Defocus"
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_defocus_amount.value}
+							label="Amount"
+							min={0}
+							max={1}
+							step={0.01}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_defocus_speed.value}
+							label="Speed"
+							min={0.1}
+							max={2}
+							step={0.1}
+						/>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_anamorphic_ratio.value}
+							label="Anamorphic Ratio"
+							min={1}
+							max={2.5}
+							step={0.1}
+						/>
+					</Tweakpane.Folder>
+
+					<Tweakpane.Folder title="Master Controls" expanded={true}>
+						<Tweakpane.Slider
+							bind:value={uniforms.u_breathe_intensity.value}
+							label="Intensity"
+							min={0}
+							max={2}
+							step={0.01}
+						/>
+						<Tweakpane.Checkbox
+							bind:value={breatheSync}
+							label="Sync Effects"
 						/>
 					</Tweakpane.Folder>
 				{/if}
