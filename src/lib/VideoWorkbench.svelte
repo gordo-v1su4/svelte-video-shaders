@@ -271,15 +271,17 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			if ($activeVideo && currentSectionVideos.length > 0) {
 				const isInPool = currentSectionVideos.some(v => v.id === $activeVideo?.id);
 				if (!isInPool) {
-					// Current video not in new section's pool - switch to first video in pool
-					console.log(`[VideoWorkbench] Video not in section pool, switching...`);
-					const nextVideo = currentSectionVideos[0];
-					const globalIndex = $videoAssets.findIndex(asset => asset.id === nextVideo.id);
-					activeVideo.set(nextVideo);
-					if (shaderPlayerRef) {
-						shaderPlayerRef.seekToClip(globalIndex);
-					}
+				// Current video not in new section's pool - switch to first video in pool
+				console.log(`[VideoWorkbench] Video not in section pool, switching...`);
+				const nextVideo = currentSectionVideos[0];
+				const globalIndex = $videoAssets.findIndex(asset => asset.id === nextVideo.id);
+				// Update lastActiveVideoId BEFORE setting activeVideo to prevent duplicate seekToClip
+				lastActiveVideoId = nextVideo.id;
+				activeVideo.set(nextVideo);
+				if (shaderPlayerRef) {
+					shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, isSpeedRampActive());
 				}
+			}
 			}
 		}
 	});
@@ -690,6 +692,11 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 				if (uniforms.u_trebleLevel) uniforms.u_trebleLevel.value = trebleLevel;
 			}
 			
+			// Check beat triggers BEFORE computing frame index.
+			// This ensures any clip switch (seekToClip) happens before setAudioTime()
+			// computes the frame, eliminating the stale-frame race condition.
+			checkBeatTriggers(audioCurrentTime);
+			
 			// === AUDIO AS MASTER CLOCK ===
 			// Sync video frame to audio time (Phase 2 feature)
 			if (audioMasterEnabled && shaderPlayerRef) {
@@ -703,11 +710,15 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 					const rawRemappedTime = processedTimeRemap[clampedIndex];
 					// Offset = what we were showing (audioCurrentTime) minus what remap would show
 					speedRampTimeOffset = audioCurrentTime - rawRemappedTime;
+					// Switch to direct frame mapping for speed ramp mode
+					shaderPlayerRef.setDirectFrameMapping(true);
 					console.log(`[SpeedRamp] Enabled at audio=${audioCurrentTime.toFixed(2)}s, rawRemap=${rawRemappedTime.toFixed(2)}s, offset=${speedRampTimeOffset.toFixed(2)}s`);
 					wasSpeedRampingEnabled = true;
 				} else if (!canUseSpeedRamp && wasSpeedRampingEnabled) {
-					// Just turned OFF: reset offset
+					// Just turned OFF: reset offset and switch back to elapsed-time mapping
 					speedRampTimeOffset = 0;
+					// Recalculate clipStartRampedTime for elapsed-time mode
+					shaderPlayerRef.setDirectFrameMapping(false);
 					wasSpeedRampingEnabled = false;
 					console.log(`[SpeedRamp] Disabled`);
 				}
@@ -776,7 +787,8 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 	});
 	let videoCycleInterval = null;
 	let videoCycleDuration = $state(5000); // 5 seconds per video
-	let enableVideoCycling = $state(false);
+	// Video cycling is always enabled (clips auto-swap on beat triggers)
+	let lastActiveVideoId = null; // Tracks last video ID to prevent duplicate seekToClip calls
 
 	function resetAudioUniforms() {
 		if (uniforms.u_audioLevel) uniforms.u_audioLevel.value = 0;
@@ -1116,17 +1128,14 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		return nextIndex === -1 ? triggers.length : nextIndex;
 	};
 	
-	$effect(() => {
-		const time = audioCurrentTime;
-		const triggers = filteredOnsets; // Capture for reactivity
-		
-		// Reset cursor when triggers array changes (e.g., density slider adjusted)
-		if (triggers.length !== previousTriggersLength) {
-			previousTriggersLength = triggers.length;
-			nextMarkerIndex = findNextMarkerIndex(triggers, time);
-			console.log(`[Trigger] Triggers changed (${triggers.length}), reset cursor to ${nextMarkerIndex}`);
-			return;
-		}
+	/**
+	 * Check for beat triggers and fire clip switches, jump cuts, FX spikes, etc.
+	 * Called directly from updateTime() BEFORE setAudioTime() to ensure clip
+	 * switches are atomic with frame calculation (no stale-frame race condition).
+	 * @param {number} time - Current audio time in seconds
+	 */
+	function checkBeatTriggers(time) {
+		const triggers = filteredOnsets;
 		
 		// Reset tracking on seek or pause (approximate)
 		if (!isPlaying || time < previousTime || Math.abs(time - previousTime) > 1.0) {
@@ -1138,7 +1147,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		if (time > previousTime) {
 			// Debug: log every ~1 second to avoid spam
 			if (Math.floor(time) !== Math.floor(previousTime)) {
-				console.log(`[Trigger] time=${time.toFixed(2)}, triggers=${triggers.length}, enableCycling=${enableVideoCycling}`);
+				console.log(`[Trigger] time=${time.toFixed(2)}, triggers=${triggers.length}`);
 			}
 			
 			while (nextMarkerIndex < triggers.length) {
@@ -1155,14 +1164,10 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				markerCounter++;
 				setTimeout(() => isBeatActive = false, 100); // Visual blink duration
 				
-				// === TRIGGER: Video Swap ===
+				// === TRIGGER: Video Swap (always active) ===
 				if (markerCounter >= markerSwapThreshold) {
-					if (enableVideoCycling) {
-						console.log(`[VideoWorkbench] 🔄 Video swap triggered! Counter: ${markerCounter}/${markerSwapThreshold}`);
-						nextVideo();
-					} else {
-						console.log(`[VideoWorkbench] ⚠️ Video cycling DISABLED - would have swapped at ${markerCounter}/${markerSwapThreshold}`);
-					}
+					console.log(`[VideoWorkbench] Video swap triggered! Counter: ${markerCounter}/${markerSwapThreshold}`);
+					nextVideo();
 					markerCounter = 0;
 				}
 				
@@ -1194,6 +1199,16 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 			}
 		}
 		previousTime = time;
+	}
+	
+	// Reset trigger cursor when filteredOnsets changes (density slider, MIDI toggle, etc.)
+	$effect(() => {
+		const triggers = filteredOnsets; // Track for reactivity
+		if (triggers.length !== previousTriggersLength) {
+			previousTriggersLength = triggers.length;
+			nextMarkerIndex = findNextMarkerIndex(triggers, audioCurrentTime);
+			console.log(`[Trigger] Triggers changed (${triggers.length}), reset cursor to ${nextMarkerIndex}`);
+		}
 	});
 	
 	// FX trigger decay effect
@@ -1406,6 +1421,14 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		}
 	}
 
+	/**
+	 * Check if speed ramping is currently active.
+	 * Used by seekToClip callers to tell ShaderPlayer which frame mapping mode to use.
+	 */
+	function isSpeedRampActive() {
+		return enableSpeedRamping && audioMasterEnabled && processedTimeRemap && speedCurveTimestep > 0;
+	}
+
 	// Video cycling functionality - now uses section-constrained pools
 	function nextVideo() {
 		if (!shaderPlayerRef || $videoAssets.length <= 1) return;
@@ -1422,16 +1445,13 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		// Find the global index for seekToClip
 		const globalIndex = $videoAssets.findIndex(asset => asset.id === nextVid.id);
 		
+		// Update lastActiveVideoId BEFORE setting activeVideo to prevent the
+		// reactive $effect from firing a duplicate seekToClip (which causes
+		// a glitch frame from the timing difference between the two calls)
+		lastActiveVideoId = nextVid.id;
 		activeVideo.set(nextVid);
-		// Pass current audio time so clip knows when it started
-		// If speed ramping is active, also pass remapped time for proper clip looping
-		let clipStartTime = audioCurrentTime;
-		if (enableSpeedRamping && audioMasterEnabled && processedTimeRemap && speedCurveTimestep > 0) {
-			const curveIndex = Math.floor(audioCurrentTime / speedCurveTimestep);
-			const clampedIndex = Math.max(0, Math.min(processedTimeRemap.length - 1, curveIndex));
-			clipStartTime = processedTimeRemap[clampedIndex];
-		}
-		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, clipStartTime);
+		// Pass current audio time; tell ShaderPlayer if speed ramp is active for frame mapping
+		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, isSpeedRampActive());
 	}
 
 	function previousVideo() {
@@ -1447,12 +1467,13 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		
 		const globalIndex = $videoAssets.findIndex(asset => asset.id === prevVid.id);
 		
+		// Update lastActiveVideoId BEFORE setting activeVideo to prevent duplicate seekToClip
+		lastActiveVideoId = prevVid.id;
 		activeVideo.set(prevVid);
-		// Pass current audio time so clip knows when it started
-		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime);
+		// Pass current audio time; tell ShaderPlayer if speed ramp is active for frame mapping
+		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, isSpeedRampActive());
 	}
 
-	let lastActiveVideoId = null;
 	$effect(() => {
 		if (!$activeVideo) {
 			lastActiveVideoId = null;
@@ -1466,7 +1487,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		if (globalIndex < 0) return;
 
 		lastActiveVideoId = $activeVideo.id;
-		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime);
+		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, isSpeedRampActive());
 	});
 
     // Removed time-based cycling logic as we now use onVideoEnd
@@ -1783,11 +1804,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							<Button title="Next →" on:click={nextVideo} />
 						</div>
 						
-						<Tweakpane.Checkbox
-							bind:value={enableVideoCycling}
-							label="Auto Cycle Videos"
-						/>
-						<Tweakpane.Checkbox
+					<Tweakpane.Checkbox
 							bind:value={enableLooping}
 							label="Loop Playback"
 						/>
@@ -1916,10 +1933,6 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				<Tweakpane.Folder title="Triggers & Effects" expanded={false}>
 					<!-- Video Cycling -->
 					<Tweakpane.Folder title="Video Cycling" expanded={true}>
-						<Tweakpane.Checkbox
-							bind:value={enableVideoCycling}
-							label="Enable Video Cycling"
-						/>
 						<Tweakpane.Slider
 							bind:value={markerSwapThreshold}
 							label="Swap Every N Markers"

@@ -43,6 +43,8 @@
 	let clipLoopCount = 0;
 	let hasSignaledClipEnd = false;
 	let jumpFrameOffset = 0; // Accumulated jump cut offset (applied to frame calculation)
+	let useDirectFrameMapping = false; // When true, setAudioTime uses direct modulo (speed ramp mode)
+	let frameUpdatedThisCycle = false; // Guards against rendering stale frames during clip transitions
 
 	// Audio-reactive state
 	let beatIndex = 0;
@@ -159,22 +161,36 @@
 					globalFrameIndex += framesToAdvance;
 					accumulatedTime -= framesToAdvance * FRAME_DURATION_MS;
 				}
+				// Self-driven mode always has fresh frames
+				frameUpdatedThisCycle = true;
 			}
 
 			// Handle looping/clamping
-			if (enableLooping) {
-				globalFrameIndex = ((globalFrameIndex % frameBuffer.totalFrames) + frameBuffer.totalFrames) % frameBuffer.totalFrames;
-			} else {
-				globalFrameIndex = Math.max(0, Math.min(frameBuffer.totalFrames - 1, globalFrameIndex));
+			// When externally controlled (audio master mode), setAudioTime() already
+			// handles per-clip wrapping. Global wrapping here would cause the frame
+			// index to land in a different clip's range, creating visual glitches.
+			if (!isExternallyControlled) {
+				if (enableLooping) {
+					globalFrameIndex = ((globalFrameIndex % frameBuffer.totalFrames) + frameBuffer.totalFrames) % frameBuffer.totalFrames;
+				} else {
+					globalFrameIndex = Math.max(0, Math.min(frameBuffer.totalFrames - 1, globalFrameIndex));
+				}
 			}
 
-			// Get frame directly from pre-decoded buffer (instant - no async)
-			const frame = frameBuffer.getFrame(globalFrameIndex);
-			if (frame) {
-				// Direct texture update - all frames are same size (1280x720)
-				texture.image = frame;
-				texture.needsUpdate = true;
-				isReady = true;
+			// When externally controlled (audio master), only update the texture if
+			// setAudioTime() has been called since the last render. This prevents
+			// rendering stale frames from the OLD clip when the render loop fires
+			// before updateTime() has had a chance to call seekToClip + setAudioTime.
+			if (!isExternallyControlled || frameUpdatedThisCycle) {
+				// Get frame directly from pre-decoded buffer (instant - no async)
+				const frame = frameBuffer.getFrame(globalFrameIndex);
+				if (frame) {
+					// Direct texture update - all frames are same size (1280x720)
+					texture.image = frame;
+					texture.needsUpdate = true;
+					isReady = true;
+				}
+				frameUpdatedThisCycle = false;
 			}
 		}
 
@@ -213,8 +229,12 @@
 	/**
 	 * Switch to a different clip - INSTANT for pre-decoded frames
 	 * No queuing, no delays - just set the state directly
+	 * 
+	 * @param {number} clipIndex - Index of clip to switch to
+	 * @param {number|null} audioTime - Real audio time (for marker detection)
+	 * @param {boolean} speedRampActive - Whether speed ramping is currently active
 	 */
-	export function seekToClip(clipIndex, audioTime = null, rampedTime = null) {
+	export function seekToClip(clipIndex, audioTime = null, speedRampActive = false) {
 		if (!frameBuffer) return;
 		
 		const clipInfo = frameBuffer.getClipInfo(clipIndex);
@@ -222,26 +242,40 @@
 		
 		// Instant state update - no async, no queuing
 		currentClipIndex = clipIndex;
-		clipLocalFrame = 0;
 		clipLoopCount = 0;
 		hasSignaledClipEnd = false;
-		globalFrameIndex = clipInfo.startFrame;
 		accumulatedTime = 0;
 		jumpFrameOffset = 0;
+		useDirectFrameMapping = speedRampActive;
+		frameUpdatedThisCycle = true;
 		
 		// Set timing for audio sync
 		if (audioTime !== null && audioTime !== undefined) {
 			clipStartAudioTime = audioTime;
-			clipStartRampedTime = (rampedTime !== null && rampedTime !== undefined) 
-				? rampedTime 
-				: audioTime;
+			clipStartRampedTime = audioTime;
 		}
+		
+		// When speed ramping is active, don't set a starting frame here.
+		// setAudioTime() will be called immediately after with the correct
+		// remapped time and will use direct frame mapping (no elapsed time).
+		// When NOT speed ramping, start at frame 0.
+		clipLocalFrame = 0;
+		globalFrameIndex = clipInfo.startFrame;
 	}
 
 	export function setSpeed(speed) {
 		playbackSpeed = speed;
 		// When using setSpeed (not setAudioTime), we're in internal control mode
 		isExternallyControlled = false;
+	}
+
+	/**
+	 * Set whether setAudioTime should use direct frame mapping (speed ramp mode)
+	 * or elapsed-time mapping (normal mode).
+	 * @param {boolean} direct - true for speed ramp mode, false for normal
+	 */
+	export function setDirectFrameMapping(direct) {
+		useDirectFrameMapping = direct;
 	}
 
 	export function jumpFrames(delta) {
@@ -296,7 +330,14 @@
 	/**
 	 * Set the video frame based on audio time (audio-as-master-clock)
 	 * FAST PATH: Just calculates frame index, no async operations
-	 * @param {number} audioTimeSeconds - Current audio time in seconds
+	 * 
+	 * Two modes:
+	 * - Direct mapping (speed ramp): audioTimeSeconds is the remapped "virtual" time.
+	 *   Frame = floor(time * fps) % clipFrameCount. Robust to curve changes/slider tweaks.
+	 * - Elapsed time (no speed ramp): audioTimeSeconds is real clock time.
+	 *   Frame = floor((time - clipStartTime) * fps) % clipFrameCount.
+	 * 
+	 * @param {number} audioTimeSeconds - Current audio time in seconds (real or remapped)
 	 * @param {number} fps - Video frame rate (default 24)
 	 * @returns {number} The frame index that was set
 	 */
@@ -304,6 +345,7 @@
 		if (!frameBuffer || frameBuffer.totalFrames === 0) return 0;
 		
 		isExternallyControlled = true;
+		frameUpdatedThisCycle = true;
 		
 		const clipInfo = frameBuffer.getClipInfo(currentClipIndex);
 		if (!clipInfo) {
@@ -312,12 +354,20 @@
 			return globalFrameIndex;
 		}
 		
-		// Calculate time elapsed since this clip started
-		const elapsedTime = Math.max(0, audioTimeSeconds - clipStartRampedTime);
-		const clipDurationSeconds = clipInfo.frameCount / fps;
+		let targetFrame;
 		
-		// Calculate frame within clip (with looping)
-		let targetFrame = Math.floor(elapsedTime * fps);
+		if (useDirectFrameMapping) {
+			// Speed ramp mode: use remapped time directly.
+			// The remapped time is a "virtual playback clock" that already encodes
+			// speed changes. We just convert it to a frame and wrap within the clip.
+			// This is robust to curve recalculations and slider changes because
+			// it doesn't depend on any stored start time.
+			targetFrame = Math.floor(audioTimeSeconds * fps);
+		} else {
+			// Normal mode: use elapsed time since clip started
+			const elapsedTime = Math.max(0, audioTimeSeconds - clipStartRampedTime);
+			targetFrame = Math.floor(elapsedTime * fps);
+		}
 		
 		// Apply jump cut offset if any
 		if (jumpFrameOffset !== 0) {
