@@ -208,4 +208,3 @@ Plus two inline shaders (Grayscale, Vignette legacy) defined directly in `VideoW
 - `src/lib/ShaderPlayer.svelte` -- Shader compilation, uniform handling, render loop
 - `src/lib/VideoWorkbench.svelte` -- Shader selection, uniform defaults, Tweakpane controls
 - `src/lib/shaders/*.js` -- All shader effect files
-- `shader-working/` -- Reference implementations (React/Three.js, uses `tDiffuse` convention -- not directly compatible)
