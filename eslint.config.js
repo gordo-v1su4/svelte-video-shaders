@@ -1,6 +1,3 @@
-// For more info, see https://github.com/storybookjs/eslint-plugin-storybook#configuration-flat-config-format
-import storybook from 'eslint-plugin-storybook';
-
 import prettier from 'eslint-config-prettier';
 import vitest from 'eslint-plugin-vitest';
 import { includeIgnoreFile } from '@eslint/compat';
@@ -71,9 +68,6 @@ export default [
 			'vitest/valid-title': 'error'
 		}
 	},
-
-	// Storybook
-	...storybook.configs['flat/recommended'],
 
 	// Formatting (last - must be after all other configs)
 	prettier

@@ -92,11 +92,9 @@ npm run test
 ```bash
 # ✅ Correct
 bunx playwright install
-bunx storybook dev
 
 # ❌ Wrong
 npx playwright install
-npx storybook dev
 ```
 
 ## Documentation Updates

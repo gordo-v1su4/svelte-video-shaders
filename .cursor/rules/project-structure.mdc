@@ -17,9 +17,6 @@ svelte-video-shaders/
 │       ├── project-structure.mdc # This file
 │       ├── self-improve.mdc    # Self-improvement guidelines
 │       └── svelte-5-syntax.mdc # Svelte 5 migration guide
-├── .storybook/                 # Storybook configuration
-│   ├── main.js                 # Storybook main configuration
-│   └── preview.js              # Storybook preview settings
 ├── .svelte-kit/                # SvelteKit build output (auto-generated)
 ├── docs/                       # Project documentation
 │   ├── changes.md              # Change log (empty)
@@ -32,8 +29,7 @@ svelte-video-shaders/
 │   ├── app.html                # HTML template
 │   ├── demo.spec.js            # Demo test specification
 │   ├── lib/                    # Reusable components and utilities
-│   ├── routes/                 # SvelteKit routes
-│   └── stories/                # Storybook stories and components
+│   └── routes/                 # SvelteKit routes
 ├── static/                     # Static assets
 ├── .DS_Store                   # macOS system file
 ├── .env                        # Environment variables (API URL)
@@ -84,24 +80,6 @@ svelte-video-shaders/
 - **[+page.svelte](mdc:src/routes/+page.svelte)** - Main page component
 - **[page.svelte.test.js](mdc:src/routes/page.svelte.test.js)** - Page component tests
 
-### Storybook Stories (`src/stories/`)
-- **[Button.svelte](mdc:src/stories/Button.svelte)** - Button component
-- **[Button.stories.svelte](mdc:src/stories/Button.stories.svelte)** - Button stories
-- **[Header.svelte](mdc:src/stories/Header.svelte)** - Header component
-- **[Header.stories.svelte](mdc:src/stories/Header.stories.svelte)** - Header stories
-- **[Page.svelte](mdc:src/stories/Page.svelte)** - Page component
-- **[Page.stories.svelte](mdc:src/stories/Page.stories.svelte)** - Page stories
-- **[Configure.mdx](mdc:src/stories/Configure.mdx)** - Storybook configuration documentation
-- **button.css** - Button component styles
-- **header.css** - Header component styles
-- **page.css** - Page component styles
-
-### Story Assets (`src/stories/assets/`)
-Contains various image and SVG assets for Storybook stories:
-- PNG images for documentation screenshots
-- SVG icons for social media and UI elements
-- AVIF test image for format testing
-
 ## Configuration Files
 
 ### Build and Development
@@ -143,11 +121,9 @@ Contains various image and SVG assets for Storybook stories:
 ### Component Organization
 - **Reusable components** go in `src/lib/`
 - **Page-specific components** go in `src/routes/`
-- **Storybook components** go in `src/stories/`
 
 ### File Naming Conventions
 - **Svelte components**: PascalCase with `.svelte` extension
-- **Stories**: Component name + `.stories.svelte`
 - **CSS files**: kebab-case with `.css` extension
 - **Configuration files**: kebab-case with appropriate extensions
 
@@ -168,14 +144,7 @@ import Layout from '$routes/+layout.svelte';
 ### Adding New Components
 1. **Reusable components**: Add to `src/lib/`
 2. **Page components**: Add to `src/routes/`
-3. **Story components**: Add to `src/stories/`
-4. **Update exports** in `src/lib/index.js` if needed
-
-### Adding New Stories
-1. Create component in `src/stories/`
-2. Create story file with `.stories.svelte` extension
-3. Add any assets to `src/stories/assets/`
-4. Update Storybook configuration if needed
+3. **Update exports** in `src/lib/index.js` if needed
 
 ### Adding New Routes
 1. Create route file in `src/routes/`
@@ -189,7 +158,6 @@ import Layout from '$routes/+layout.svelte';
 - **External Essentia API** (https://essentia.v1su4.com) handles audio analysis, beat detection, and energy curves
 - **WebCodecs + Three.js** pipeline for hardware-accelerated video playback
 - **Pre-decoded frame buffer** enables seamless retiming and jump cuts
-- **Storybook** is configured for component development and documentation
 - **Vite** is used as the build tool with SvelteKit
 - **ESLint and Prettier** are configured for code quality
 - **Vitest 4.0+** is used for testing (browser mode for Svelte components, node mode for unit tests)
