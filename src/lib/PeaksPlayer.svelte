@@ -605,8 +605,66 @@
         console.log("Current Points:", points);
     }
 
-    export function zoomIn() { peaksInstance?.zoom.zoomIn(); }
-    export function zoomOut() { peaksInstance?.zoom.zoomOut(); }
+	function fitWaveformToView() {
+		if (!peaksInstance) return;
+		const zoomview = peaksInstance.views?.getView?.('zoomview');
+		const overview = peaksInstance.views?.getView?.('overview');
+		const fitSeconds = Number.isFinite(duration) && duration > 0 ? duration : 'auto';
+
+		if (zoomview && typeof zoomview.setZoom === 'function') {
+			try {
+				zoomview.setZoom({ seconds: fitSeconds });
+				if (typeof zoomview.setStartTime === 'function') {
+					zoomview.setStartTime(0);
+				}
+			} catch (e) {
+				console.warn('[PeaksPlayer] fitWaveformToView setZoom failed:', e);
+			}
+		}
+
+		if (typeof zoomview?.fitToContainer === 'function') {
+			zoomview.fitToContainer();
+		}
+		if (typeof overview?.fitToContainer === 'function') {
+			overview.fitToContainer();
+		}
+	}
+
+	function clampZoomToDuration() {
+		if (!peaksInstance || !(Number.isFinite(duration) && duration > 0)) return;
+		const zoomview = peaksInstance.views?.getView?.('zoomview');
+		if (!zoomview) return;
+
+		const start = typeof zoomview.getStartTime === 'function' ? zoomview.getStartTime() : 0;
+		const end = typeof zoomview.getEndTime === 'function' ? zoomview.getEndTime() : duration;
+		const span = Math.max(0, end - start);
+
+		// Prevent zoom-out from showing extra empty timeline past actual track length.
+		if (end > duration + 0.05 || span > duration + 0.05) {
+			fitWaveformToView();
+		}
+	}
+
+    export function zoomIn() {
+		peaksInstance?.zoom.zoomIn();
+	}
+
+    export function zoomOut() {
+		if (!peaksInstance) return;
+		const before = peaksInstance.zoom.getZoom();
+		peaksInstance.zoom.zoomOut();
+		const after = peaksInstance.zoom.getZoom();
+
+		// Clamp: if we're already at max zoom-out level, enforce fit-to-view.
+		if (after === before) {
+			fitWaveformToView();
+		}
+		clampZoomToDuration();
+	}
+
+	export function fitZoom() {
+		fitWaveformToView();
+	}
 </script>
 
 <div class="peaks-container" class:loading={!isReady && audioFile}>
@@ -666,8 +724,9 @@
         <div class="header-controls">
          {#if isReady}
          <div class="zoom-controls"> 
-             <button onclick={zoomIn} title="Zoom in">+</button>
-             <button onclick={zoomOut} title="Zoom out">-</button>
+             <button type="button" onclick={zoomIn} title="Zoom in">+</button>
+             <button type="button" onclick={zoomOut} title="Zoom out">-</button>
+             <button type="button" onclick={fitZoom} title="Fit to view">Fit</button>
          </div>
          {/if}
          <button 
@@ -764,6 +823,7 @@
 <div class="controls-toolbar">
     <button type="button" onclick={() => zoomIn()}>Zoom In</button>
     <button type="button" onclick={() => zoomOut()}>Zoom Out</button>
+    <button type="button" onclick={() => fitZoom()}>Fit</button>
     <div class="separator"></div>
     <button type="button" onclick={() => addSegment()}>+ Segment</button>
     <button type="button" onclick={() => addPoint()}>+ Point</button>
@@ -911,11 +971,13 @@
         background: #333;
         border: none;
         color: #fff;
-        width: 20px;
+        min-width: 20px;
+        width: auto;
         height: 20px;
+        padding: 0 6px;
         border-radius: 2px;
         cursor: pointer;
-        font-size: 14px;
+        font-size: 11px;
         display: flex;
         align-items: center;
         justify-content: center;
