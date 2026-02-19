@@ -1527,18 +1527,30 @@
 	}
 
 	function playAudio() {
-		// Control global playback state directly
-		isPlaying = true;
-		if (sharedAudioRef && sharedAudioRef.paused) {
-			sharedAudioRef.play();
-		}
+		setPlaybackState(true);
 	}
 
 	function pauseAudio() {
-		// Control global playback state directly
-		isPlaying = false;
-		if (sharedAudioRef && !sharedAudioRef.paused) {
+		setPlaybackState(false);
+	}
+
+	async function setPlaybackState(shouldPlay) {
+		if (!sharedAudioRef) {
+			isPlaying = shouldPlay;
+			return;
+		}
+
+		if (shouldPlay) {
+			try {
+				await sharedAudioRef.play();
+				isPlaying = true;
+			} catch (err) {
+				console.warn('[VideoWorkbench] Failed to start audio playback:', err);
+				isPlaying = false;
+			}
+		} else {
 			sharedAudioRef.pause();
+			isPlaying = false;
 		}
 	}
 
@@ -1724,15 +1736,7 @@
 	}
 
 	function togglePlayback() {
-		if (shaderPlayerRef) {
-			if (isPlaying) {
-				shaderPlayerRef.pause();
-				isPlaying = false;
-			} else {
-				shaderPlayerRef.play();
-				isPlaying = true;
-			}
-		}
+		setPlaybackState(!isPlaying);
 	}
 
 	/**
@@ -3233,6 +3237,7 @@
 				grid={gridMarkers}
 				onRestart={restartPlayback}
 				onNextVideo={nextVideo}
+				onTogglePlayback={togglePlayback}
 				onSeek={(time) => {
 					// Sync audio position
 					if (audioAnalyzer) audioAnalyzer.seekTo(time);
@@ -3252,7 +3257,7 @@
 				<span class="arranger-title">Sequencer</span>
 				<div class="arranger-header-actions">
 					<span class="arranger-meta">32 bars × 8-count</span>
-					<button class="panel-toggle" onclick={toggleSequencerCollapsed}>
+					<button type="button" class="panel-toggle" onclick={toggleSequencerCollapsed}>
 						{isSequencerCollapsed ? 'Expand' : 'Collapse'}
 					</button>
 				</div>
@@ -3266,8 +3271,9 @@
 				<div class="arranger-track">
 					{#if timelineSections.length > 0}
 						{#each timelineSections as item}
-							<button
-								class="arranger-section-block"
+								<button
+									type="button"
+									class="arranger-section-block"
 								class:active={focusedSectionIndex === item.index}
 								style="left: {item.left}%; width: {item.width}%; background-color: {getSectionColor(item.index)};"
 								onclick={() => focusSection(item.index, true)}
@@ -3283,8 +3289,9 @@
 				<div class="arranger-sections">
 					{#if analysisData.structure?.sections?.length > 0}
 						{#each analysisData.structure.sections as section, sectionIndex}
-							<button
-								class="arranger-section-chip"
+								<button
+									type="button"
+									class="arranger-section-chip"
 								class:active={focusedSectionIndex === sectionIndex}
 								onclick={() => focusSection(sectionIndex, true)}
 							>
@@ -3305,7 +3312,7 @@
 					{#if $videoAssets.length > 0}
 						<span class="clip-buckets-meta">{$videoAssets.length} total clips</span>
 					{/if}
-					<button class="panel-toggle" onclick={toggleClipBucketsCollapsed}>
+					<button type="button" class="panel-toggle" onclick={toggleClipBucketsCollapsed}>
 						{isClipBucketsCollapsed ? 'Expand' : 'Collapse'}
 					</button>
 				</div>
@@ -3319,7 +3326,7 @@
 						class:focused={focusedSectionIndex === sectionIndex || currentSection.index === sectionIndex}
 					>
 						<div class="clip-bucket-top">
-							<button class="clip-bucket-label-wrap" onclick={() => focusSection(sectionIndex)}>
+								<button type="button" class="clip-bucket-label-wrap" onclick={() => focusSection(sectionIndex)}>
 								<span
 									class="clip-bucket-dot"
 									style="background-color: {getSectionColor(sectionIndex)}"
@@ -3328,10 +3335,10 @@
 								<span class="clip-bucket-count">{poolIndices.length} clips</span>
 							</button>
 							<div class="clip-bucket-actions">
-								<button class="clip-bucket-toggle" onclick={() => toggleBucketSection(sectionIndex)}>
+								<button type="button" class="clip-bucket-toggle" onclick={() => toggleBucketSection(sectionIndex)}>
 									{isBucketSectionCollapsed(sectionIndex) ? '▸' : '▾'}
 								</button>
-								<button class="clip-bucket-add" onclick={() => handleSectionUploadClick(sectionIndex)}
+								<button type="button" class="clip-bucket-add" onclick={() => handleSectionUploadClick(sectionIndex)}
 									>+ Add Clips</button
 								>
 							</div>
@@ -3382,7 +3389,7 @@
 							<span class="clip-bucket-label">All Clips</span>
 							<span class="clip-bucket-count">{$videoAssets.length} clips</span>
 						</div>
-						<button class="clip-bucket-add" onclick={handleUploadClick}>+ Add Clips</button>
+						<button type="button" class="clip-bucket-add" onclick={handleUploadClick}>+ Add Clips</button>
 					</div>
 					<div class="clip-bucket-content">
 						{#if $videoAssets.length === 0}

@@ -27,6 +27,7 @@
 		onPreviewTime = (time) => {},
 		onRestart = () => {}, // Callback for restart button
 		onNextVideo = () => {}, // Callback for next video button
+		onTogglePlayback = () => {}, // Callback for play/pause (parent is playback master)
 		mediaElement = null, // External audio element
 		grid = [] // 1/32 note grid markers
 	} = $props();
@@ -79,6 +80,14 @@
 		previewTime = null;
 		previewTarget = null;
 		onPreviewTime(null);
+	}
+
+	function handlePlayPause() {
+		if (typeof onTogglePlayback === 'function') {
+			onTogglePlayback();
+			return;
+		}
+		isPlaying = !isPlaying;
 	}
 
 	let mounted = $state(false);
@@ -608,6 +617,7 @@
 			<!-- Restart button -->
 			<button 
 				class="transport-btn restart-btn"
+				type="button"
 				onclick={onRestart}
 				disabled={!isReady}
 				title="Restart"
@@ -619,7 +629,8 @@
 			<!-- Play/Pause button -->
 			<button 
 				class="play-btn"
-				onclick={() => { isPlaying = !isPlaying; }}
+				type="button"
+				onclick={handlePlayPause}
 				disabled={!isReady}
 				title={isPlaying ? 'Pause' : 'Play'}
 			>
@@ -637,6 +648,7 @@
 			<!-- Next Video button -->
 			<button 
 				class="transport-btn next-btn"
+				type="button"
 				onclick={onNextVideo}
 				disabled={!isReady}
 				title="Next Video"
@@ -660,6 +672,7 @@
          {/if}
          <button 
          	class="marker-toggle-btn" 
+			type="button"
          	class:active={showMIDIMarkers}
          	class:has-data={midiMarkers && midiMarkers.length > 0}
          	disabled={!midiMarkers || midiMarkers.length === 0}
@@ -679,6 +692,7 @@
          </button>
          <button 
          	class="marker-toggle-btn" 
+			type="button"
          	class:active={showOnsets}
          	class:has-data={onsets && onsets.length > 0}
          	disabled={!onsets || onsets.length === 0}
@@ -702,7 +716,7 @@
 		bind:this={zoomviewContainer}
 		id={zoomId}
 		class="peaks-zoomview"
-		style:height="{zoomHeight}px"
+		style:height={`${zoomHeight}px`}
 		role="img"
 		aria-label="Audio waveform zoom view"
 		onmousemove={(event) => updatePreview(event, 'zoomview', zoomviewContainer)}
@@ -723,7 +737,7 @@
 		bind:this={overviewContainer}
 		id={overviewId}
 		class="peaks-overview"
-		style:height="{overviewHeight}px"
+		style:height={`${overviewHeight}px`}
 		role="img"
 		aria-label="Audio waveform overview"
 		onmousemove={(event) => updatePreview(event, 'overview', overviewContainer)}
@@ -748,13 +762,13 @@
 
 {#if isReady}
 <div class="controls-toolbar">
-    <button onclick={() => zoomIn()}>Zoom In</button>
-    <button onclick={() => zoomOut()}>Zoom Out</button>
+    <button type="button" onclick={() => zoomIn()}>Zoom In</button>
+    <button type="button" onclick={() => zoomOut()}>Zoom Out</button>
     <div class="separator"></div>
-    <button onclick={() => addSegment()}>+ Segment</button>
-    <button onclick={() => addPoint()}>+ Point</button>
+    <button type="button" onclick={() => addSegment()}>+ Segment</button>
+    <button type="button" onclick={() => addPoint()}>+ Point</button>
     <div class="separator"></div>
-    <button onclick={() => logData()}>Log Data</button>
+    <button type="button" onclick={() => logData()}>Log Data</button>
 </div>
 {/if}
 
