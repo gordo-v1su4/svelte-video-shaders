@@ -2,39 +2,60 @@
 	import * as Tweakpane from 'svelte-tweakpane-ui';
 	import { ThemeUtils } from 'svelte-tweakpane-ui';
 	import Button from 'svelte-tweakpane-ui/Button.svelte';
-import ShaderPlayer from '$lib/ShaderPlayer.svelte';
-import PeaksPlayer from '$lib/PeaksPlayer.svelte';
+	import ShaderPlayer from '$lib/ShaderPlayer.svelte';
+	import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	import { videoAssets, activeVideo } from '$lib/stores.js';
 	import { generateThumbnail } from '$lib/video-utils.js';
 	import { vhsFragmentShader } from '$lib/shaders/vhs-shader.js';
 	import { xlsczNFragmentShader, xlsczNUniforms } from '$lib/shaders/xlsczn-shader.js';
 	import { waterFragmentShader, waterUniforms } from '$lib/shaders/water-shader.js';
-	import { chromaticAberrationFragmentShader, chromaticAberrationUniforms } from '$lib/shaders/chromatic-aberration-shader.js';
+	import {
+		chromaticAberrationFragmentShader,
+		chromaticAberrationUniforms
+	} from '$lib/shaders/chromatic-aberration-shader.js';
 	import { glitchFragmentShader, glitchUniforms } from '$lib/shaders/glitch-shader.js';
 	import { noiseFragmentShader, noiseUniforms } from '$lib/shaders/noise-shader.js';
 	import { vignetteFragmentShader, vignetteUniforms } from '$lib/shaders/vignette-shader.js';
 	import { bloomFragmentShader, bloomUniforms } from '$lib/shaders/bloom-shader.js';
-	import { depthOfFieldFragmentShader, depthOfFieldUniforms } from '$lib/shaders/depth-of-field-shader.js';
+	import {
+		depthOfFieldFragmentShader,
+		depthOfFieldUniforms
+	} from '$lib/shaders/depth-of-field-shader.js';
 	import { depthFragmentShader, depthUniforms } from '$lib/shaders/depth-shader.js';
 	import { sepiaFragmentShader, sepiaUniforms } from '$lib/shaders/sepia-shader.js';
 	import { scanlineFragmentShader, scanlineUniforms } from '$lib/shaders/scanline-shader.js';
 	import { pixelationFragmentShader, pixelationUniforms } from '$lib/shaders/pixelation-shader.js';
 	import { dotScreenFragmentShader, dotScreenUniforms } from '$lib/shaders/dot-screen-shader.js';
-	import { hueSaturationFragmentShader, hueSaturationUniforms } from '$lib/shaders/hue-saturation-shader.js';
-	import { brightnessContrastFragmentShader, brightnessContrastUniforms } from '$lib/shaders/brightness-contrast-shader.js';
+	import {
+		hueSaturationFragmentShader,
+		hueSaturationUniforms
+	} from '$lib/shaders/hue-saturation-shader.js';
+	import {
+		brightnessContrastFragmentShader,
+		brightnessContrastUniforms
+	} from '$lib/shaders/brightness-contrast-shader.js';
 	import { colorDepthFragmentShader, colorDepthUniforms } from '$lib/shaders/color-depth-shader.js';
-	import { colorAverageFragmentShader, colorAverageUniforms } from '$lib/shaders/color-average-shader.js';
+	import {
+		colorAverageFragmentShader,
+		colorAverageUniforms
+	} from '$lib/shaders/color-average-shader.js';
 	import { tiltShiftFragmentShader, tiltShiftUniforms } from '$lib/shaders/tilt-shift-shader.js';
-	import { toneMappingFragmentShader, toneMappingUniforms } from '$lib/shaders/tone-mapping-shader.js';
+	import {
+		toneMappingFragmentShader,
+		toneMappingUniforms
+	} from '$lib/shaders/tone-mapping-shader.js';
 	import { asciiFragmentShader, asciiUniforms } from '$lib/shaders/ascii-shader.js';
 	import { gridFragmentShader, gridUniforms } from '$lib/shaders/grid-shader.js';
 	import { lensFlareFragmentShader, lensFlareUniforms } from '$lib/shaders/lens-flare-shader.js';
 	import { crtFragmentShader, crtUniforms } from '$lib/shaders/crt-shader.js';
-	import { anamorphicBreatheFragmentShader, anamorphicBreatheUniforms } from '$lib/shaders/anamorphic-breathe-shader.js';
+	import {
+		anamorphicBreatheFragmentShader,
+		anamorphicBreatheUniforms
+	} from '$lib/shaders/anamorphic-breathe-shader.js';
 	import { AudioAnalyzer } from '$lib/audio-utils.js';
 	import { EssentiaService } from '$lib/essentia-service.js';
 	import { parseMIDIFile } from '$lib/midi-utils.js';
-import { frameBuffer } from './webcodecs-frame-buffer.js';
+	import { frameBuffer } from './webcodecs-frame-buffer.js';
 
 	// --- Shader State ---
 	const shaders = {
@@ -66,7 +87,13 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 	let selectedShaderName = $state('VHS');
 	let audioAnalyzer = null;
 	let essentiaService = null;
-	let analysisData = $state({ beats: [], bpm: 0, onsets: [], structure: { sections: [], boundaries: [] }, energy: null });
+	let analysisData = $state({
+		beats: [],
+		bpm: 0,
+		onsets: [],
+		structure: { sections: [], boundaries: [] },
+		energy: null
+	});
 	let isAnalyzingAudio = $state(false);
 	let audioFile = $state(null);
 	let audioFileUrl = $state(null); // Store blob URL to prevent garbage collection
@@ -90,110 +117,116 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 	let markerCounter = $state(0); // Current count of markers hit
 	let isBeatActive = $state(false); // For visual indicator
 	let lastBeatTime = 0; // Debounce for beat detection
-	
+
 	let enableLooping = $state(true); // Loop/auto-cycle within playback
-	
+
 	let showGrid = $state(true);
-	
+
 	// Section looping
 	let loopSectionIndex = $state(-1); // -1 = no loop, 0+ = loop that section
-	
+
 	// Separate arrays for MIDI markers and Essentia onsets
 	// Seeded random function for deterministic random skip
 	function seededRandom(seed) {
 		const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
 		return x - Math.floor(x);
 	}
-	
+
 	// These are filtered by duration/density but NOT by toggle state (PeaksPlayer handles toggles)
 	const filteredMIDIMarkers = $derived.by(() => {
 		if (midiMarkers.length === 0) return [];
-		
+
 		const density = midiDensity;
 		const doRandomSkip = enableRandomSkip;
 		const skipChance = randomSkipChance;
-		
+
 		// Filter MIDI markers to audio duration
 		let markers = midiMarkers
-			.map(t => typeof t === 'number' ? t : parseFloat(t))
-			.filter(t => !isNaN(t) && t >= 0)
-			.filter(t => !audioDuration || t <= audioDuration);
-		
+			.map((t) => (typeof t === 'number' ? t : parseFloat(t)))
+			.filter((t) => !isNaN(t) && t >= 0)
+			.filter((t) => !audioDuration || t <= audioDuration);
+
 		// Apply density filtering using time-interval approach (same as onset density)
 		if (density < 1.0) {
 			const bpm = analysisData.bpm > 0 ? analysisData.bpm : 120;
 			const secondsPerBeat = 60 / bpm;
 			const interval32 = secondsPerBeat / 8; // 1/32 note duration
-			
+
 			// Map density slider (0.0-1.0) to interval multiplier
 			const scaler = 1 + (1 - density) * 31;
 			const effectiveMinInterval = interval32 * scaler;
-			
+
 			let result = [];
 			let lastTime = -effectiveMinInterval; // Ensure first can be picked
-			
+
 			for (const marker of markers) {
 				if (marker - lastTime >= effectiveMinInterval) {
 					result.push(marker);
 					lastTime = marker;
 				}
 			}
-			
+
 			markers = result;
 		}
-		
+
 		// Apply random skip
 		if (doRandomSkip && skipChance > 0) {
 			markers = markers.filter((_, i) => seededRandom(i) > skipChance);
 		}
-		
-		console.log(`[VideoWorkbench] Filtered MIDI markers: ${midiMarkers.length} -> ${markers.length} (density=${density.toFixed(2)}, randomSkip=${doRandomSkip})`);
+
+		console.log(
+			`[VideoWorkbench] Filtered MIDI markers: ${midiMarkers.length} -> ${markers.length} (density=${density.toFixed(2)}, randomSkip=${doRandomSkip})`
+		);
 		return markers;
 	});
-	
+
 	const filteredEssentiaOnsets = $derived.by(() => {
 		// Track onsetDensity to ensure reactivity
 		const density = onsetDensity;
 		const doRandomSkip = enableRandomSkip;
 		const skipChance = randomSkipChance;
-		
+
 		if (!analysisData.onsets || analysisData.onsets.length === 0) {
 			return [];
 		}
-		
+
 		const bpm = analysisData.bpm > 0 ? analysisData.bpm : 120;
 		const secondsPerBeat = 60 / bpm;
 		const interval32 = secondsPerBeat / 8; // 1/32 note duration
-		
+
 		// Map density slider (0.0-1.0) to interval multiplier
 		const scaler = 1 + (1 - density) * 31;
 		const effectiveMinInterval = interval32 * scaler;
 
 		let result = [];
 		let lastTime = -effectiveMinInterval; // Ensure first can be picked
-		
+
 		for (const onset of analysisData.onsets) {
 			if (onset - lastTime >= effectiveMinInterval) {
 				result.push(onset);
 				lastTime = onset;
 			}
 		}
-		
+
 		// Apply random skip
 		if (doRandomSkip && skipChance > 0) {
 			result = result.filter((_, i) => seededRandom(i + 1000) > skipChance);
 		}
-		
-		console.log(`[VideoWorkbench] filteredEssentiaOnsets: density=${density.toFixed(2)}, randomSkip=${doRandomSkip}, filtered ${result.length} from ${analysisData.onsets.length} onsets`);
+
+		console.log(
+			`[VideoWorkbench] filteredEssentiaOnsets: density=${density.toFixed(2)}, randomSkip=${doRandomSkip}, filtered ${result.length} from ${analysisData.onsets.length} onsets`
+		);
 		return result;
 	});
-	
+
 	// Combined array for triggers (both can be used) - only include if toggle is enabled
 	const filteredOnsets = $derived.by(() => {
-		const midi = (showMIDIMarkers && filteredMIDIMarkers.length > 0) ? filteredMIDIMarkers : [];
-		const onsets = (showOnsets && filteredEssentiaOnsets.length > 0) ? filteredEssentiaOnsets : [];
+		const midi = showMIDIMarkers && filteredMIDIMarkers.length > 0 ? filteredMIDIMarkers : [];
+		const onsets = showOnsets && filteredEssentiaOnsets.length > 0 ? filteredEssentiaOnsets : [];
 		const combined = [...midi, ...onsets].sort((a, b) => a - b);
-		console.log(`[VideoWorkbench] filteredOnsets: ${midi.length} MIDI + ${onsets.length} Onsets = ${combined.length} total triggers`);
+		console.log(
+			`[VideoWorkbench] filteredOnsets: ${midi.length} MIDI + ${onsets.length} Onsets = ${combined.length} total triggers`
+		);
 		return combined;
 	});
 
@@ -202,16 +235,17 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		const bpm = analysisData.bpm > 0 ? analysisData.bpm : 120;
 		const secondsPerBeat = 60 / bpm;
 		const interval32 = secondsPerBeat / 8;
-		
+
 		const markers = [];
 		// Align grid to first beat if available, else 0
-		const startOffset = (analysisData.beats && analysisData.beats.length > 0) ? analysisData.beats[0] : 0;
-		
+		const startOffset =
+			analysisData.beats && analysisData.beats.length > 0 ? analysisData.beats[0] : 0;
+
 		// Backfill from startOffset to 0
 		for (let t = startOffset - interval32; t >= 0; t -= interval32) {
 			markers.unshift(t);
 		}
-		
+
 		// Forward fill
 		for (let t = startOffset; t < audioDuration; t += interval32) {
 			markers.push(t);
@@ -246,7 +280,7 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		if (!sections || sections.length === 0) {
 			return { label: 'song', start: 0, end: audioDuration || 0, index: 0 };
 		}
-		
+
 		const time = audioCurrentTime;
 		for (let i = 0; i < sections.length; i++) {
 			const section = sections[i];
@@ -259,29 +293,43 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		return { ...lastSection, index: sections.length - 1 };
 	});
 
+	$effect(() => {
+		const sections = analysisData.structure?.sections || [];
+		if (sections.length === 0) {
+			focusedSectionIndex = -1;
+			return;
+		}
+
+		if (focusedSectionIndex < 0 || focusedSectionIndex >= sections.length) {
+			focusedSectionIndex = currentSection.index >= 0 ? currentSection.index : 0;
+		}
+	});
+
 	// Track section changes for video pool switching
 	let previousSectionIndex = $state(-1);
-	
+
 	$effect(() => {
 		if (currentSection.index !== previousSectionIndex) {
-			console.log(`[VideoWorkbench] Section changed: ${currentSection.label} (${currentSection.index})`);
+			console.log(
+				`[VideoWorkbench] Section changed: ${currentSection.label} (${currentSection.index})`
+			);
 			previousSectionIndex = currentSection.index;
-			
+
 			// Check if current video is in the new section's pool
 			if ($activeVideo && currentSectionVideos.length > 0) {
-				const isInPool = currentSectionVideos.some(v => v.id === $activeVideo?.id);
+				const isInPool = currentSectionVideos.some((v) => v.id === $activeVideo?.id);
 				if (!isInPool) {
-				// Current video not in new section's pool - switch to first video in pool
-				console.log(`[VideoWorkbench] Video not in section pool, switching...`);
-				const nextVideo = currentSectionVideos[0];
-				const globalIndex = $videoAssets.findIndex(asset => asset.id === nextVideo.id);
-				// Update lastActiveVideoId BEFORE setting activeVideo to prevent duplicate seekToClip
-				lastActiveVideoId = nextVideo.id;
-				activeVideo.set(nextVideo);
-				if (shaderPlayerRef) {
-					shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, isSpeedRampActive());
+					// Current video not in new section's pool - switch to first video in pool
+					console.log(`[VideoWorkbench] Video not in section pool, switching...`);
+					const nextVideo = currentSectionVideos[0];
+					const globalIndex = $videoAssets.findIndex((asset) => asset.id === nextVideo.id);
+					// Update lastActiveVideoId BEFORE setting activeVideo to prevent duplicate seekToClip
+					lastActiveVideoId = nextVideo.id;
+					activeVideo.set(nextVideo);
+					if (shaderPlayerRef) {
+						shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, isSpeedRampActive());
+					}
 				}
-			}
 			}
 		}
 	});
@@ -289,20 +337,35 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 	// Video pool assignment per section (Phase 3)
 	// Map from section index -> array of video asset indices
 	let sectionVideoPools = $state({});
-	
+	const bucketPalette = [
+		'#a855f7',
+		'#ec4899',
+		'#0d9488',
+		'#059669',
+		'#0891b2',
+		'#10b981',
+		'#0284c7',
+		'#14b8a6'
+	];
+	const sequencerBars = Array.from({ length: 32 }, (_, i) => i + 1);
+	let isSequencerCollapsed = $state(false);
+	let isClipBucketsCollapsed = $state(false);
+	let focusedSectionIndex = $state(-1);
+	let collapsedBucketSections = $state({});
+
 	// Helper functions for section video pools
 	function isVideoInSection(sectionIndex, videoIndex) {
 		const pool = sectionVideoPools[sectionIndex];
 		if (!pool) return true; // Default: all videos in all sections
 		return pool.includes(videoIndex);
 	}
-	
+
 	function toggleVideoInSection(sectionIndex, videoIndex) {
 		// Initialize pool if needed (default to all videos)
 		if (!sectionVideoPools[sectionIndex]) {
 			sectionVideoPools[sectionIndex] = $videoAssets.map((_, i) => i);
 		}
-		
+
 		const pool = sectionVideoPools[sectionIndex];
 		const idx = pool.indexOf(videoIndex);
 		if (idx >= 0) {
@@ -313,13 +376,85 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		// Trigger reactivity
 		sectionVideoPools = { ...sectionVideoPools };
 	}
-	
+
+	function getSectionColor(sectionIndex) {
+		return bucketPalette[sectionIndex % bucketPalette.length];
+	}
+
+	function getSectionPoolIndices(sectionIndex) {
+		const pool = sectionVideoPools[sectionIndex];
+		if (!pool) return $videoAssets.map((_, i) => i);
+		return pool;
+	}
+
+	function toggleSequencerCollapsed() {
+		isSequencerCollapsed = !isSequencerCollapsed;
+	}
+
+	function toggleClipBucketsCollapsed() {
+		isClipBucketsCollapsed = !isClipBucketsCollapsed;
+	}
+
+	function isBucketSectionCollapsed(sectionIndex) {
+		return !!collapsedBucketSections[sectionIndex];
+	}
+
+	function toggleBucketSection(sectionIndex) {
+		collapsedBucketSections = {
+			...collapsedBucketSections,
+			[sectionIndex]: !isBucketSectionCollapsed(sectionIndex)
+		};
+	}
+
+	function focusSection(sectionIndex, openUpload = false) {
+		focusedSectionIndex = sectionIndex;
+		collapsedBucketSections = { ...collapsedBucketSections, [sectionIndex]: false };
+		if (openUpload) {
+			handleSectionUploadClick(sectionIndex);
+		}
+	}
+
+	const timelineSections = $derived.by(() => {
+		const sections = analysisData.structure?.sections || [];
+		if (sections.length === 0) return [];
+
+		const lastEnd = sections[sections.length - 1]?.end || 0;
+		const totalDuration = Math.max(audioDuration || 0, lastEnd);
+		if (totalDuration <= 0) return [];
+
+		return sections.map((section, index) => {
+			const start = Math.max(0, section.start || 0);
+			const end = Math.max(start, section.end || start);
+			const left = (start / totalDuration) * 100;
+			const width = Math.max(2, ((end - start) / totalDuration) * 100);
+			return { section, index, left, width };
+		});
+	});
+
+	function remapSectionPoolsAfterFailures(failedIndices) {
+		if (!failedIndices || failedIndices.length === 0) return;
+		const failedSet = new Set(failedIndices);
+		const failedSorted = [...failedSet].sort((a, b) => a - b);
+		const remapped = {};
+
+		for (const [sectionKey, pool] of Object.entries(sectionVideoPools)) {
+			if (!Array.isArray(pool)) continue;
+			const nextPool = pool
+				.filter((index) => !failedSet.has(index))
+				.map((index) => index - failedSorted.filter((failedIndex) => failedIndex < index).length)
+				.filter((index) => index >= 0);
+			remapped[sectionKey] = nextPool;
+		}
+
+		sectionVideoPools = remapped;
+	}
+
 	function formatSectionTime(seconds) {
 		const mins = Math.floor(seconds / 60);
 		const secs = Math.floor(seconds % 60);
 		return `${mins}:${secs.toString().padStart(2, '0')}`;
 	}
-	
+
 	// Handle section loop change
 	function handleSectionLoopChange() {
 		if (loopSectionIndex >= 0 && analysisData.structure?.sections) {
@@ -327,13 +462,15 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			if (section && sharedAudioRef) {
 				// Jump to section start
 				sharedAudioRef.currentTime = section.start;
-				console.log(`[VideoWorkbench] Looping section: ${section.label} (${section.start}s - ${section.end}s)`);
+				console.log(
+					`[VideoWorkbench] Looping section: ${section.label} (${section.start}s - ${section.end}s)`
+				);
 			}
 		} else {
 			console.log('[VideoWorkbench] Section loop disabled');
 		}
 	}
-	
+
 	// Effect to handle section looping during playback
 	$effect(() => {
 		if (loopSectionIndex >= 0 && analysisData.structure?.sections && isPlaying) {
@@ -346,7 +483,7 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			}
 		}
 	});
-	
+
 	// Get videos available in current section
 	const currentSectionVideos = $derived.by(() => {
 		const pool = sectionVideoPools[currentSection.index];
@@ -356,11 +493,11 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		}
 		return $videoAssets.filter((_, i) => pool.includes(i));
 	});
-	
+
 	// Store base values for FX triggers (so we can spike and return)
 	let baseNoiseValue = 0;
 	let baseRgbShiftValue = 0.0015;
-	
+
 	let uniforms = $state({
 		// VHS shader uniforms
 		u_time: { value: 0.0 },
@@ -516,35 +653,94 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 	const fragmentShader = $derived.by(() => {
 		let shader;
 		switch (selectedShaderName) {
-			case 'VHS': shader = vhsFragmentShader; break;
-			case 'XlsczN': shader = xlsczNFragmentShader; break;
-			case 'Water': shader = waterFragmentShader; break;
-			case 'ChromaticAberration': shader = chromaticAberrationFragmentShader; break;
-			case 'Glitch': shader = glitchFragmentShader; break;
-			case 'Noise': shader = noiseFragmentShader; break;
-			case 'Vignette': shader = vignetteFragmentShader; break;
-			case 'Bloom': shader = bloomFragmentShader; break;
-			case 'DepthOfField': shader = depthOfFieldFragmentShader; break;
-			case 'Depth': shader = depthFragmentShader; break;
-			case 'Sepia': shader = sepiaFragmentShader; break;
-			case 'Scanline': shader = scanlineFragmentShader; break;
-			case 'Pixelation': shader = pixelationFragmentShader; break;
-			case 'DotScreen': shader = dotScreenFragmentShader; break;
-			case 'HueSaturation': shader = hueSaturationFragmentShader; break;
-			case 'BrightnessContrast': shader = brightnessContrastFragmentShader; break;
-			case 'ColorDepth': shader = colorDepthFragmentShader; break;
-			case 'ColorAverage': shader = colorAverageFragmentShader; break;
-			case 'TiltShift': shader = tiltShiftFragmentShader; break;
-			case 'ToneMapping': shader = toneMappingFragmentShader; break;
-			case 'ASCII': shader = asciiFragmentShader; break;
-			case 'Grid': shader = gridFragmentShader; break;
-			case 'LensFlare': shader = lensFlareFragmentShader; break;
-			case 'CRT': shader = crtFragmentShader; break;
-			case 'AnamorphicBreathe': shader = anamorphicBreatheFragmentShader; break;
-			case 'Grayscale': shader = shaders.Grayscale; break;
-			default: shader = shaders.Vignette; break;
+			case 'VHS':
+				shader = vhsFragmentShader;
+				break;
+			case 'XlsczN':
+				shader = xlsczNFragmentShader;
+				break;
+			case 'Water':
+				shader = waterFragmentShader;
+				break;
+			case 'ChromaticAberration':
+				shader = chromaticAberrationFragmentShader;
+				break;
+			case 'Glitch':
+				shader = glitchFragmentShader;
+				break;
+			case 'Noise':
+				shader = noiseFragmentShader;
+				break;
+			case 'Vignette':
+				shader = vignetteFragmentShader;
+				break;
+			case 'Bloom':
+				shader = bloomFragmentShader;
+				break;
+			case 'DepthOfField':
+				shader = depthOfFieldFragmentShader;
+				break;
+			case 'Depth':
+				shader = depthFragmentShader;
+				break;
+			case 'Sepia':
+				shader = sepiaFragmentShader;
+				break;
+			case 'Scanline':
+				shader = scanlineFragmentShader;
+				break;
+			case 'Pixelation':
+				shader = pixelationFragmentShader;
+				break;
+			case 'DotScreen':
+				shader = dotScreenFragmentShader;
+				break;
+			case 'HueSaturation':
+				shader = hueSaturationFragmentShader;
+				break;
+			case 'BrightnessContrast':
+				shader = brightnessContrastFragmentShader;
+				break;
+			case 'ColorDepth':
+				shader = colorDepthFragmentShader;
+				break;
+			case 'ColorAverage':
+				shader = colorAverageFragmentShader;
+				break;
+			case 'TiltShift':
+				shader = tiltShiftFragmentShader;
+				break;
+			case 'ToneMapping':
+				shader = toneMappingFragmentShader;
+				break;
+			case 'ASCII':
+				shader = asciiFragmentShader;
+				break;
+			case 'Grid':
+				shader = gridFragmentShader;
+				break;
+			case 'LensFlare':
+				shader = lensFlareFragmentShader;
+				break;
+			case 'CRT':
+				shader = crtFragmentShader;
+				break;
+			case 'AnamorphicBreathe':
+				shader = anamorphicBreatheFragmentShader;
+				break;
+			case 'Grayscale':
+				shader = shaders.Grayscale;
+				break;
+			default:
+				shader = shaders.Vignette;
+				break;
 		}
-		console.log('[VideoWorkbench] Selected shader:', selectedShaderName, 'Shader length:', shader?.length || 0);
+		console.log(
+			'[VideoWorkbench] Selected shader:',
+			selectedShaderName,
+			'Shader length:',
+			shader?.length || 0
+		);
 		return shader;
 	});
 
@@ -565,25 +761,25 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 	let speedRampMaxSpeed = $state(1.8); // Maximum speed (at high energy)
 	let speedRampSmoothing = $state(0.15); // EMA alpha (0 = no smoothing, higher = smoother)
 	let speedRampPunch = $state(1.4); // Gamma (1 = linear, >1 = punchy highs, <1 = punchy lows)
-	
+
 	// Pre-processed speed ramp data (computed once when params change)
 	let processedSpeedCurve = $state(null); // Float32Array of pre-computed speeds
 	let processedTimeRemap = $state(null); // Float32Array of cumulative time values
 	let speedCurveTimestep = $state(0); // Seconds per sample in the curve
-	
+
 	// Offset to handle smooth transitions when toggling speed ramping
 	let speedRampTimeOffset = $state(0); // Added to remapped time for continuity
 	let wasSpeedRampingEnabled = false; // Track previous state
-	
+
 	// Visual feedback for speed ramping
 	let currentSpeed = $state(1.0); // Current playback speed (for display)
 	let currentEnergy = $state(0); // Current energy level (for display)
-	
+
 	const ESSENTIA_HOP_SIZE = 512;
 	const ESSENTIA_SAMPLE_RATE = 44100;
 	const SECONDS_PER_FRAME = ESSENTIA_HOP_SIZE / ESSENTIA_SAMPLE_RATE;
 	const TARGET_FPS = 24; // Video frame rate for audio-to-frame sync
-	
+
 	/**
 	 * Pre-process energy curve into speed and time remap curves
 	 * Called once when Essentia data loads or when parameters change
@@ -613,13 +809,17 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		}
 		const std = Math.sqrt(sqDiffSum / N) || 1; // Fallback to 1 if std is 0
 		// Use audio duration from the loaded audio element, or calculate from hop size
-		const duration = audioDuration > 0 ? audioDuration : (N * SECONDS_PER_FRAME);
+		const duration = audioDuration > 0 ? audioDuration : N * SECONDS_PER_FRAME;
 		const dt = duration / Math.max(1, N - 1);
 		speedCurveTimestep = dt;
-		
-		console.log(`[SpeedRamp] Pre-processing ${N} samples, duration=${duration.toFixed(2)}s, dt=${(dt*1000).toFixed(2)}ms`);
-		console.log(`[SpeedRamp] Params: min=${speedRampMinSpeed}x, max=${speedRampMaxSpeed}x, smooth=${speedRampSmoothing}, punch=${speedRampPunch}`);
-		
+
+		console.log(
+			`[SpeedRamp] Pre-processing ${N} samples, duration=${duration.toFixed(2)}s, dt=${(dt * 1000).toFixed(2)}ms`
+		);
+		console.log(
+			`[SpeedRamp] Params: min=${speedRampMinSpeed}x, max=${speedRampMaxSpeed}x, smooth=${speedRampSmoothing}, punch=${speedRampPunch}`
+		);
+
 		// Step 1: Z-score normalize using mean/std from Essentia
 		const normalized = new Float32Array(N);
 		for (let i = 0; i < N; i++) {
@@ -627,7 +827,7 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			// Map z-score (typically -2 to +2) to 0-1 range
 			normalized[i] = Math.max(0, Math.min(1, (z + 2) / 4));
 		}
-		
+
 		// Step 2: EMA smoothing (if enabled)
 		const smoothed = new Float32Array(N);
 		if (speedRampSmoothing > 0) {
@@ -639,7 +839,7 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		} else {
 			smoothed.set(normalized);
 		}
-		
+
 		// Step 3: Gamma correction (punch) and map to speed range
 		const speeds = new Float32Array(N);
 		const speedRange = speedRampMaxSpeed - speedRampMinSpeed;
@@ -647,7 +847,7 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			const shaped = Math.pow(smoothed[i], speedRampPunch);
 			speeds[i] = speedRampMinSpeed + speedRange * shaped;
 		}
-		
+
 		// Step 4: Compute cumulative time remap (integral of speed)
 		const timeRemap = new Float32Array(N);
 		timeRemap[0] = 0;
@@ -655,24 +855,46 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			const avgSpeed = (speeds[i - 1] + speeds[i]) * 0.5;
 			timeRemap[i] = timeRemap[i - 1] + avgSpeed * dt;
 		}
-		
+
 		processedSpeedCurve = speeds;
 		processedTimeRemap = timeRemap;
-		
+
 		// Debug: sample some values
-		const sampleIndices = [0, Math.floor(N/4), Math.floor(N/2), Math.floor(3*N/4), N-1];
-		console.log(`[SpeedRamp] Pre-processing complete. Speed range: ${Math.min(...speeds).toFixed(2)}x - ${Math.max(...speeds).toFixed(2)}x`);
-		console.log(`[SpeedRamp] Total remapped duration: ${timeRemap[N-1].toFixed(2)}s (original: ${duration.toFixed(2)}s)`);
-		console.log(`[SpeedRamp] Sample speeds:`, sampleIndices.map(i => `[${i}]=${speeds[i]?.toFixed(2)}x`).join(', '));
-		console.log(`[SpeedRamp] Sample timeRemap:`, sampleIndices.map(i => `[${i}]=${timeRemap[i]?.toFixed(2)}s`).join(', '));
-		console.log(`[SpeedRamp] Raw energy samples:`, sampleIndices.map(i => `[${i}]=${rawCurve[i]?.toFixed(4)}`).join(', '));
-		console.log(`[SpeedRamp] Energy stats (local calc): mean=${mean.toFixed(4)}, std=${std.toFixed(4)}`);
+		const sampleIndices = [0, Math.floor(N / 4), Math.floor(N / 2), Math.floor((3 * N) / 4), N - 1];
+		console.log(
+			`[SpeedRamp] Pre-processing complete. Speed range: ${Math.min(...speeds).toFixed(2)}x - ${Math.max(...speeds).toFixed(2)}x`
+		);
+		console.log(
+			`[SpeedRamp] Total remapped duration: ${timeRemap[N - 1].toFixed(2)}s (original: ${duration.toFixed(2)}s)`
+		);
+		console.log(
+			`[SpeedRamp] Sample speeds:`,
+			sampleIndices.map((i) => `[${i}]=${speeds[i]?.toFixed(2)}x`).join(', ')
+		);
+		console.log(
+			`[SpeedRamp] Sample timeRemap:`,
+			sampleIndices.map((i) => `[${i}]=${timeRemap[i]?.toFixed(2)}s`).join(', ')
+		);
+		console.log(
+			`[SpeedRamp] Raw energy samples:`,
+			sampleIndices.map((i) => `[${i}]=${rawCurve[i]?.toFixed(4)}`).join(', ')
+		);
+		console.log(
+			`[SpeedRamp] Energy stats (local calc): mean=${mean.toFixed(4)}, std=${std.toFixed(4)}`
+		);
 	}
-	
+
 	// Re-process when parameters or audio data change
 	$effect(() => {
 		// Track all parameters that affect the curve (including audioDuration)
-		const _ = [speedRampMinSpeed, speedRampMaxSpeed, speedRampSmoothing, speedRampPunch, analysisData.energy, audioDuration];
+		const _ = [
+			speedRampMinSpeed,
+			speedRampMaxSpeed,
+			speedRampSmoothing,
+			speedRampPunch,
+			analysisData.energy,
+			audioDuration
+		];
 		preprocessSpeedCurve();
 	});
 
@@ -691,17 +913,18 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 				if (uniforms.u_midLevel) uniforms.u_midLevel.value = midLevel;
 				if (uniforms.u_trebleLevel) uniforms.u_trebleLevel.value = trebleLevel;
 			}
-			
+
 			// Check beat triggers BEFORE computing frame index.
 			// This ensures any clip switch (seekToClip) happens before setAudioTime()
 			// computes the frame, eliminating the stale-frame race condition.
 			checkBeatTriggers(audioCurrentTime);
-			
+
 			// === AUDIO AS MASTER CLOCK ===
 			// Sync video frame to audio time (Phase 2 feature)
 			if (audioMasterEnabled && shaderPlayerRef) {
-				const canUseSpeedRamp = enableSpeedRamping && processedSpeedCurve && processedTimeRemap && speedCurveTimestep > 0;
-				
+				const canUseSpeedRamp =
+					enableSpeedRamping && processedSpeedCurve && processedTimeRemap && speedCurveTimestep > 0;
+
 				// Handle transition when speed ramping is toggled
 				if (canUseSpeedRamp && !wasSpeedRampingEnabled) {
 					// Just turned ON: calculate offset for continuity
@@ -712,7 +935,9 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 					speedRampTimeOffset = audioCurrentTime - rawRemappedTime;
 					// Switch to direct frame mapping for speed ramp mode
 					shaderPlayerRef.setDirectFrameMapping(true);
-					console.log(`[SpeedRamp] Enabled at audio=${audioCurrentTime.toFixed(2)}s, rawRemap=${rawRemappedTime.toFixed(2)}s, offset=${speedRampTimeOffset.toFixed(2)}s`);
+					console.log(
+						`[SpeedRamp] Enabled at audio=${audioCurrentTime.toFixed(2)}s, rawRemap=${rawRemappedTime.toFixed(2)}s, offset=${speedRampTimeOffset.toFixed(2)}s`
+					);
 					wasSpeedRampingEnabled = true;
 				} else if (!canUseSpeedRamp && wasSpeedRampingEnabled) {
 					// Just turned OFF: reset offset and switch back to elapsed-time mapping
@@ -722,26 +947,28 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 					wasSpeedRampingEnabled = false;
 					console.log(`[SpeedRamp] Disabled`);
 				}
-				
+
 				if (canUseSpeedRamp) {
 					// Use pre-processed curves - just lookup, no calculation
 					const curveIndex = Math.floor(audioCurrentTime / speedCurveTimestep);
 					const clampedIndex = Math.max(0, Math.min(processedSpeedCurve.length - 1, curveIndex));
-					
+
 					// Update visual feedback from pre-processed data
 					currentSpeed = processedSpeedCurve[clampedIndex];
 					// Energy is derived from speed for display (reverse the formula)
 					const speedRange = speedRampMaxSpeed - speedRampMinSpeed;
 					currentEnergy = speedRange > 0 ? (currentSpeed - speedRampMinSpeed) / speedRange : 0;
-					
+
 					// Use pre-computed time remap + offset for smooth transition
 					const remappedTime = processedTimeRemap[clampedIndex] + speedRampTimeOffset;
-					
+
 					// Debug: log every second
 					if (Math.floor(audioCurrentTime) !== Math.floor(audioCurrentTime - 0.016)) {
-						console.log(`[SpeedRamp] audio=${audioCurrentTime.toFixed(2)}s -> video=${remappedTime.toFixed(2)}s (speed=${currentSpeed.toFixed(2)}x)`);
+						console.log(
+							`[SpeedRamp] audio=${audioCurrentTime.toFixed(2)}s -> video=${remappedTime.toFixed(2)}s (speed=${currentSpeed.toFixed(2)}x)`
+						);
 					}
-					
+
 					shaderPlayerRef.setAudioTime(remappedTime, TARGET_FPS);
 				} else {
 					// No speed ramping or no curve - direct sync
@@ -750,17 +977,17 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 					shaderPlayerRef.setAudioTime(audioCurrentTime, TARGET_FPS);
 				}
 			}
-			
+
 			// Handle Speed Ramping when NOT using audio master clock (direct speed control)
 			if (!audioMasterEnabled && shaderPlayerRef) {
 				if (enableSpeedRamping && processedSpeedCurve) {
 					const curveIndex = Math.floor(audioCurrentTime / speedCurveTimestep);
 					const clampedIndex = Math.max(0, Math.min(processedSpeedCurve.length - 1, curveIndex));
-					
+
 					currentSpeed = processedSpeedCurve[clampedIndex];
 					const speedRange = speedRampMaxSpeed - speedRampMinSpeed;
 					currentEnergy = speedRange > 0 ? (currentSpeed - speedRampMinSpeed) / speedRange : 0;
-					
+
 					shaderPlayerRef.setSpeed(currentSpeed);
 				} else {
 					currentSpeed = 1.0;
@@ -782,7 +1009,7 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			// Stop loop
 			cancelAnimationFrame(rafId);
 		}
-		
+
 		return () => cancelAnimationFrame(rafId);
 	});
 	let videoCycleInterval = null;
@@ -821,12 +1048,13 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 
 	// --- Theme State ---
 	let themeKey = $state('glass');
-	
+
 	// Custom transparent glass theme for Tweakpane
 	// Using valid Tweakpane theme variables only
 	const glassTheme = {
 		baseBorderRadius: '6px',
-		baseFontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+		baseFontFamily:
+			"'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
 		baseShadowColor: 'rgba(0, 0, 0, 0.5)',
 		buttonBackgroundColor: 'rgba(90, 63, 192, 0.4)',
 		buttonBackgroundColorActive: 'rgba(90, 63, 192, 0.7)',
@@ -846,9 +1074,9 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		inputForegroundColor: 'rgba(255, 255, 255, 0.9)',
 		labelForegroundColor: 'rgba(168, 130, 255, 0.9)',
 		monitorBackgroundColor: 'rgba(20, 20, 20, 0.8)',
-		monitorForegroundColor: 'rgba(168, 130, 255, 0.95)',
+		monitorForegroundColor: 'rgba(168, 130, 255, 0.95)'
 	};
-	
+
 	// Extend presets with custom theme
 	const customThemes = {
 		...ThemeUtils.presets,
@@ -865,6 +1093,11 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 	// --- File Handling Logic ---
 	function handleUploadClick() {
 		fileInput?.click();
+	}
+
+	function handleSectionUploadClick(sectionIndex) {
+		const sectionInput = document.getElementById(`section-upload-${sectionIndex}`);
+		sectionInput?.click();
 	}
 
 	function handleAudioUploadClick() {
@@ -886,17 +1119,22 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			const result = await parseMIDIFile(file);
 			// Ensure times are numbers (not strings) and sorted
 			midiMarkers = result.times
-				.map(t => typeof t === 'number' ? t : parseFloat(t))
-				.filter(t => !isNaN(t) && t >= 0)
+				.map((t) => (typeof t === 'number' ? t : parseFloat(t)))
+				.filter((t) => !isNaN(t) && t >= 0)
 				.sort((a, b) => a - b);
-			
+
 			console.log(`[VideoWorkbench] ✅ Parsed MIDI file: ${midiMarkers.length} note-on events`);
 			if (midiMarkers.length > 0) {
-				console.log(`[VideoWorkbench] MIDI markers range: ${midiMarkers[0]?.toFixed(3)}s - ${midiMarkers[midiMarkers.length - 1]?.toFixed(3)}s`);
-				console.log(`[VideoWorkbench] First 5 MIDI markers:`, midiMarkers.slice(0, 5).map(t => t.toFixed(3)));
+				console.log(
+					`[VideoWorkbench] MIDI markers range: ${midiMarkers[0]?.toFixed(3)}s - ${midiMarkers[midiMarkers.length - 1]?.toFixed(3)}s`
+				);
+				console.log(
+					`[VideoWorkbench] First 5 MIDI markers:`,
+					midiMarkers.slice(0, 5).map((t) => t.toFixed(3))
+				);
 				console.log(`[VideoWorkbench] MIDI markers format check:`, {
 					isArray: Array.isArray(midiMarkers),
-					allNumbers: midiMarkers.every(t => typeof t === 'number'),
+					allNumbers: midiMarkers.every((t) => typeof t === 'number'),
 					sample: midiMarkers.slice(0, 3)
 				});
 			} else {
@@ -923,38 +1161,41 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 		if (!structure || !structure.sections || !duration) {
 			return { sections: [], boundaries: [] };
 		}
-		
+
 		const sections = structure.sections;
-		
+
 		// Check if sections are valid (not too short, not empty)
-		const hasValidSections = sections.some(s => 
-			s.duration > 5 && // At least 5 seconds
-			s.end > s.start && // Actual duration
-			s.start >= 0
+		const hasValidSections = sections.some(
+			(s) =>
+				s.duration > 5 && // At least 5 seconds
+				s.end > s.start && // Actual duration
+				s.start >= 0
 		);
-		
+
 		if (hasValidSections) {
 			// Filter out invalid sections (0 duration, negative, etc.)
-			const validSections = sections.filter(s => 
-				s.duration > 1 && s.end > s.start && s.start >= 0
+			const validSections = sections.filter(
+				(s) => s.duration > 1 && s.end > s.start && s.start >= 0
 			);
-			
+
 			if (validSections.length > 0) {
 				console.log('[VideoWorkbench] Using API sections (valid)');
 				return {
 					sections: validSections,
-					boundaries: validSections.map(s => s.start).concat([validSections[validSections.length - 1].end])
+					boundaries: validSections
+						.map((s) => s.start)
+						.concat([validSections[validSections.length - 1].end])
 				};
 			}
 		}
-		
+
 		// Generate fallback sections based on song duration
 		console.log('[VideoWorkbench] API sections invalid, generating fallback sections');
-		
+
 		// Create reasonable sections based on typical song structure
 		const fallbackSections = [];
 		const boundaries = [0];
-		
+
 		// Intro: first 10% or 15s, whichever is smaller
 		const introEnd = Math.min(duration * 0.1, 15);
 		if (introEnd > 5) {
@@ -967,22 +1208,22 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			});
 			boundaries.push(introEnd);
 		}
-		
+
 		// Main body: split into verse/chorus alternating
 		const mainStart = introEnd;
 		const outroStart = duration - Math.min(duration * 0.15, 20); // Last 15% or 20s
 		const mainDuration = outroStart - mainStart;
-		
+
 		if (mainDuration > 20) {
 			// Divide main section into 4-6 parts alternating verse/chorus
 			const numParts = Math.floor(mainDuration / 30); // ~30s per section
 			const partDuration = mainDuration / numParts;
-			
+
 			for (let i = 0; i < numParts; i++) {
-				const start = mainStart + (i * partDuration);
-				const end = mainStart + ((i + 1) * partDuration);
+				const start = mainStart + i * partDuration;
+				const end = mainStart + (i + 1) * partDuration;
 				const label = i % 2 === 0 ? 'verse' : 'chorus';
-				
+
 				fallbackSections.push({
 					start,
 					end,
@@ -1003,7 +1244,7 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			});
 			boundaries.push(outroStart);
 		}
-		
+
 		// Outro
 		if (duration - outroStart > 5) {
 			fallbackSections.push({
@@ -1015,13 +1256,13 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 			});
 			boundaries.push(duration);
 		}
-		
+
 		return {
 			sections: fallbackSections,
 			boundaries
 		};
 	}
-	
+
 	async function onAudioSelected(event) {
 		const file = event.currentTarget.files?.[0];
 		if (!file) return;
@@ -1034,29 +1275,31 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 
 		// Prevent duplicate calls if already analyzing
 		if (isAnalyzingAudio) {
-			console.warn("[VideoWorkbench] ⚠️ Already analyzing audio, skipping duplicate call");
+			console.warn('[VideoWorkbench] ⚠️ Already analyzing audio, skipping duplicate call');
 			return;
 		}
 
 		audioFile = file;
 		isAnalyzingAudio = true;
-		
+
 		// Initialize Essentia API FIRST (one-time analysis, no ongoing connection)
 		// This sends the file to the server, gets results, then disconnects
-		console.log("[VideoWorkbench] 📡 Starting Essentia API analysis (one-time request, no ongoing connection)...");
-		console.log("[VideoWorkbench] File:", file.name, "Size:", (file.size / 1024).toFixed(2), "KB");
-		
+		console.log(
+			'[VideoWorkbench] 📡 Starting Essentia API analysis (one-time request, no ongoing connection)...'
+		);
+		console.log('[VideoWorkbench] File:', file.name, 'Size:', (file.size / 1024).toFixed(2), 'KB');
+
 		try {
 			if (!essentiaService) {
 				essentiaService = new EssentiaService();
 				await essentiaService.initialize();
 			}
-			
+
 			const result = await essentiaService.analyzeFile(file);
-			
+
 			// Post-process structure sections to fix bad API detection
 			const processedStructure = postProcessSections(result.structure, result.duration);
-			
+
 			// Update analysis data with result from API
 			analysisData = {
 				bpm: result.bpm,
@@ -1066,27 +1309,36 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 				confidence: result.confidence,
 				structure: processedStructure // Use post-processed sections
 			};
-			
-			console.log(`[VideoWorkbench] Analysis applied: ${analysisData.onsets.length} onsets, ${analysisData.bpm} BPM`);
-			console.log(`[VideoWorkbench] Structure: ${analysisData.structure.sections?.length || 0} sections detected`);
+
+			console.log(
+				`[VideoWorkbench] Analysis applied: ${analysisData.onsets.length} onsets, ${analysisData.bpm} BPM`
+			);
+			console.log(
+				`[VideoWorkbench] Structure: ${analysisData.structure.sections?.length || 0} sections detected`
+			);
 			console.log('[DEBUG] Raw structure data:', JSON.stringify(result.structure, null, 2));
 			console.log('[DEBUG] Processed structure data:', JSON.stringify(processedStructure, null, 2));
-			
 		} catch (err) {
-			console.error("[VideoWorkbench] ❌ Essentia analysis failed:", err);
+			console.error('[VideoWorkbench] ❌ Essentia analysis failed:', err);
 			// Fallback or empty data
-			analysisData = { bpm: 0, beats: [], onsets: [], structure: { sections: [], boundaries: [] }, energy: null };
+			analysisData = {
+				bpm: 0,
+				beats: [],
+				onsets: [],
+				structure: { sections: [], boundaries: [] },
+				energy: null
+			};
 		} finally {
 			isAnalyzingAudio = false;
 		}
-		
+
 		// Audio set up logic simplified - strictly Essentia + Peaks
 		if (sharedAudioRef) {
 			// Revoke old blob URL if exists to prevent memory leak
 			if (audioFileUrl) {
 				URL.revokeObjectURL(audioFileUrl);
 			}
-			
+
 			// Create and store new blob URL
 			audioFileUrl = URL.createObjectURL(file);
 			sharedAudioRef.src = audioFileUrl;
@@ -1101,33 +1353,33 @@ import { frameBuffer } from './webcodecs-frame-buffer.js';
 	}
 
 	/* === Phase 4: Unified Trigger System === */
-	
-// Trigger modes
-let enableJumpCuts = $state(false); // Random frame jump on marker hit
-let enableGlitchMode = $state(false); // Rapid micro-jumps in high-energy sections
-let enableFXTriggers = $state(false); // Shader parameter spikes on marker
-	
+
+	// Trigger modes
+	let enableJumpCuts = $state(false); // Random frame jump on marker hit
+	let enableGlitchMode = $state(false); // Rapid micro-jumps in high-energy sections
+	let enableFXTriggers = $state(false); // Shader parameter spikes on marker
+
 	// Jump cut settings
 	let jumpCutRange = $state(30); // Max frames to jump (random within range)
-	
+
 	// Glitch mode settings
 	let glitchFrameRange = $state(5); // 1-5 frame micro-jumps
 	let glitchEnergyThreshold = $state(0.7); // Energy level to trigger glitch mode
-	
+
 	// FX trigger settings
 	let fxTriggerIntensity = $state(0.5); // How much to spike shader params
 	let fxTriggerDecay = $state(0.1); // How fast the spike decays (seconds)
 	let fxTriggerActive = $state(0); // Current FX trigger level (0-1)
-	
+
 	let previousTime = 0;
 	let nextMarkerIndex = $state(0);
 	let previousTriggersLength = 0; // Track triggers array changes
-	
+
 	const findNextMarkerIndex = (triggers, time) => {
-		const nextIndex = triggers.findIndex(marker => marker > time);
+		const nextIndex = triggers.findIndex((marker) => marker > time);
 		return nextIndex === -1 ? triggers.length : nextIndex;
 	};
-	
+
 	/**
 	 * Check for beat triggers and fire clip switches, jump cuts, FX spikes, etc.
 	 * Called directly from updateTime() BEFORE setAudioTime() to ensure clip
@@ -1136,20 +1388,20 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 	 */
 	function checkBeatTriggers(time) {
 		const triggers = filteredOnsets;
-		
+
 		// Reset tracking on seek or pause (approximate)
 		if (!isPlaying || time < previousTime || Math.abs(time - previousTime) > 1.0) {
 			previousTime = time;
 			nextMarkerIndex = findNextMarkerIndex(triggers, time);
 			return;
 		}
-		
+
 		if (time > previousTime) {
 			// Debug: log every ~1 second to avoid spam
 			if (Math.floor(time) !== Math.floor(previousTime)) {
 				console.log(`[Trigger] time=${time.toFixed(2)}, triggers=${triggers.length}`);
 			}
-			
+
 			while (nextMarkerIndex < triggers.length) {
 				const marker = triggers[nextMarkerIndex];
 				if (marker > time) {
@@ -1159,58 +1411,62 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 					nextMarkerIndex++;
 					continue;
 				}
-				
+
 				isBeatActive = true;
 				markerCounter++;
-				setTimeout(() => isBeatActive = false, 100); // Visual blink duration
-				
+				setTimeout(() => (isBeatActive = false), 100); // Visual blink duration
+
 				// === TRIGGER: Video Swap (always active) ===
 				if (markerCounter >= markerSwapThreshold) {
-					console.log(`[VideoWorkbench] Video swap triggered! Counter: ${markerCounter}/${markerSwapThreshold}`);
+					console.log(
+						`[VideoWorkbench] Video swap triggered! Counter: ${markerCounter}/${markerSwapThreshold}`
+					);
 					nextVideo();
 					markerCounter = 0;
 				}
-				
+
 				// === TRIGGER: Jump Cut ===
 				if (enableJumpCuts && shaderPlayerRef) {
 					const jumpAmount = Math.floor(Math.random() * jumpCutRange * 2) - jumpCutRange;
 					shaderPlayerRef.jumpFrames(jumpAmount);
 				}
-				
+
 				// === TRIGGER: FX Spike ===
 				if (enableFXTriggers) {
 					fxTriggerActive = 1.0; // Full spike
 				}
-				
+
 				// === TRIGGER: Glitch Mode (high-energy micro-jumps) ===
 				if (enableGlitchMode && shaderPlayerRef) {
 					// Check if we're in a high-energy section
 					const sectionEnergy = currentSection.energy || 0;
 					const isHighEnergy = sectionEnergy > glitchEnergyThreshold;
-					
+
 					if (isHighEnergy) {
 						// Rapid micro-jumps
 						const microJump = Math.floor(Math.random() * glitchFrameRange * 2) - glitchFrameRange;
 						shaderPlayerRef.jumpFrames(microJump);
 					}
 				}
-				
+
 				nextMarkerIndex++;
 			}
 		}
 		previousTime = time;
 	}
-	
+
 	// Reset trigger cursor when filteredOnsets changes (density slider, MIDI toggle, etc.)
 	$effect(() => {
 		const triggers = filteredOnsets; // Track for reactivity
 		if (triggers.length !== previousTriggersLength) {
 			previousTriggersLength = triggers.length;
 			nextMarkerIndex = findNextMarkerIndex(triggers, audioCurrentTime);
-			console.log(`[Trigger] Triggers changed (${triggers.length}), reset cursor to ${nextMarkerIndex}`);
+			console.log(
+				`[Trigger] Triggers changed (${triggers.length}), reset cursor to ${nextMarkerIndex}`
+			);
 		}
 	});
-	
+
 	// FX trigger decay effect
 	$effect(() => {
 		if (fxTriggerActive > 0 && isPlaying) {
@@ -1224,14 +1480,14 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 			return () => clearInterval(interval);
 		}
 	});
-	
+
 	// Apply FX trigger to shader uniforms
 	$effect(() => {
 		if (uniforms) {
 			if (fxTriggerActive > 0) {
 				// Spike certain shader params based on trigger level
 				const spikeAmount = fxTriggerActive * fxTriggerIntensity;
-				
+
 				// Spike noise and RGB shift on VHS shader (add to base value)
 				if (uniforms.u_noise) {
 					uniforms.u_noise.value = Math.min(0.5, baseNoiseValue + spikeAmount * 0.3);
@@ -1250,14 +1506,14 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 			}
 		}
 	});
-	
+
 	// Update base values when sliders change (only when FX not active)
 	function handleNoiseChange() {
 		if (fxTriggerActive === 0) {
 			baseNoiseValue = uniforms.u_noise.value;
 		}
 	}
-	
+
 	function handleRgbShiftChange() {
 		if (fxTriggerActive === 0) {
 			baseRgbShiftValue = uniforms.u_rgbShift.value;
@@ -1290,7 +1546,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		// If a section loop is active, restart to the beginning of that section
 		// Otherwise restart to the beginning of the song
 		let targetTime = 0;
-		
+
 		if (loopSectionIndex >= 0 && analysisData.structure?.sections) {
 			const section = analysisData.structure.sections[loopSectionIndex];
 			if (section) {
@@ -1300,44 +1556,47 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		} else {
 			console.log('[VideoWorkbench] Restarting to beginning of song');
 		}
-		
+
 		// Update audio position
 		if (sharedAudioRef) {
 			sharedAudioRef.currentTime = targetTime;
 		}
 		audioCurrentTime = targetTime;
-		
+
 		// Sync video position
 		if (shaderPlayerRef && audioMasterEnabled) {
 			shaderPlayerRef.setAudioTime(targetTime, TARGET_FPS);
 		}
-		
+
 		// Reset marker tracking
 		previousTime = targetTime;
 		nextMarkerIndex = findNextMarkerIndex(filteredOnsets, targetTime);
 		markerCounter = 0;
 	}
 
-	async function onFileSelected(event) {
-		const files = Array.from(event.currentTarget.files || []);
+	async function addVideoFiles(files, options = {}) {
+		const { targetSectionIndex = null, exclusiveToSection = false } = options;
 		if (files.length === 0) return;
 
 		console.log('[VideoWorkbench] Processing', files.length, 'video files');
-		
+
 		// Filter out duplicates (by name and size)
-		const existingFiles = new Set($videoAssets.map(a => `${a.name}-${a.file?.size || 0}`));
-		const newFiles = files.filter(f => !existingFiles.has(`${f.name}-${f.size}`));
-		
+		const existingFiles = new Set($videoAssets.map((a) => `${a.name}-${a.file?.size || 0}`));
+		const newFiles = files.filter((f) => !existingFiles.has(`${f.name}-${f.size}`));
+
 		if (newFiles.length < files.length) {
-			console.log(`[VideoWorkbench] Filtered out ${files.length - newFiles.length} duplicate files`);
+			console.log(
+				`[VideoWorkbench] Filtered out ${files.length - newFiles.length} duplicate files`
+			);
 		}
-		
+
 		if (newFiles.length === 0) {
 			console.log('[VideoWorkbench] No new files to add');
-			if (fileInput) fileInput.value = '';
 			return;
 		}
-		
+
+		const newAssetIds = [];
+
 		// Add to asset list for thumbnails
 		for (const file of newFiles) {
 			const newAsset = {
@@ -1350,22 +1609,65 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 
 			videoAssets.update((assets) => [...assets, newAsset]);
 			if ($videoAssets.length === 1) activeVideo.set(newAsset);
+			newAssetIds.push(newAsset.id);
 
 			const thumbUrl = await generateThumbnail(file);
 			videoAssets.update((assets) =>
-				assets.map((asset) => (asset.id === newAsset.id ? { ...asset, thumbnailUrl: thumbUrl } : asset))
+				assets.map((asset) =>
+					asset.id === newAsset.id ? { ...asset, thumbnailUrl: thumbUrl } : asset
+				)
 			);
 		}
-		
+
 		// Reset file input
 		if (fileInput) fileInput.value = '';
-		
+
 		// Pre-decode all videos into frame buffer
 		await preloadAllVideos();
+
+		// Assign newly uploaded videos to a specific section bucket when requested.
+		if (targetSectionIndex !== null && newAssetIds.length > 0) {
+			const idToIndex = new Map($videoAssets.map((asset, index) => [asset.id, index]));
+			const newIndices = newAssetIds
+				.map((id) => idToIndex.get(id))
+				.filter((index) => Number.isInteger(index));
+
+			if (newIndices.length > 0) {
+				if (exclusiveToSection && analysisData.structure?.sections?.length > 0) {
+					const nextPools = {};
+					for (let i = 0; i < analysisData.structure.sections.length; i++) {
+						const pool = getSectionPoolIndices(i).filter((index) => !newIndices.includes(index));
+						nextPools[i] = pool;
+					}
+					nextPools[targetSectionIndex] = [
+						...new Set([...nextPools[targetSectionIndex], ...newIndices])
+					].sort((a, b) => a - b);
+					sectionVideoPools = { ...sectionVideoPools, ...nextPools };
+				} else {
+					const pool = getSectionPoolIndices(targetSectionIndex);
+					sectionVideoPools = {
+						...sectionVideoPools,
+						[targetSectionIndex]: [...new Set([...pool, ...newIndices])].sort((a, b) => a - b)
+					};
+				}
+			}
+		}
+	}
+
+	async function onFileSelected(event) {
+		const files = Array.from(event.currentTarget.files || []);
+		await addVideoFiles(files);
+		if (fileInput) fileInput.value = '';
+	}
+
+	async function onSectionVideoSelected(sectionIndex, event) {
+		const files = Array.from(event.currentTarget.files || []);
+		await addVideoFiles(files, { targetSectionIndex: sectionIndex, exclusiveToSection: true });
+		event.currentTarget.value = '';
 	}
 
 	async function preloadAllVideos() {
-		const allFiles = $videoAssets.map(asset => asset.file);
+		const allFiles = $videoAssets.map((asset) => asset.file);
 		if (allFiles.length === 0) return;
 
 		isPreloading = true;
@@ -1378,23 +1680,35 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				preloadProgress = progress;
 				preloadStatus = status;
 			});
-			
+
 			// Remove failed videos from asset list to keep indices in sync with frame buffer
 			if (result?.failedIndices?.length > 0) {
-				console.warn(`[VideoWorkbench] Removing ${result.failedIndices.length} failed videos from asset list`);
+				console.warn(
+					`[VideoWorkbench] Removing ${result.failedIndices.length} failed videos from asset list`
+				);
 				const failedSet = new Set(result.failedIndices);
-				videoAssets.update(assets => assets.filter((_, idx) => !failedSet.has(idx)));
-				
+				videoAssets.update((assets) => assets.filter((_, idx) => !failedSet.has(idx)));
+				remapSectionPoolsAfterFailures(result.failedIndices);
+
 				// Reset active video if it was removed
-				if ($activeVideo && failedSet.has($videoAssets.findIndex(a => a.id === $activeVideo.id))) {
+				if (
+					$activeVideo &&
+					failedSet.has($videoAssets.findIndex((a) => a.id === $activeVideo.id))
+				) {
 					activeVideo.set($videoAssets[0] || null);
 				}
 			}
-			
+
 			isBufferReady = true;
 			preloadProgress = 1;
-			console.log('[VideoWorkbench] Frame buffer ready:', frameBuffer.totalFrames, 'frames across', frameBuffer.clips.size, 'clips');
-			
+			console.log(
+				'[VideoWorkbench] Frame buffer ready:',
+				frameBuffer.totalFrames,
+				'frames across',
+				frameBuffer.clips.size,
+				'clips'
+			);
+
 			// Prime first frame on-demand (don't wait, let ShaderPlayer handle it)
 			frameBuffer.primeAroundFrame(0);
 		} catch (err) {
@@ -1432,19 +1746,19 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 	// Video cycling functionality - now uses section-constrained pools
 	function nextVideo() {
 		if (!shaderPlayerRef || $videoAssets.length <= 1) return;
-		
+
 		// Get videos available in current section
 		const availableVideos = currentSectionVideos;
 		if (availableVideos.length === 0) return;
-		
+
 		// Find current video in the available pool
-		const currentPoolIndex = availableVideos.findIndex(asset => asset.id === $activeVideo?.id);
+		const currentPoolIndex = availableVideos.findIndex((asset) => asset.id === $activeVideo?.id);
 		const nextPoolIndex = (currentPoolIndex + 1) % availableVideos.length;
 		const nextVid = availableVideos[nextPoolIndex];
-		
+
 		// Find the global index for seekToClip
-		const globalIndex = $videoAssets.findIndex(asset => asset.id === nextVid.id);
-		
+		const globalIndex = $videoAssets.findIndex((asset) => asset.id === nextVid.id);
+
 		// Update lastActiveVideoId BEFORE setting activeVideo to prevent the
 		// reactive $effect from firing a duplicate seekToClip (which causes
 		// a glitch frame from the timing difference between the two calls)
@@ -1456,17 +1770,18 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 
 	function previousVideo() {
 		if (!shaderPlayerRef || $videoAssets.length <= 1) return;
-		
+
 		// Get videos available in current section
 		const availableVideos = currentSectionVideos;
 		if (availableVideos.length === 0) return;
-		
-		const currentPoolIndex = availableVideos.findIndex(asset => asset.id === $activeVideo?.id);
-		const prevPoolIndex = currentPoolIndex === 0 ? availableVideos.length - 1 : currentPoolIndex - 1;
+
+		const currentPoolIndex = availableVideos.findIndex((asset) => asset.id === $activeVideo?.id);
+		const prevPoolIndex =
+			currentPoolIndex === 0 ? availableVideos.length - 1 : currentPoolIndex - 1;
 		const prevVid = availableVideos[prevPoolIndex];
-		
-		const globalIndex = $videoAssets.findIndex(asset => asset.id === prevVid.id);
-		
+
+		const globalIndex = $videoAssets.findIndex((asset) => asset.id === prevVid.id);
+
 		// Update lastActiveVideoId BEFORE setting activeVideo to prevent duplicate seekToClip
 		lastActiveVideoId = prevVid.id;
 		activeVideo.set(prevVid);
@@ -1490,8 +1805,8 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, isSpeedRampActive());
 	});
 
-    // Removed time-based cycling logic as we now use onVideoEnd
-    /*
+	// Removed time-based cycling logic as we now use onVideoEnd
+	/*
 	function startVideoCycling() { ... }
 	function stopVideoCycling() { ... }
     $effect(...)
@@ -1625,12 +1940,12 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 	$effect(() => {
 		if (shaderPlayerRef) {
 			if (isPlaying) {
-				// Need to ensure audio is playing too? 
+				// Need to ensure audio is playing too?
 				// PeaksPlayer handles audio element play/pause based on isPlaying binding.
 				// We just handle video.
 				shaderPlayerRef.play();
 				// Also ensure analyzer knows?
-				if (audioAnalyzer) audioAnalyzer.isAnalyzing = true; 
+				if (audioAnalyzer) audioAnalyzer.isAnalyzing = true;
 			} else {
 				shaderPlayerRef.pause();
 				if (audioAnalyzer) audioAnalyzer.isAnalyzing = false;
@@ -1640,22 +1955,22 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 
 	// Handle video end for looping
 	// Note: ShaderPlayer likely has an onVideoEnd prop or event we should use.
-    // If not, we might need to check duration.
-    // Assuming ShaderPlayer handles loop if 'loop' prop passed (we pass enableLooping)
+	// If not, we might need to check duration.
+	// Assuming ShaderPlayer handles loop if 'loop' prop passed (we pass enableLooping)
 </script>
 
 <!-- The Shared Audio Element -->
 <audio bind:this={sharedAudioRef} style="display: none;" crossorigin="anonymous"></audio>
 
 <!-- Hidden file inputs for the entire workbench -->
-	<input
-		type="file"
-		bind:this={fileInput}
-		onchange={onFileSelected}
-		accept="video/mp4,video/webm"
-		multiple
-		hidden
-	/>
+<input
+	type="file"
+	bind:this={fileInput}
+	onchange={onFileSelected}
+	accept="video/mp4,video/webm"
+	multiple
+	hidden
+/>
 <input
 	type="file"
 	bind:this={audioInput}
@@ -1664,18 +1979,12 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 	multiple
 	hidden
 />
-<input
-	type="file"
-	bind:this={midiInput}
-	onchange={onMIDISelected}
-	accept=".mid,.midi"
-	hidden
-/>
+<input type="file" bind:this={midiInput} onchange={onMIDISelected} accept=".mid,.midi" hidden />
 
 <div class="app-container">
 	<aside class="sidebar">
 		<h2>Video Shaders</h2>
-		
+
 		{#if audioFile}
 			<div class="beat-indicator-container">
 				<!-- Section Indicator -->
@@ -1683,9 +1992,14 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 					<span class="section-label">{currentSection.label.toUpperCase()}</span>
 					{#if currentSection.end > currentSection.start}
 						<div class="section-progress-bar">
-							<div 
+							<div
 								class="section-progress-fill"
-								style="width: {Math.min(100, ((audioCurrentTime - currentSection.start) / (currentSection.end - currentSection.start)) * 100)}%"
+								style="width: {Math.min(
+									100,
+									((audioCurrentTime - currentSection.start) /
+										(currentSection.end - currentSection.start)) *
+										100
+								)}%"
 							></div>
 						</div>
 					{/if}
@@ -1697,29 +2011,34 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				<div class="beat-info">
 					{markerCounter} / {markerSwapThreshold}
 				</div>
-				
+
 				<!-- Speed Ramping Meter -->
 				{#if enableSpeedRamping && processedSpeedCurve}
 					<div class="speed-meter-container">
 						<div class="speed-meter-row">
 							<span class="speed-label">Speed:</span>
-							<span class="speed-value" class:fast={currentSpeed > 1.5} class:slow={currentSpeed < 0.8}>
+							<span
+								class="speed-value"
+								class:fast={currentSpeed > 1.5}
+								class:slow={currentSpeed < 0.8}
+							>
 								{currentSpeed.toFixed(2)}x
 							</span>
 						</div>
 						<div class="speed-bar-track">
-							<div 
+							<div
 								class="speed-bar-fill"
-								style="width: {Math.min(100, ((currentSpeed - speedRampMinSpeed) / (speedRampMaxSpeed - speedRampMinSpeed)) * 100)}%"
+								style="width: {Math.min(
+									100,
+									((currentSpeed - speedRampMinSpeed) / (speedRampMaxSpeed - speedRampMinSpeed)) *
+										100
+								)}%"
 							></div>
 						</div>
 						<div class="energy-meter-row">
 							<span class="energy-label">Energy:</span>
 							<div class="energy-bar-track">
-								<div 
-									class="energy-bar-fill"
-									style="width: {currentEnergy * 100}%"
-								></div>
+								<div class="energy-bar-fill" style="width: {currentEnergy * 100}%"></div>
 							</div>
 							<span class="energy-value">{(currentEnergy * 100).toFixed(0)}%</span>
 						</div>
@@ -1737,20 +2056,13 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		<div class="unified-controls">
 			<Tweakpane.Pane title="Video Shader" theme={customThemes[themeKey]}>
 				<!-- Theme Picker -->
-				<Tweakpane.List
-					bind:value={themeKey}
-					label="Theme"
-					options={Object.keys(customThemes)}
-				/>
+				<Tweakpane.List bind:value={themeKey} label="Theme" options={Object.keys(customThemes)} />
 
 				<!-- Filter Toggle -->
-				<Tweakpane.Checkbox
-					bind:value={filtersEnabled}
-					label="Enable Filters"
-				/>
+				<Tweakpane.Checkbox bind:value={filtersEnabled} label="Enable Filters" />
 
 				<Tweakpane.Separator />
-				
+
 				<Tweakpane.List
 					bind:value={selectedShaderName}
 					label="Shader"
@@ -1787,27 +2099,24 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				<!-- Video Controls -->
 				<Tweakpane.Folder title="Video Controls" expanded={true}>
 					<Button title="Upload Video" on:click={handleUploadClick} />
-					
+
 					{#if $activeVideo}
 						<Tweakpane.Separator />
-						
+
 						<div class="playback-controls">
-							<Button title={isPlaying ? "Pause" : "Play"} on:click={togglePlayback} />
+							<Button title={isPlaying ? 'Pause' : 'Play'} on:click={togglePlayback} />
 						</div>
 					{/if}
-					
+
 					{#if $videoAssets.length > 1}
 						<Tweakpane.Separator />
-						
+
 						<div class="video-controls">
 							<Button title="← Previous" on:click={previousVideo} />
 							<Button title="Next →" on:click={nextVideo} />
 						</div>
-						
-					<Tweakpane.Checkbox
-							bind:value={enableLooping}
-							label="Loop Playback"
-						/>
+
+						<Tweakpane.Checkbox bind:value={enableLooping} label="Loop Playback" />
 						<!-- Removed slider since cycling is now sequential -->
 					{/if}
 				</Tweakpane.Folder>
@@ -1816,38 +2125,34 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				<Tweakpane.Folder title="Audio Controls" expanded={true}>
 					<Button title="Upload Audio" on:click={handleAudioUploadClick} />
 					<Button title="Upload MIDI" on:click={handleMIDIUploadClick} />
-					
+
 					{#if midiFile}
 						<div class="midi-info">
-							<strong>MIDI:</strong> {midiFile.name} ({midiMarkers.length} markers)
+							<strong>MIDI:</strong>
+							{midiFile.name} ({midiMarkers.length} markers)
 						</div>
-						<Tweakpane.Checkbox
-							bind:value={showMIDIMarkers}
-							label="Show MIDI Markers"
-						/>
+						<Tweakpane.Checkbox bind:value={showMIDIMarkers} label="Show MIDI Markers" />
 					{/if}
 					{#if analysisData.onsets && analysisData.onsets.length > 0}
-						<Tweakpane.Checkbox
-							bind:value={showOnsets}
-							label="Show Essentia Onsets"
-						/>
+						<Tweakpane.Checkbox bind:value={showOnsets} label="Show Essentia Onsets" />
 					{/if}
-					
+
 					{#if audioFile}
 						<div class="audio-info">
-							<strong>Audio:</strong> {audioFile.name}
+							<strong>Audio:</strong>
+							{audioFile.name}
 							{#if isAnalyzingAudio}
 								<span class="status-analyzing">(Analyzing...)</span>
 							{:else if analysisData.bpm > 0}
 								<span class="status-ready">({Math.round(analysisData.bpm)} BPM)</span>
 							{/if}
 						</div>
-						
+
 						<div class="audio-controls">
 							<Button title="Play" on:click={playAudio} />
 							<Button title="Pause" on:click={pauseAudio} />
 						</div>
-						
+
 						<Tweakpane.Slider
 							bind:value={audioVolume}
 							label="Volume"
@@ -1856,8 +2161,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							step={0.01}
 							on:change={handleAudioVolumeChange}
 						/>
-						
-						
+
 						<!-- Density Controls -->
 						<Tweakpane.Folder title="Marker Density" expanded={true}>
 							<Tweakpane.Slider
@@ -1867,7 +2171,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 								max={1.0}
 								step={0.05}
 							/>
-							
+
 							<Tweakpane.Slider
 								bind:value={midiDensity}
 								label="MIDI Density"
@@ -1875,58 +2179,54 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 								max={1.0}
 								step={0.05}
 							/>
-							
-							<Tweakpane.Checkbox
-								bind:value={enableRandomSkip}
-								label="Random Skip"
-							/>
-							
+
+							<Tweakpane.Checkbox bind:value={enableRandomSkip} label="Random Skip" />
+
 							{#if enableRandomSkip}
-							<Tweakpane.Slider
-								bind:value={randomSkipChance}
-								label="Skip Chance"
-								min={0.0}
-								max={0.5}
-								step={0.05}
-							/>
+								<Tweakpane.Slider
+									bind:value={randomSkipChance}
+									label="Skip Chance"
+									min={0.0}
+									max={0.5}
+									step={0.05}
+								/>
 							{/if}
 						</Tweakpane.Folder>
-						
-						<Tweakpane.Checkbox
-							bind:value={showGrid}
-							label="Show 1/32 Grid"
-						/>
 
+						<Tweakpane.Checkbox bind:value={showGrid} label="Show 1/32 Grid" />
 					{/if}
 				</Tweakpane.Folder>
 
 				<!-- Section Video Pools (Phase 3) -->
 				{#if analysisData.structure?.sections?.length > 0}
-				<Tweakpane.Folder title="Section Video Pools" expanded={false}>
-					<div class="section-pools-info">
-						Assign videos to song sections. During playback, video cycling is restricted to the current section's pool.
-					</div>
-					{#each analysisData.structure.sections as section, sectionIndex}
-						<div class="section-pool-row">
-							<div class="section-pool-label">
-								<span class="section-name">{section.label}</span>
-								<span class="section-time">{formatSectionTime(section.start)} - {formatSectionTime(section.end)}</span>
-							</div>
-							<div class="section-pool-videos">
-								{#each $videoAssets as asset, videoIndex}
-									<label class="video-pool-checkbox">
-										<input 
-											type="checkbox" 
-											checked={isVideoInSection(sectionIndex, videoIndex)}
-											onchange={() => toggleVideoInSection(sectionIndex, videoIndex)}
-										/>
-										<span class="video-pool-name">{videoIndex + 1}</span>
-									</label>
-								{/each}
-							</div>
+					<Tweakpane.Folder title="Section Video Pools" expanded={false}>
+						<div class="section-pools-info">
+							Assign videos to song sections. During playback, video cycling is restricted to the
+							current section's pool.
 						</div>
-					{/each}
-				</Tweakpane.Folder>
+						{#each analysisData.structure.sections as section, sectionIndex}
+							<div class="section-pool-row">
+								<div class="section-pool-label">
+									<span class="section-name">{section.label}</span>
+									<span class="section-time"
+										>{formatSectionTime(section.start)} - {formatSectionTime(section.end)}</span
+									>
+								</div>
+								<div class="section-pool-videos">
+									{#each $videoAssets as asset, videoIndex}
+										<label class="video-pool-checkbox">
+											<input
+												type="checkbox"
+												checked={isVideoInSection(sectionIndex, videoIndex)}
+												onchange={() => toggleVideoInSection(sectionIndex, videoIndex)}
+											/>
+											<span class="video-pool-name">{videoIndex + 1}</span>
+										</label>
+									{/each}
+								</div>
+							</div>
+						{/each}
+					</Tweakpane.Folder>
 				{/if}
 
 				<!-- Triggers & Effects Folder (Phase 4 & 5) -->
@@ -1941,15 +2241,12 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							step={1}
 						/>
 					</Tweakpane.Folder>
-					
+
 					<Tweakpane.Separator />
-					
+
 					<!-- Speed Ramping -->
 					<Tweakpane.Folder title="Speed Ramping" expanded={false}>
-						<Tweakpane.Checkbox
-							bind:value={enableSpeedRamping}
-							label="Enable Speed Ramping"
-						/>
+						<Tweakpane.Checkbox bind:value={enableSpeedRamping} label="Enable Speed Ramping" />
 						<Tweakpane.Slider
 							bind:value={speedRampMinSpeed}
 							label="Min Speed"
@@ -1988,14 +2285,11 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							{/if}
 						</div>
 					</Tweakpane.Folder>
-					
+
 					<Tweakpane.Separator />
-					
+
 					<!-- Jump Cuts -->
-					<Tweakpane.Checkbox
-						bind:value={enableJumpCuts}
-						label="Jump Cuts"
-					/>
+					<Tweakpane.Checkbox bind:value={enableJumpCuts} label="Jump Cuts" />
 					<Tweakpane.Slider
 						bind:value={jumpCutRange}
 						label="Jump Range"
@@ -2003,14 +2297,11 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 						max={120}
 						step={5}
 					/>
-					
+
 					<Tweakpane.Separator />
-					
+
 					<!-- Glitch Mode -->
-					<Tweakpane.Checkbox
-						bind:value={enableGlitchMode}
-						label="Glitch Mode"
-					/>
+					<Tweakpane.Checkbox bind:value={enableGlitchMode} label="Glitch Mode" />
 					<Tweakpane.Slider
 						bind:value={glitchFrameRange}
 						label="Glitch Frames"
@@ -2025,14 +2316,11 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 						max={1.0}
 						step={0.05}
 					/>
-					
+
 					<Tweakpane.Separator />
-					
+
 					<!-- FX Triggers -->
-					<Tweakpane.Checkbox
-						bind:value={enableFXTriggers}
-						label="FX Triggers"
-					/>
+					<Tweakpane.Checkbox bind:value={enableFXTriggers} label="FX Triggers" />
 					<Tweakpane.Slider
 						bind:value={fxTriggerIntensity}
 						label="FX Intensity"
@@ -2138,7 +2426,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							step={0.01}
 						/>
 					</Tweakpane.Folder>
-					
+
 					<Tweakpane.Folder title="VHS Tracking" expanded={true}>
 						<Tweakpane.Slider
 							bind:value={uniforms.u_trackingIntensity.value}
@@ -2164,7 +2452,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							step={1}
 						/>
 					</Tweakpane.Folder>
-					
+
 					<Tweakpane.Folder title="VHS Tape Effects" expanded={true}>
 						<Tweakpane.Slider
 							bind:value={uniforms.u_waveAmplitude.value}
@@ -2277,10 +2565,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							max={0.5}
 							step={0.001}
 						/>
-						<Tweakpane.Checkbox
-							bind:value={uniforms.u_premultiply.value}
-							label="Premultiply"
-						/>
+						<Tweakpane.Checkbox bind:value={uniforms.u_premultiply.value} label="Premultiply" />
 					</Tweakpane.Folder>
 				{/if}
 
@@ -2300,10 +2585,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							max={2}
 							step={0.01}
 						/>
-						<Tweakpane.Checkbox
-							bind:value={uniforms.u_eskil.value}
-							label="Eskil Mode"
-						/>
+						<Tweakpane.Checkbox bind:value={uniforms.u_eskil.value} label="Eskil Mode" />
 					</Tweakpane.Folder>
 				{/if}
 
@@ -2389,10 +2671,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							max={1}
 							step={0.01}
 						/>
-						<Tweakpane.Checkbox
-							bind:value={uniforms.u_inverted.value}
-							label="Inverted"
-						/>
+						<Tweakpane.Checkbox bind:value={uniforms.u_inverted.value} label="Inverted" />
 					</Tweakpane.Folder>
 				{/if}
 
@@ -2665,10 +2944,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 					</Tweakpane.Folder>
 
 					<Tweakpane.Folder title="Lens Flare Advanced" expanded={false}>
-						<Tweakpane.Checkbox
-							bind:value={uniforms.u_anamorphic.value}
-							label="Anamorphic"
-						/>
+						<Tweakpane.Checkbox bind:value={uniforms.u_anamorphic.value} label="Anamorphic" />
 						<Tweakpane.Checkbox
 							bind:value={uniforms.u_secondaryGhosts.value}
 							label="Secondary Ghosts"
@@ -2684,10 +2960,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							bind:value={uniforms.u_additionalStreaks.value}
 							label="Additional Streaks"
 						/>
-						<Tweakpane.Checkbox
-							bind:value={uniforms.u_starBurst.value}
-							label="Star Burst"
-						/>
+						<Tweakpane.Checkbox bind:value={uniforms.u_starBurst.value} label="Star Burst" />
 						<Tweakpane.Slider
 							bind:value={uniforms.u_haloScale.value}
 							label="Halo Scale"
@@ -2804,10 +3077,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 					</Tweakpane.Folder>
 
 					<Tweakpane.Folder title="Chromatic Undulation" expanded={true}>
-						<Tweakpane.Checkbox
-							bind:value={chromaticEnabled}
-							label="Enable Chromatic"
-						/>
+						<Tweakpane.Checkbox bind:value={chromaticEnabled} label="Enable Chromatic" />
 						<Tweakpane.Slider
 							bind:value={uniforms.u_chromatic_amount.value}
 							label="Amount"
@@ -2826,17 +3096,14 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							bind:value={chromaticStyle}
 							label="Style"
 							options={{
-								'Circular': 0,
+								Circular: 0,
 								'Horizontal Wave': 1
 							}}
 						/>
 					</Tweakpane.Folder>
 
 					<Tweakpane.Folder title="Anamorphic Defocus" expanded={true}>
-						<Tweakpane.Checkbox
-							bind:value={defocusEnabled}
-							label="Enable Defocus"
-						/>
+						<Tweakpane.Checkbox bind:value={defocusEnabled} label="Enable Defocus" />
 						<Tweakpane.Slider
 							bind:value={uniforms.u_defocus_amount.value}
 							label="Amount"
@@ -2868,10 +3135,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 							max={2}
 							step={0.01}
 						/>
-						<Tweakpane.Checkbox
-							bind:value={breatheSync}
-							label="Sync Effects"
-						/>
+						<Tweakpane.Checkbox bind:value={breatheSync} label="Sync Effects" />
 					</Tweakpane.Folder>
 				{/if}
 			</Tweakpane.Pane>
@@ -2882,25 +3146,25 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		<div class="player-area">
 			{#if isPreloading}
 				<div class="loading-overlay">
-				<div class="loading-content">
-					<h3>Preparing Videos...</h3>
-					<div class="progress-bar">
-						<div class="progress-fill" style="width: {preloadProgress * 100}%"></div>
+					<div class="loading-content">
+						<h3>Preparing Videos...</h3>
+						<div class="progress-bar">
+							<div class="progress-fill" style="width: {preloadProgress * 100}%"></div>
+						</div>
+						<p class="progress-status">{preloadStatus}</p>
+						<p class="progress-percent">{Math.round(preloadProgress * 100)}%</p>
 					</div>
-					<p class="progress-status">{preloadStatus}</p>
-					<p class="progress-percent">{Math.round(preloadProgress * 100)}%</p>
 				</div>
-			</div>
-		{:else if isBufferReady}
-			<ShaderPlayer
-				bind:this={shaderPlayerRef}
-				{frameBuffer}
-				{fragmentShader}
-				bind:uniforms={uniforms}
-				{filtersEnabled}
-				{analysisData}
-				{enableLooping}
-			/>
+			{:else if isBufferReady}
+				<ShaderPlayer
+					bind:this={shaderPlayerRef}
+					{frameBuffer}
+					{fragmentShader}
+					bind:uniforms
+					{filtersEnabled}
+					{analysisData}
+					{enableLooping}
+				/>
 			{:else}
 				<div class="placeholder">
 					<h3>Upload videos to begin</h3>
@@ -2911,18 +3175,28 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 
 		<div class="waveform-wrapper" style="position: relative;">
 			{#if isAnalyzingAudio}
-				<div style="position: absolute; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; background-color: rgba(0,0,0,0.8); backdrop-filter: blur(4px);">
-					<div style="width: 3rem; height: 3rem; border: 4px solid #06b6d4; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 1rem;"></div>
-					<div style="color: #22d3ee; font-family: monospace; font-size: 1.125rem; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;">Running Essentia Analysis...</div>
-					<div style="color: #9ca3af; font-size: 0.75rem; margin-top: 0.5rem;">Extracting beats & transients</div>
+				<div
+					style="position: absolute; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; background-color: rgba(0,0,0,0.8); backdrop-filter: blur(4px);"
+				>
+					<div
+						style="width: 3rem; height: 3rem; border: 4px solid #06b6d4; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 1rem;"
+					></div>
+					<div
+						style="color: #22d3ee; font-family: monospace; font-size: 1.125rem; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;"
+					>
+						Running Essentia Analysis...
+					</div>
+					<div style="color: #9ca3af; font-size: 0.75rem; margin-top: 0.5rem;">
+						Extracting beats & transients
+					</div>
 				</div>
 			{/if}
-			
+
 			<!-- Section Loop Dropdown -->
 			{#if analysisData.structure?.sections?.length > 0}
 				<div class="section-loop-controls">
 					<label class="section-loop-label" for="section-loop-select">Loop Section:</label>
-					<select 
+					<select
 						id="section-loop-select"
 						class="section-loop-dropdown"
 						bind:value={loopSectionIndex}
@@ -2930,7 +3204,11 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 					>
 						<option value={-1}>None (No Loop)</option>
 						{#each analysisData.structure.sections as section, i}
-							<option value={i}>{section.label.toUpperCase()} ({formatSectionTime(section.start)} - {formatSectionTime(section.end)})</option>
+							<option value={i}
+								>{section.label.toUpperCase()} ({formatSectionTime(section.start)} - {formatSectionTime(
+									section.end
+								)})</option
+							>
 						{/each}
 					</select>
 					{#if loopSectionIndex >= 0}
@@ -2938,20 +3216,20 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 					{/if}
 				</div>
 			{/if}
-			
+
 			<PeaksPlayer
-				audioFile={audioFile}
-                mediaElement={sharedAudioRef}
+				{audioFile}
+				mediaElement={sharedAudioRef}
 				bind:currentTime={audioCurrentTime}
 				bind:duration={audioDuration}
-				bind:isPlaying={isPlaying}
+				bind:isPlaying
 				onsets={filteredEssentiaOnsets}
 				midiMarkers={filteredMIDIMarkers}
-				bind:showOnsets={showOnsets}
-				bind:showMIDIMarkers={showMIDIMarkers}
-				segments={[]} 
+				bind:showOnsets
+				bind:showMIDIMarkers
+				segments={[]}
 				sections={analysisData.structure?.sections || []}
-				loopSectionIndex={loopSectionIndex}
+				{loopSectionIndex}
 				grid={gridMarkers}
 				onRestart={restartPlayback}
 				onNextVideo={nextVideo}
@@ -2968,66 +3246,219 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 				}}
 			/>
 		</div>
-		
-		<!-- Thumbnail Gallery (moved here from sidebar) -->
-		{#if $videoAssets.length > 0}
-			<div class="thumbnail-gallery-main">
-				{#each $videoAssets as asset (asset.id)}
-					<button
-						class="thumbnail-button"
-						class:active={asset.id === $activeVideo?.id}
-						onclick={() => handleVideoSelect(asset)}
-						style:background-image={asset.thumbnailUrl ? `url(${asset.thumbnailUrl})` : 'none'}
-					>
-						{#if !asset.thumbnailUrl}
-							<div class="thumbnail-placeholder">Loading...</div>
-						{/if}
-						<span class="thumbnail-label">{asset.name}</span>
+
+		<div class="arranger-panel">
+			<div class="arranger-header">
+				<span class="arranger-title">Sequencer</span>
+				<div class="arranger-header-actions">
+					<span class="arranger-meta">32 bars × 8-count</span>
+					<button class="panel-toggle" onclick={toggleSequencerCollapsed}>
+						{isSequencerCollapsed ? 'Expand' : 'Collapse'}
 					</button>
-				{/each}
+				</div>
 			</div>
-		{/if}
+			{#if !isSequencerCollapsed}
+				<div class="arranger-grid">
+					{#each sequencerBars as bar}
+						<div class="arranger-bar">{bar}</div>
+					{/each}
+				</div>
+				<div class="arranger-track">
+					{#if timelineSections.length > 0}
+						{#each timelineSections as item}
+							<button
+								class="arranger-section-block"
+								class:active={focusedSectionIndex === item.index}
+								style="left: {item.left}%; width: {item.width}%; background-color: {getSectionColor(item.index)};"
+								onclick={() => focusSection(item.index, true)}
+								title={`Upload clips to ${item.section.label.toUpperCase()}`}
+							>
+								{item.section.label}
+							</button>
+						{/each}
+					{:else}
+						<div class="arranger-track-empty">Load audio to generate sections</div>
+					{/if}
+				</div>
+				<div class="arranger-sections">
+					{#if analysisData.structure?.sections?.length > 0}
+						{#each analysisData.structure.sections as section, sectionIndex}
+							<button
+								class="arranger-section-chip"
+								class:active={focusedSectionIndex === sectionIndex}
+								onclick={() => focusSection(sectionIndex, true)}
+							>
+								{section.label}
+							</button>
+						{/each}
+					{:else}
+						<span class="arranger-section-chip">Load audio to generate sections</span>
+					{/if}
+				</div>
+			{/if}
+		</div>
+
+		<div class="clip-buckets-panel">
+			<div class="clip-buckets-header">
+				<span class="clip-buckets-title">Clip Buckets</span>
+				<div class="arranger-header-actions">
+					{#if $videoAssets.length > 0}
+						<span class="clip-buckets-meta">{$videoAssets.length} total clips</span>
+					{/if}
+					<button class="panel-toggle" onclick={toggleClipBucketsCollapsed}>
+						{isClipBucketsCollapsed ? 'Expand' : 'Collapse'}
+					</button>
+				</div>
+			</div>
+
+			{#if !isClipBucketsCollapsed && analysisData.structure?.sections?.length > 0}
+				{#each analysisData.structure.sections as section, sectionIndex}
+					{@const poolIndices = getSectionPoolIndices(sectionIndex)}
+					<div
+						class="clip-bucket-row"
+						class:focused={focusedSectionIndex === sectionIndex || currentSection.index === sectionIndex}
+					>
+						<div class="clip-bucket-top">
+							<button class="clip-bucket-label-wrap" onclick={() => focusSection(sectionIndex)}>
+								<span
+									class="clip-bucket-dot"
+									style="background-color: {getSectionColor(sectionIndex)}"
+								></span>
+								<span class="clip-bucket-label">{section.label}</span>
+								<span class="clip-bucket-count">{poolIndices.length} clips</span>
+							</button>
+							<div class="clip-bucket-actions">
+								<button class="clip-bucket-toggle" onclick={() => toggleBucketSection(sectionIndex)}>
+									{isBucketSectionCollapsed(sectionIndex) ? '▸' : '▾'}
+								</button>
+								<button class="clip-bucket-add" onclick={() => handleSectionUploadClick(sectionIndex)}
+									>+ Add Clips</button
+								>
+							</div>
+							<input
+								id={`section-upload-${sectionIndex}`}
+								type="file"
+								accept="video/mp4,video/webm"
+								multiple
+								hidden
+								onchange={(event) => onSectionVideoSelected(sectionIndex, event)}
+							/>
+						</div>
+						{#if !isBucketSectionCollapsed(sectionIndex)}
+							<div class="clip-bucket-content">
+							{#if poolIndices.length === 0}
+								<div class="clip-bucket-empty">Drop or add clips for this section</div>
+							{:else}
+								<div class="clip-bucket-grid">
+									{#each poolIndices as videoIndex}
+										{@const asset = $videoAssets[videoIndex]}
+										{#if asset}
+											<button
+												class="thumbnail-button clip-bucket-thumb"
+												class:active={asset.id === $activeVideo?.id}
+												onclick={() => handleVideoSelect(asset)}
+												style:background-image={asset.thumbnailUrl
+													? `url(${asset.thumbnailUrl})`
+													: 'none'}
+											>
+												{#if !asset.thumbnailUrl}
+													<div class="thumbnail-placeholder">Loading...</div>
+												{/if}
+												<span class="thumbnail-label">{asset.name}</span>
+											</button>
+										{/if}
+									{/each}
+								</div>
+							{/if}
+							</div>
+						{/if}
+					</div>
+				{/each}
+			{:else if !isClipBucketsCollapsed}
+				<div class="clip-bucket-row">
+					<div class="clip-bucket-top">
+						<div class="clip-bucket-label-wrap">
+							<span class="clip-bucket-dot"></span>
+							<span class="clip-bucket-label">All Clips</span>
+							<span class="clip-bucket-count">{$videoAssets.length} clips</span>
+						</div>
+						<button class="clip-bucket-add" onclick={handleUploadClick}>+ Add Clips</button>
+					</div>
+					<div class="clip-bucket-content">
+						{#if $videoAssets.length === 0}
+							<div class="clip-bucket-empty">Upload clips to start building buckets</div>
+						{:else}
+							<div class="clip-bucket-grid">
+								{#each $videoAssets as asset (asset.id)}
+									<button
+										class="thumbnail-button clip-bucket-thumb"
+										class:active={asset.id === $activeVideo?.id}
+										onclick={() => handleVideoSelect(asset)}
+										style:background-image={asset.thumbnailUrl
+											? `url(${asset.thumbnailUrl})`
+											: 'none'}
+									>
+										{#if !asset.thumbnailUrl}
+											<div class="thumbnail-placeholder">Loading...</div>
+										{/if}
+										<span class="thumbnail-label">{asset.name}</span>
+									</button>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				</div>
+			{:else}
+				<div class="panel-collapsed-note">Clip buckets collapsed</div>
+			{/if}
+		</div>
 	</main>
 </div>
 
 <style>
-    .beat-indicator-row {
-        display: flex;
-        align-items: center;
-        margin-top: 10px;
-        padding: 5px;
-    }
-    .beat-label {
-        font-size: 11px;
-        color: #888;
-        margin-right: 10px;
-    }
-    .beat-light {
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        background-color: #333;
-        border: 1px solid #555;
-        transition: all 0.05s ease;
-        transform: scale(1);
-    }
-    .beat-light.active {
-        background-color: #00ff88;
-        box-shadow: 0 0 12px #00ff88, 0 0 24px rgba(0, 255, 136, 0.5);
-        border-color: #00ff88;
-        animation: beat-pulse 0.1s ease-out;
-    }
-    
-    @keyframes beat-pulse {
-        0% {
-            transform: scale(1.4);
-            box-shadow: 0 0 20px #00ff88, 0 0 40px rgba(0, 255, 136, 0.8);
-        }
-        100% {
-            transform: scale(1);
-            box-shadow: 0 0 12px #00ff88, 0 0 24px rgba(0, 255, 136, 0.5);
-        }
-    }
+	.beat-indicator-row {
+		display: flex;
+		align-items: center;
+		margin-top: 10px;
+		padding: 5px;
+	}
+	.beat-label {
+		font-size: 11px;
+		color: #888;
+		margin-right: 10px;
+	}
+	.beat-light {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background-color: #333;
+		border: 1px solid #555;
+		transition: all 0.05s ease;
+		transform: scale(1);
+	}
+	.beat-light.active {
+		background-color: #00ff88;
+		box-shadow:
+			0 0 12px #00ff88,
+			0 0 24px rgba(0, 255, 136, 0.5);
+		border-color: #00ff88;
+		animation: beat-pulse 0.1s ease-out;
+	}
+
+	@keyframes beat-pulse {
+		0% {
+			transform: scale(1.4);
+			box-shadow:
+				0 0 20px #00ff88,
+				0 0 40px rgba(0, 255, 136, 0.8);
+		}
+		100% {
+			transform: scale(1);
+			box-shadow:
+				0 0 12px #00ff88,
+				0 0 24px rgba(0, 255, 136, 0.5);
+		}
+	}
 
 	/* Speed Ramping Meter */
 	.speed-meter-container {
@@ -3126,29 +3557,91 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		margin: 4px 0;
 	}
 
-	.app-container { display: flex; height: 100vh; background-color: #1a1a1a; color: #fff; }
-	.sidebar { width: 350px; padding: 1rem; background-color: #242424; display: flex; flex-direction: column; gap: 1.5rem; overflow-y: auto; }
-	.sidebar h2 { text-align: center; margin-bottom: 0; }
-	.unified-controls { flex: 1; }
-	.main-content { 
-		flex-grow: 1; 
-		display: flex; 
+	.app-container {
+		display: flex;
+		height: 100vh;
+		background-color: #1a1a1a;
+		color: #fff;
+	}
+	.sidebar {
+		width: 350px;
+		padding: 1rem;
+		background-color: #242424;
+		display: flex;
 		flex-direction: column;
-		justify-content: flex-start; 
-		align-items: stretch; 
-		padding: 1rem; 
+		gap: 1.5rem;
+		overflow-y: auto;
+	}
+	.sidebar h2 {
+		text-align: center;
+		margin-bottom: 0;
+	}
+	.unified-controls {
+		flex: 1;
+	}
+	.main-content {
+		flex-grow: 1;
+		display: flex;
+		flex-direction: column;
+		justify-content: flex-start;
+		align-items: stretch;
+		padding: 1rem;
+		gap: 12px;
 		overflow-x: hidden;
+		overflow-y: auto;
 		min-width: 0; /* Allows flex item to shrink below content size */
 	}
-	.placeholder { text-align: center; }
-	.playback-controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
-	.thumbnail-button { background-color: #333; border: 2px solid #444; border-radius: 4px; padding: 0; cursor: pointer; transition: all 0.2s ease; font-family: inherit; color: inherit; width: 100%; aspect-ratio: 16 / 9; background-size: cover; background-position: center; position: relative; display: flex; align-items: flex-end; justify-content: center; }
-	.thumbnail-button:hover { border-color: #666; }
-	.thumbnail-button.active { border-color: #00aaff; }
-	.thumbnail-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #444; color: #888; position: absolute; top: 0; left: 0; }
+	.player-area {
+		display: flex;
+		justify-content: flex-start;
+	}
+	.placeholder {
+		text-align: center;
+	}
+	.playback-controls {
+		display: flex;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+	}
+	.thumbnail-button {
+		background-color: #333;
+		border: 2px solid #444;
+		border-radius: 4px;
+		padding: 0;
+		cursor: pointer;
+		transition: all 0.2s ease;
+		font-family: inherit;
+		color: inherit;
+		width: 100%;
+		aspect-ratio: 16 / 9;
+		background-size: cover;
+		background-position: center;
+		position: relative;
+		display: flex;
+		align-items: flex-end;
+		justify-content: center;
+	}
+	.thumbnail-button:hover {
+		border-color: #666;
+	}
+	.thumbnail-button.active {
+		border-color: #00aaff;
+	}
+	.thumbnail-placeholder {
+		width: 100%;
+		height: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: #444;
+		color: #888;
+		position: absolute;
+		top: 0;
+		left: 0;
+	}
 	.thumbnail-label {
 		font-size: 0.8rem;
-		background-color: rgba(0,0,0,0.6);
+		background-color: rgba(0, 0, 0, 0.6);
 		padding: 2px 4px;
 		border-radius: 2px;
 		white-space: nowrap;
@@ -3178,7 +3671,11 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 	}
 
 	.section-label {
-		font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+		font-family:
+			'SF Pro Display',
+			-apple-system,
+			BlinkMacSystemFont,
+			sans-serif;
 		font-size: 0.7rem;
 		font-weight: 600;
 		color: #a882ff;
@@ -3264,7 +3761,7 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		background: rgba(60, 60, 60, 0.8);
 	}
 
-	.video-pool-checkbox input[type="checkbox"] {
+	.video-pool-checkbox input[type='checkbox'] {
 		width: 12px;
 		height: 12px;
 		accent-color: #a882ff;
@@ -3293,8 +3790,15 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 		color: #ccc;
 	}
 
-	.status-analyzing { color: #ffaa00; margin-left: 0.5rem; font-style: italic; }
-	.status-ready { color: #00ffaa; margin-left: 0.5rem; }
+	.status-analyzing {
+		color: #ffaa00;
+		margin-left: 0.5rem;
+		font-style: italic;
+	}
+	.status-ready {
+		color: #00ffaa;
+		margin-left: 0.5rem;
+	}
 
 	.video-controls {
 		display: flex;
@@ -3418,19 +3922,281 @@ let enableFXTriggers = $state(false); // Shader parameter spikes on marker
 	}
 
 	@keyframes pulse-loop {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0.6; }
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.6;
+		}
 	}
 
-	/* Thumbnail Gallery in Main Area */
-	.thumbnail-gallery-main {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-		gap: 10px;
-		margin-top: 1rem;
-		padding: 10px;
+	.arranger-panel,
+	.clip-buckets-panel {
+		background: #0a0a0a;
+		border: 1px solid #222;
+	}
+
+	.arranger-header,
+	.clip-buckets-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 8px 12px;
+		border-bottom: 1px solid #222;
+	}
+
+	.arranger-title,
+	.clip-buckets-title {
+		font-size: 10px;
+		color: #ff9800;
+		font-family: monospace;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.arranger-header-actions {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.arranger-meta,
+	.clip-buckets-meta {
+		font-size: 10px;
+		color: #666;
+		font-family: monospace;
+	}
+
+	.panel-toggle {
+		height: 22px;
+		padding: 0 8px;
+		border: 1px solid #2b2b2b;
+		background: #141414;
+		color: #aaa;
+		font-size: 10px;
+		font-family: monospace;
+		cursor: pointer;
+	}
+
+	.panel-toggle:hover {
 		background: #1a1a1a;
-		border-radius: 6px;
+		color: #fff;
+	}
+
+	.arranger-grid {
+		display: grid;
+		grid-template-columns: repeat(32, minmax(0, 1fr));
+		border-bottom: 1px solid #222;
+	}
+
+	.arranger-bar {
+		height: 28px;
+		border-right: 1px solid #222;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-family: monospace;
+		font-size: 9px;
+		color: #555;
+		background: #050505;
+	}
+
+	.arranger-track {
+		position: relative;
+		height: 42px;
+		border-bottom: 1px solid #222;
+		background: #060606;
+	}
+
+	.arranger-track-empty {
+		height: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 10px;
+		color: #444;
+		font-family: monospace;
+		text-transform: uppercase;
+	}
+
+	.arranger-section-block {
+		position: absolute;
+		top: 8px;
+		height: 26px;
+		border: none;
+		opacity: 0.72;
+		color: #0f0f0f;
+		font-size: 10px;
+		font-family: monospace;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		padding: 0 6px;
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+		cursor: pointer;
+	}
+
+	.arranger-section-block:hover {
+		opacity: 0.9;
+	}
+
+	.arranger-section-block.active {
+		opacity: 1;
+		outline: 1px solid #fff;
+	}
+
+	.arranger-sections {
+		display: flex;
+		gap: 8px;
+		overflow-x: auto;
+		padding: 8px 12px;
+	}
+
+	.arranger-section-chip {
+		flex-shrink: 0;
+		padding: 2px 6px;
+		background: #1a1a1a;
+		color: #666;
+		font-size: 9px;
+		font-family: monospace;
+		text-transform: uppercase;
+		border: 1px solid #2a2a2a;
+		cursor: pointer;
+	}
+
+	.arranger-section-chip.active {
+		color: #fff;
+		border-color: #555;
+		background: #232323;
+	}
+
+	.clip-bucket-row + .clip-bucket-row {
+		border-top: 1px solid #1a1a1a;
+	}
+
+	.clip-bucket-row.focused {
+		background: rgba(30, 30, 30, 0.65);
+	}
+
+	.clip-bucket-top {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 8px 12px;
+	}
+
+	.clip-bucket-label-wrap {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		border: none;
+		background: transparent;
+		padding: 0;
+		cursor: pointer;
+	}
+
+	.clip-bucket-dot {
+		width: 8px;
+		height: 8px;
+		background: #00a985;
+	}
+
+	.clip-bucket-label {
+		color: #ccc;
+		font-size: 11px;
+		font-family: monospace;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.clip-bucket-count {
+		color: #555;
+		font-size: 10px;
+		font-family: monospace;
+	}
+
+	.clip-bucket-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.clip-bucket-toggle {
+		height: 24px;
+		width: 24px;
 		border: 1px solid #333;
+		background: #131313;
+		color: #888;
+		font-family: monospace;
+		font-size: 12px;
+		cursor: pointer;
+	}
+
+	.clip-bucket-add {
+		height: 24px;
+		padding: 0 10px;
+		border: 1px solid #333;
+		background: #1a1a1a;
+		color: #888;
+		font-family: monospace;
+		font-size: 10px;
+		cursor: pointer;
+	}
+
+	.clip-bucket-add:hover {
+		background: #222;
+		color: #00a985;
+	}
+
+	.clip-bucket-content {
+		padding: 0 12px 12px;
+	}
+
+	.clip-bucket-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+		gap: 8px;
+	}
+
+	.clip-bucket-thumb {
+		margin: 0;
+	}
+
+	.clip-bucket-empty {
+		height: 64px;
+		border: 1px dashed #333;
+		color: #444;
+		font-size: 10px;
+		font-family: monospace;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.panel-collapsed-note {
+		padding: 12px;
+		color: #666;
+		font-size: 10px;
+		font-family: monospace;
+		text-transform: uppercase;
+	}
+
+	@media (max-width: 1100px) {
+		.sidebar {
+			width: 300px;
+		}
+
+		.arranger-grid {
+			grid-template-columns: repeat(16, minmax(0, 1fr));
+		}
+
+		.arranger-bar:nth-child(n + 17) {
+			display: none;
+		}
 	}
 </style>

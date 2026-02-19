@@ -332,14 +332,18 @@
 
         // 1. Grid Lines (Very faint)
         if (gridData && gridData.length > 0) {
-            gridData.forEach((time) => {
+			// Cap dense grid markers to keep waveform render responsive.
+			const maxGridPoints = 800;
+			const step = gridData.length > maxGridPoints ? Math.ceil(gridData.length / maxGridPoints) : 1;
+            for (let i = 0; i < gridData.length; i += step) {
+				const time = gridData[i];
                 allPoints.push({
                     time,
                     labelText: '',
                     editable: false,
                     color: 'rgba(255, 255, 255, 0.05)',
                 });
-            });
+            }
         }
 
         // 2. Essentia Onsets (Orange) - reduced opacity
@@ -395,46 +399,23 @@
 			const zoomview = peaksInstance.views.getView('zoomview');
 			const overview = peaksInstance.views.getView('overview');
 			
-			// Use multiple methods to force a redraw
+			// Keep redraw minimal and avoid brittle DOM queries into Peaks internals.
 			if (zoomview) {
-				// Method 1: Update waveform color (triggers redraw)
-				zoomview.setWaveformColor('#5a3fc0');
-				// Method 2: Try fitToContainer if available
 				if (typeof zoomview.fitToContainer === 'function') {
 					zoomview.fitToContainer();
 				}
-				// Show points in zoom view
 				if (typeof zoomview.showPoints === 'function') {
 					zoomview.showPoints(true);
 				}
 			}
 			if (overview) {
-				overview.setWaveformColor('#5a3fc0');
 				if (typeof overview.fitToContainer === 'function') {
 					overview.fitToContainer();
 				}
-				// Hide points in overview - keep only segments
 				if (typeof overview.showPoints === 'function') {
 					overview.showPoints(false);
 				}
 			}
-			
-			// Reduce opacity of point markers in overview via DOM manipulation
-			setTimeout(() => {
-				const overviewEl = document.querySelector(`#${overviewId}`);
-				if (overviewEl) {
-					const overviewSvg = overviewEl.querySelector('svg');
-					if (overviewSvg) {
-						// Get all lines in overview (point markers)
-						const allLines = overviewSvg.querySelectorAll('line');
-						console.log(`[PeaksPlayer] Setting opacity for ${allLines.length} lines in overview`);
-						allLines.forEach(line => {
-							line.style.opacity = '0.02';
-							line.style.strokeOpacity = '0.02';
-						});
-					}
-				}
-			}, 300);
 			
 			console.log(`[PeaksPlayer] Forced redraw of views`);
 		} catch (e) {
@@ -562,42 +543,6 @@
 				}, 100);
 			}
 			
-			// Also reduce marker opacity in overview after sections are added
-			// Use multiple attempts with increasing delays
-			const reduceOverviewOpacity = () => {
-				const overviewEl = document.querySelector(`#${overviewId}`);
-				if (overviewEl) {
-					// Debug: log structure
-					console.log('[PeaksPlayer] Overview element:', overviewEl);
-					console.log('[PeaksPlayer] Overview HTML:', overviewEl.innerHTML.substring(0, 200));
-					
-					// Try multiple selectors
-					let allLines = overviewEl.querySelectorAll('line');
-					if (allLines.length === 0) {
-						// Try looking in canvas or other elements
-						allLines = document.querySelectorAll(`#${overviewId} line`);
-					}
-					if (allLines.length === 0) {
-						// Try looking for all child elements
-						const allChildren = overviewEl.querySelectorAll('*');
-						console.log('[PeaksPlayer] Overview has', allChildren.length, 'child elements');
-						console.log('[PeaksPlayer] First few:', Array.from(allChildren).slice(0, 5));
-					}
-					
-					console.log(`[PeaksPlayer] Post-section: Found ${allLines.length} lines in overview`);
-					if (allLines.length > 0) {
-						allLines.forEach(line => {
-							line.style.opacity = '0.02';
-							line.style.strokeOpacity = '0.02';
-						});
-						console.log(`[PeaksPlayer] ✅ Reduced opacity for ${allLines.length} overview markers`);
-					}
-				}
-			};
-			
-			setTimeout(reduceOverviewOpacity, 300);
-			setTimeout(reduceOverviewOpacity, 600);
-			setTimeout(reduceOverviewOpacity, 1000);
 		} catch (e) {
 			console.error('[PeaksPlayer] Error adding section segments:', e);
 		}
