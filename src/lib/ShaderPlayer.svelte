@@ -9,7 +9,8 @@
 		filtersEnabled = true,
 		analysisData = { beats: [], bpm: 0 },
 		enableLooping = true,
-		onClipComplete = null
+		onClipComplete = null,
+		forceBlackout = false
 	} = $props();
 
 	// Output dimensions (match frame buffer - 1280x720 max, 16:9 aspect)
@@ -80,6 +81,7 @@
 		
 		renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
 		renderer.setPixelRatio(maxDPR);
+		renderer.setClearColor(0x000000, 1);
 		scene = new THREE.Scene();
 		camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
 		camera.position.z = 1;
@@ -144,6 +146,10 @@
 		const currentTime = performance.now();
 		const deltaTime = currentTime - lastRenderTime;
 		lastRenderTime = currentTime;
+
+		if (mesh) {
+			mesh.visible = !forceBlackout;
+		}
 
 		// Update time uniform
 		if (material?.uniforms?.u_time) {
@@ -542,7 +548,6 @@
 		font-size: 1.2rem;
 	}
 </style>
-
 
 
 

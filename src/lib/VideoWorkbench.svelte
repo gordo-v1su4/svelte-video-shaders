@@ -309,29 +309,9 @@
 	let previousSectionIndex = $state(-1);
 
 	$effect(() => {
-		if (currentSection.index !== previousSectionIndex) {
-			console.log(
-				`[VideoWorkbench] Section changed: ${currentSection.label} (${currentSection.index})`
-			);
-			previousSectionIndex = currentSection.index;
-
-			// Check if current video is in the new section's pool
-			if ($activeVideo && currentSectionVideos.length > 0) {
-				const isInPool = currentSectionVideos.some((v) => v.id === $activeVideo?.id);
-				if (!isInPool) {
-					// Current video not in new section's pool - switch to first video in pool
-					console.log(`[VideoWorkbench] Video not in section pool, switching...`);
-					const nextVideo = currentSectionVideos[0];
-					const globalIndex = $videoAssets.findIndex((asset) => asset.id === nextVideo.id);
-					// Update lastActiveVideoId BEFORE setting activeVideo to prevent duplicate seekToClip
-					lastActiveVideoId = nextVideo.id;
-					activeVideo.set(nextVideo);
-					if (shaderPlayerRef) {
-						shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, isSpeedRampActive());
-					}
-				}
-			}
-		}
+		if (currentSection.index === previousSectionIndex) return;
+		console.log(`[VideoWorkbench] Section changed: ${currentSection.label} (${currentSection.index})`);
+		previousSectionIndex = currentSection.index;
 	});
 
 	// Video pool assignment per section (Phase 3)
@@ -517,16 +497,40 @@
 		if (pool && pool.length > 0) {
 			return $videoAssets.filter((_, i) => pool.includes(i));
 		}
+		return [];
+	});
 
-		// Playback fallback:
-		// If the active section has no assigned clips yet, reuse section 0's bucket
-		// (where global uploads land). If that's empty, use all clips.
-		const firstSectionPool = getSectionPoolIndices(0);
-		if (firstSectionPool && firstSectionPool.length > 0) {
-			return $videoAssets.filter((_, i) => firstSectionPool.includes(i));
+	const shouldBlackoutCurrentSection = $derived.by(() => {
+		const hasSections = (analysisData.structure?.sections?.length || 0) > 0;
+		return hasSections && currentSectionVideos.length === 0;
+	});
+
+	$effect(() => {
+		const availableVideos = currentSectionVideos;
+
+		if (availableVideos.length === 0) {
+			if ($activeVideo) {
+				console.log('[VideoWorkbench] No clips in current section; forcing blackout');
+				lastActiveVideoId = null;
+				activeVideo.set(null);
+			}
+			return;
 		}
 
-		return $videoAssets;
+		const isCurrentInPool = $activeVideo
+			? availableVideos.some((asset) => asset.id === $activeVideo.id)
+			: false;
+		if (isCurrentInPool) return;
+
+		const nextVideo = availableVideos[0];
+		const globalIndex = $videoAssets.findIndex((asset) => asset.id === nextVideo.id);
+		if (globalIndex < 0) return;
+
+		lastActiveVideoId = nextVideo.id;
+		activeVideo.set(nextVideo);
+		if (shaderPlayerRef) {
+			shaderPlayerRef.seekToClip(globalIndex, audioCurrentTime, isSpeedRampActive());
+		}
 	});
 
 	// Store base values for FX triggers (so we can spike and return)
@@ -1797,7 +1801,11 @@
 
 		// Get videos available in current section
 		const availableVideos = currentSectionVideos;
-		if (availableVideos.length === 0) return;
+		if (availableVideos.length === 0) {
+			lastActiveVideoId = null;
+			activeVideo.set(null);
+			return;
+		}
 
 		// Find current video in the available pool
 		const currentPoolIndex = availableVideos.findIndex((asset) => asset.id === $activeVideo?.id);
@@ -1821,7 +1829,11 @@
 
 		// Get videos available in current section
 		const availableVideos = currentSectionVideos;
-		if (availableVideos.length === 0) return;
+		if (availableVideos.length === 0) {
+			lastActiveVideoId = null;
+			activeVideo.set(null);
+			return;
+		}
 
 		const currentPoolIndex = availableVideos.findIndex((asset) => asset.id === $activeVideo?.id);
 		const prevPoolIndex =
@@ -3212,6 +3224,7 @@
 					{filtersEnabled}
 					{analysisData}
 					{enableLooping}
+					forceBlackout={shouldBlackoutCurrentSection}
 				/>
 			{:else}
 				<div class="placeholder">
