@@ -514,8 +514,19 @@
 	// Get videos available in current section
 	const currentSectionVideos = $derived.by(() => {
 		const pool = getSectionPoolIndices(currentSection.index);
-		if (!pool || pool.length === 0) return [];
-		return $videoAssets.filter((_, i) => pool.includes(i));
+		if (pool && pool.length > 0) {
+			return $videoAssets.filter((_, i) => pool.includes(i));
+		}
+
+		// Playback fallback:
+		// If the active section has no assigned clips yet, reuse section 0's bucket
+		// (where global uploads land). If that's empty, use all clips.
+		const firstSectionPool = getSectionPoolIndices(0);
+		if (firstSectionPool && firstSectionPool.length > 0) {
+			return $videoAssets.filter((_, i) => firstSectionPool.includes(i));
+		}
+
+		return $videoAssets;
 	});
 
 	// Store base values for FX triggers (so we can spike and return)
