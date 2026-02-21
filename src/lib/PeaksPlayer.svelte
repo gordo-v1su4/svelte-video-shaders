@@ -702,6 +702,19 @@
 	export function fitZoom() {
 		fitWaveformToView();
 	}
+
+	export function refreshLayout() {
+		if (!peaksInstance) return;
+		try {
+			const zoomview = peaksInstance.views?.getView?.('zoomview');
+			const overview = peaksInstance.views?.getView?.('overview');
+			if (typeof zoomview?.fitToContainer === 'function') zoomview.fitToContainer();
+			if (typeof overview?.fitToContainer === 'function') overview.fitToContainer();
+			clampZoomToDuration();
+		} catch (e) {
+			console.warn('[PeaksPlayer] refreshLayout failed:', e);
+		}
+	}
 </script>
 
 <div class="peaks-container" class:loading={!isReady && audioFile}>

@@ -352,6 +352,7 @@
 	let isClipBucketsCollapsed = $state(false);
 	let focusedSectionIndex = $state(-1);
 	let collapsedBucketSections = $state({});
+	let peaksPlayerRef = $state();
 
 	// Helper functions for section video pools
 	function isVideoInSection(sectionIndex, videoIndex) {
@@ -383,8 +384,24 @@
 
 	function getSectionPoolIndices(sectionIndex) {
 		const pool = sectionVideoPools[sectionIndex];
-		if (!pool) return $videoAssets.map((_, i) => i);
-		return pool;
+		if (Array.isArray(pool)) return pool;
+
+		// Default bucket policy when sections exist:
+		// - first section gets all clips by default
+		// - other sections start empty until user adds clips
+		const hasSections = (analysisData.structure?.sections?.length || 0) > 0;
+		if (hasSections) {
+			return sectionIndex === 0 ? $videoAssets.map((_, i) => i) : [];
+		}
+
+		return $videoAssets.map((_, i) => i);
+	}
+
+	async function ensureWaveformLayout() {
+		await tick();
+		requestAnimationFrame(() => {
+			peaksPlayerRef?.refreshLayout?.();
+		});
 	}
 
 	function toggleSequencerCollapsed() {
@@ -393,6 +410,7 @@
 
 	function toggleClipBucketsCollapsed() {
 		isClipBucketsCollapsed = !isClipBucketsCollapsed;
+		ensureWaveformLayout();
 	}
 
 	function isBucketSectionCollapsed(sectionIndex) {
@@ -403,6 +421,15 @@
 		collapsedBucketSections = {
 			...collapsedBucketSections,
 			[sectionIndex]: !isBucketSectionCollapsed(sectionIndex)
+		};
+		ensureWaveformLayout();
+	}
+
+	function removeClipFromBucket(sectionIndex, videoIndex) {
+		const pool = getSectionPoolIndices(sectionIndex);
+		sectionVideoPools = {
+			...sectionVideoPools,
+			[sectionIndex]: pool.filter((idx) => idx !== videoIndex)
 		};
 	}
 
@@ -486,11 +513,8 @@
 
 	// Get videos available in current section
 	const currentSectionVideos = $derived.by(() => {
-		const pool = sectionVideoPools[currentSection.index];
-		if (!pool || pool.length === 0) {
-			// No pool defined, use all videos
-			return $videoAssets;
-		}
+		const pool = getSectionPoolIndices(currentSection.index);
+		if (!pool || pool.length === 0) return [];
 		return $videoAssets.filter((_, i) => pool.includes(i));
 	});
 
@@ -1587,7 +1611,7 @@
 	}
 
 	async function addVideoFiles(files, options = {}) {
-		const { targetSectionIndex = null, exclusiveToSection = false } = options;
+		let { targetSectionIndex = null, exclusiveToSection = false } = options;
 		if (files.length === 0) return;
 
 		console.log('[VideoWorkbench] Processing', files.length, 'video files');
@@ -1637,6 +1661,13 @@
 		// Pre-decode all videos into frame buffer
 		await preloadAllVideos();
 
+		// Global upload behavior with sections: place new clips into the first section bucket only.
+		const hasSections = (analysisData.structure?.sections?.length || 0) > 0;
+		if (targetSectionIndex === null && hasSections) {
+			targetSectionIndex = 0;
+			exclusiveToSection = true;
+		}
+
 		// Assign newly uploaded videos to a specific section bucket when requested.
 		if (targetSectionIndex !== null && newAssetIds.length > 0) {
 			const idToIndex = new Map($videoAssets.map((asset, index) => [asset.id, index]));
@@ -1664,6 +1695,8 @@
 				}
 			}
 		}
+
+		ensureWaveformLayout();
 	}
 
 	async function onFileSelected(event) {
@@ -3222,6 +3255,7 @@
 			{/if}
 
 			<PeaksPlayer
+				bind:this={peaksPlayerRef}
 				{audioFile}
 				mediaElement={sharedAudioRef}
 				bind:currentTime={audioCurrentTime}
@@ -3360,19 +3394,33 @@
 									{#each poolIndices as videoIndex}
 										{@const asset = $videoAssets[videoIndex]}
 										{#if asset}
-											<button
-												class="thumbnail-button clip-bucket-thumb"
-												class:active={asset.id === $activeVideo?.id}
-												onclick={() => handleVideoSelect(asset)}
-												style:background-image={asset.thumbnailUrl
-													? `url(${asset.thumbnailUrl})`
-													: 'none'}
-											>
-												{#if !asset.thumbnailUrl}
-													<div class="thumbnail-placeholder">Loading...</div>
-												{/if}
-												<span class="thumbnail-label">{asset.name}</span>
-											</button>
+											<div class="clip-bucket-item">
+												<button
+													type="button"
+													class="thumbnail-button clip-bucket-thumb"
+													class:active={asset.id === $activeVideo?.id}
+													onclick={() => handleVideoSelect(asset)}
+													style:background-image={asset.thumbnailUrl
+														? `url(${asset.thumbnailUrl})`
+														: 'none'}
+												>
+													{#if !asset.thumbnailUrl}
+														<div class="thumbnail-placeholder">Loading...</div>
+													{/if}
+													<span class="thumbnail-label">{asset.name}</span>
+												</button>
+												<button
+													type="button"
+													class="clip-remove-btn"
+													title="Remove from this bucket"
+													onclick={(event) => {
+														event.stopPropagation();
+														removeClipFromBucket(sectionIndex, videoIndex);
+													}}
+												>
+													×
+												</button>
+											</div>
 										{/if}
 									{/each}
 								</div>
@@ -3866,6 +3914,8 @@
 		max-width: 100%;
 		overflow-x: hidden;
 		margin-top: 1rem;
+		flex-shrink: 0;
+		min-height: 280px;
 	}
 
 	.progress-percent {
@@ -4168,8 +4218,34 @@
 		gap: 8px;
 	}
 
+	.clip-bucket-item {
+		position: relative;
+	}
+
 	.clip-bucket-thumb {
 		margin: 0;
+	}
+
+	.clip-remove-btn {
+		position: absolute;
+		top: 4px;
+		right: 4px;
+		width: 20px;
+		height: 20px;
+		border: 1px solid rgba(255, 255, 255, 0.25);
+		border-radius: 999px;
+		background: rgba(0, 0, 0, 0.45);
+		color: #fff;
+		font-size: 13px;
+		line-height: 1;
+		cursor: pointer;
+		opacity: 0.35;
+		transition: opacity 0.15s ease;
+		z-index: 2;
+	}
+
+	.clip-bucket-item:hover .clip-remove-btn {
+		opacity: 1;
 	}
 
 	.clip-bucket-empty {
