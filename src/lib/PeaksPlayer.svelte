@@ -223,6 +223,8 @@
 			console.log("PeaksPlayer: Success!");
 			peaksInstance = peaks;
 			isReady = true;
+			// Ensure initial viewport is a strict duration fit. This avoids first-click zoom jumps.
+			requestAnimationFrame(() => fitWaveformToView());
 			
 			peaks.on('player.timeupdate', (time) => {
 				currentTime = time;
@@ -605,29 +607,64 @@
         console.log("Current Points:", points);
     }
 
-	function fitWaveformToView() {
+	const MIN_ZOOM_SECONDS = 0.15;
+	const ZOOM_IN_FACTOR = 0.85;
+	const ZOOM_OUT_FACTOR = 1.15;
+
+	function getSafeDuration() {
+		if (!peaksInstance) return 0;
+		const playerDuration = peaksInstance.player?.getDuration?.() ?? 0;
+		const fallbackDuration = Number.isFinite(duration) ? duration : 0;
+		return Math.max(playerDuration, fallbackDuration);
+	}
+
+	function getCurrentZoomSpan() {
+		const zoomview = peaksInstance?.views?.getView?.('zoomview');
+		if (!zoomview) return 0;
+		const start = typeof zoomview.getStartTime === 'function' ? zoomview.getStartTime() : 0;
+		const end = typeof zoomview.getEndTime === 'function' ? zoomview.getEndTime() : 0;
+		return Math.max(0, end - start);
+	}
+
+	function setZoomSpan(spanSeconds, anchorTime = null) {
 		if (!peaksInstance) return;
 		const zoomview = peaksInstance.views?.getView?.('zoomview');
 		const overview = peaksInstance.views?.getView?.('overview');
-		const fitSeconds = Number.isFinite(duration) && duration > 0 ? duration : 'auto';
+		if (!zoomview || typeof zoomview.setZoom !== 'function') return;
 
-		if (zoomview && typeof zoomview.setZoom === 'function') {
-			try {
-				zoomview.setZoom({ seconds: fitSeconds });
-				if (typeof zoomview.setStartTime === 'function') {
-					zoomview.setStartTime(0);
-				}
-			} catch (e) {
-				console.warn('[PeaksPlayer] fitWaveformToView setZoom failed:', e);
+		const trackDuration = getSafeDuration();
+		if (!(trackDuration > 0)) return;
+
+		const clampedSpan = Math.min(trackDuration, Math.max(MIN_ZOOM_SECONDS, spanSeconds));
+		const currentAnchor =
+			anchorTime ??
+			peaksInstance.player?.getCurrentTime?.() ??
+			(clampedSpan / 2);
+		const maxStart = Math.max(0, trackDuration - clampedSpan);
+		const targetStart = Math.min(maxStart, Math.max(0, currentAnchor - clampedSpan / 2));
+
+		try {
+			zoomview.setZoom({ seconds: clampedSpan });
+			if (typeof zoomview.setStartTime === 'function') {
+				zoomview.setStartTime(targetStart);
 			}
+		} catch (e) {
+			console.warn('[PeaksPlayer] setZoomSpan failed:', e);
 		}
 
-		if (typeof zoomview?.fitToContainer === 'function') {
+		if (typeof zoomview.fitToContainer === 'function') {
 			zoomview.fitToContainer();
 		}
 		if (typeof overview?.fitToContainer === 'function') {
 			overview.fitToContainer();
 		}
+	}
+
+	function fitWaveformToView() {
+		if (!peaksInstance) return;
+		const trackDuration = getSafeDuration();
+		if (!(trackDuration > 0)) return;
+		setZoomSpan(trackDuration, trackDuration / 2);
 	}
 
 	function clampZoomToDuration() {
@@ -646,19 +683,19 @@
 	}
 
     export function zoomIn() {
-		peaksInstance?.zoom.zoomIn();
+		if (!peaksInstance) return;
+		const trackDuration = getSafeDuration();
+		const currentSpan = getCurrentZoomSpan() || trackDuration;
+		const nextSpan = Math.max(MIN_ZOOM_SECONDS, currentSpan * ZOOM_IN_FACTOR);
+		setZoomSpan(nextSpan);
 	}
 
     export function zoomOut() {
 		if (!peaksInstance) return;
-		const before = peaksInstance.zoom.getZoom();
-		peaksInstance.zoom.zoomOut();
-		const after = peaksInstance.zoom.getZoom();
-
-		// Clamp: if we're already at max zoom-out level, enforce fit-to-view.
-		if (after === before) {
-			fitWaveformToView();
-		}
+		const trackDuration = getSafeDuration();
+		const currentSpan = getCurrentZoomSpan() || trackDuration;
+		const nextSpan = Math.min(trackDuration, currentSpan * ZOOM_OUT_FACTOR);
+		setZoomSpan(nextSpan);
 		clampZoomToDuration();
 	}
 
