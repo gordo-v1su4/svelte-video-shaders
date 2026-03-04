@@ -52,9 +52,6 @@ bun run build
 
 # Preview production build
 bun run preview
-
-# Run all tests
-bun run test
 ```
 
 ## Usage

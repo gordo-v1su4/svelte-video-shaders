@@ -1,6 +1,5 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
-import { playwright } from '@vitest/browser-playwright';
 
 export default defineConfig(({ ssrBuild }) => ({
 	plugins: [
@@ -38,36 +37,5 @@ export default defineConfig(({ ssrBuild }) => ({
 	server: {
 		port: 5173,
 		strictPort: true // Exit if port is already in use instead of trying another port
-	},
-	test: {
-		projects: [
-			{
-				extends: './vite.config.js',
-				test: {
-					name: 'client',
-					browser: {
-						enabled: true,
-						provider: playwright(),
-						instances: [{ browser: 'chromium' }]
-					},
-					include: ['src/**/*.svelte.{test,spec}.{js,ts}'],
-					exclude: ['src/lib/server/**', 'src/demo.spec.js'],
-					setupFiles: ['./vitest-setup-client.js']
-				}
-			},
-			{
-				extends: './vite.config.js',
-				test: {
-					name: 'server',
-					environment: 'node',
-					include: ['src/**/*.{test,spec}.{js,ts}'],
-					exclude: [
-						'src/**/*.svelte.{test,spec}.{js,ts}',
-						'src/temp_backup/**',
-						'src/**/page.svelte.test.js'
-					]
-				}
-			}
-		]
 	}
 }));

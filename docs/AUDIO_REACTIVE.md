@@ -138,10 +138,11 @@ When speed ramping toggles on/off, a `speedRampTimeOffset` is calculated for vis
 
 | Control | Type | Range | Description |
 |---------|------|-------|-------------|
-| Enable Ramping | Checkbox | - | Energy-based speed control |
-| Min Speed | Slider | 0.1-2.0 | Minimum playback speed |
-| Max Speed | Slider | 0.5-5.0 | Maximum playback speed |
-| Smoothing | Slider | 0-1.0 | Energy curve smoothing |
+| Enable Speed Ramping | Checkbox | - | Energy-based speed control |
+| Min Speed | Slider | 0.25-1.5 | Minimum playback speed |
+| Max Speed | Slider | 0.5-3.0 | Maximum playback speed |
+| Smoothing | Slider | 0-0.5 | EMA smoothing amount |
+| Punch | Slider | 0.5-3.0 | Gamma shaping for low/high energy contrast |
 
 ## Essentia API Response Format
 
@@ -220,7 +221,7 @@ sectionVideoPools = {
 
 ### Speed ramping doesn't respond
 - Ensure Essentia API returns an energy curve (check API response)
-- Check that "Enable Ramping" is toggled on
+- Check that "Enable Speed Ramping" is toggled on
 - Verify `processedTimeRemap` is populated (check console logs)
 
 ### Glitch mode doesn't respond to energy

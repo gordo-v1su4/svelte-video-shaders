@@ -54,7 +54,6 @@ bun run dev  # Starts at http://localhost:5173
 bun run build      # Production build
 bun run lint       # Prettier + ESLint
 bun run format     # Auto-format code
-bun run test       # Run vitest suite
 bun run storybook  # Component preview
 ```
 
@@ -81,7 +80,6 @@ bun run storybook  # Component preview
 - **Formatting**: Prettier (auto-format on save in VSCode)
 - **Linting**: ESLint with Svelte plugin
 - **Style**: Tailwind CSS (utility-first)
-- **Testing**: Vitest with browser support
 
 ## Key Dependencies
 
@@ -116,10 +114,3 @@ bun run storybook  # Component preview
 - `src/routes/+page.svelte` - Main app layout
 - `svelte.config.js` - SvelteKit configuration
 - `.eslintrc.js` - Linting rules
-
-## Testing Strategy
-
-- **Unit tests** use Vitest
-- **Component tests** in Storybook
-- **Browser tests** use Vitest + Playwright
-- Focus on shader parameter validation and WebCodecs error handling

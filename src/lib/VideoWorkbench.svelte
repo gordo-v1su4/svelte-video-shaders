@@ -1,4 +1,5 @@
 <script>
+	import { tick } from 'svelte';
 	import * as Tweakpane from 'svelte-tweakpane-ui';
 	import { ThemeUtils } from 'svelte-tweakpane-ui';
 	import Button from 'svelte-tweakpane-ui/Button.svelte';
@@ -6,84 +7,35 @@
 	import PeaksPlayer from '$lib/PeaksPlayer.svelte';
 	import { videoAssets, activeVideo } from '$lib/stores.js';
 	import { generateThumbnail } from '$lib/video-utils.js';
-	import { vhsFragmentShader } from '$lib/shaders/vhs-shader.js';
-	import { xlsczNFragmentShader, xlsczNUniforms } from '$lib/shaders/xlsczn-shader.js';
-	import { waterFragmentShader, waterUniforms } from '$lib/shaders/water-shader.js';
+	import { getFragmentShaderByName, shaderOptions } from '$lib/shaders/shader-registry.js';
+	import { createDefaultUniforms } from '$lib/shaders/default-uniforms.js';
 	import {
-		chromaticAberrationFragmentShader,
-		chromaticAberrationUniforms
-	} from '$lib/shaders/chromatic-aberration-shader.js';
-	import { glitchFragmentShader, glitchUniforms } from '$lib/shaders/glitch-shader.js';
-	import { noiseFragmentShader, noiseUniforms } from '$lib/shaders/noise-shader.js';
-	import { vignetteFragmentShader, vignetteUniforms } from '$lib/shaders/vignette-shader.js';
-	import { bloomFragmentShader, bloomUniforms } from '$lib/shaders/bloom-shader.js';
-	import {
-		depthOfFieldFragmentShader,
-		depthOfFieldUniforms
-	} from '$lib/shaders/depth-of-field-shader.js';
-	import { depthFragmentShader, depthUniforms } from '$lib/shaders/depth-shader.js';
-	import { sepiaFragmentShader, sepiaUniforms } from '$lib/shaders/sepia-shader.js';
-	import { scanlineFragmentShader, scanlineUniforms } from '$lib/shaders/scanline-shader.js';
-	import { pixelationFragmentShader, pixelationUniforms } from '$lib/shaders/pixelation-shader.js';
-	import { dotScreenFragmentShader, dotScreenUniforms } from '$lib/shaders/dot-screen-shader.js';
-	import {
-		hueSaturationFragmentShader,
-		hueSaturationUniforms
-	} from '$lib/shaders/hue-saturation-shader.js';
-	import {
-		brightnessContrastFragmentShader,
-		brightnessContrastUniforms
-	} from '$lib/shaders/brightness-contrast-shader.js';
-	import { colorDepthFragmentShader, colorDepthUniforms } from '$lib/shaders/color-depth-shader.js';
-	import {
-		colorAverageFragmentShader,
-		colorAverageUniforms
-	} from '$lib/shaders/color-average-shader.js';
-	import { tiltShiftFragmentShader, tiltShiftUniforms } from '$lib/shaders/tilt-shift-shader.js';
-	import {
-		toneMappingFragmentShader,
-		toneMappingUniforms
-	} from '$lib/shaders/tone-mapping-shader.js';
-	import { asciiFragmentShader, asciiUniforms } from '$lib/shaders/ascii-shader.js';
-	import { gridFragmentShader, gridUniforms } from '$lib/shaders/grid-shader.js';
-	import { lensFlareFragmentShader, lensFlareUniforms } from '$lib/shaders/lens-flare-shader.js';
-	import { crtFragmentShader, crtUniforms } from '$lib/shaders/crt-shader.js';
-	import {
-		anamorphicBreatheFragmentShader,
-		anamorphicBreatheUniforms
-	} from '$lib/shaders/anamorphic-breathe-shader.js';
+		applyVHSPreset as applyVHSPresetValues,
+		applyAnamorphicPreset as applyAnamorphicPresetValues
+	} from '$lib/shaders/presets.js';
 	import { AudioAnalyzer } from '$lib/audio-utils.js';
 	import { EssentiaService } from '$lib/essentia-service.js';
 	import { parseMIDIFile } from '$lib/midi-utils.js';
 	import { frameBuffer } from './webcodecs-frame-buffer.js';
+	import { preprocessSpeedRampCurve } from '$lib/playback/speed-ramp.js';
+	import { createPlaybackEngine, canUseSpeedRamp } from '$lib/playback/playback-engine.svelte.js';
+	import { findNextMarkerIndex, processTriggerFrame } from '$lib/playback/trigger-engine.js';
+	import {
+		isVideoInSectionPool,
+		toggleVideoInSectionPool,
+		resolveSectionPoolIndices,
+		remapSectionPoolsForFailures
+	} from '$lib/playback/video-pool.js';
+	import { filterMidiMarkers, filterEssentiaOnsets } from '$lib/playback/marker-filters.js';
+	import {
+		filterDuplicateVideoFiles,
+		createVideoAsset,
+		resolveSectionUploadTarget,
+		collectAssetIndicesByIds,
+		assignUploadedIndicesToSectionPools
+	} from '$lib/playback/video-asset-manager.js';
 
 	// --- Shader State ---
-	const shaders = {
-		Grayscale: `
-			varying vec2 v_uv;
-			uniform sampler2D u_texture;
-			uniform float u_strength;
-
-			void main() {
-				vec4 color = texture2D(u_texture, v_uv);
-				float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-				gl_FragColor = vec4(mix(color.rgb, vec3(gray), u_strength), color.a);
-			}
-		`,
-		Vignette: `
-			varying vec2 v_uv;
-			uniform sampler2D u_texture;
-			uniform float u_vignette_strength;
-			uniform float u_vignette_falloff;
-
-			void main() {
-				vec4 color = texture2D(u_texture, v_uv);
-				float dist = distance(v_uv, vec2(0.5));
-				float vignette = smoothstep(u_vignette_falloff, u_vignette_strength, dist);
-				gl_FragColor = vec4(color.rgb * (1.0 - vignette), color.a);
-			}
-		`
-	};
 	let selectedShaderName = $state('VHS');
 	let audioAnalyzer = null;
 	let essentiaService = null;
@@ -126,95 +78,34 @@
 	let loopSectionIndex = $state(-1); // -1 = no loop, 0+ = loop that section
 
 	// Separate arrays for MIDI markers and Essentia onsets
-	// Seeded random function for deterministic random skip
-	function seededRandom(seed) {
-		const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
-		return x - Math.floor(x);
-	}
-
 	// These are filtered by duration/density but NOT by toggle state (PeaksPlayer handles toggles)
 	const filteredMIDIMarkers = $derived.by(() => {
-		if (midiMarkers.length === 0) return [];
-
-		const density = midiDensity;
-		const doRandomSkip = enableRandomSkip;
-		const skipChance = randomSkipChance;
-
-		// Filter MIDI markers to audio duration
-		let markers = midiMarkers
-			.map((t) => (typeof t === 'number' ? t : parseFloat(t)))
-			.filter((t) => !isNaN(t) && t >= 0)
-			.filter((t) => !audioDuration || t <= audioDuration);
-
-		// Apply density filtering using time-interval approach (same as onset density)
-		if (density < 1.0) {
-			const bpm = analysisData.bpm > 0 ? analysisData.bpm : 120;
-			const secondsPerBeat = 60 / bpm;
-			const interval32 = secondsPerBeat / 8; // 1/32 note duration
-
-			// Map density slider (0.0-1.0) to interval multiplier
-			const scaler = 1 + (1 - density) * 31;
-			const effectiveMinInterval = interval32 * scaler;
-
-			let result = [];
-			let lastTime = -effectiveMinInterval; // Ensure first can be picked
-
-			for (const marker of markers) {
-				if (marker - lastTime >= effectiveMinInterval) {
-					result.push(marker);
-					lastTime = marker;
-				}
-			}
-
-			markers = result;
-		}
-
-		// Apply random skip
-		if (doRandomSkip && skipChance > 0) {
-			markers = markers.filter((_, i) => seededRandom(i) > skipChance);
-		}
+		const markers = filterMidiMarkers({
+			midiMarkers,
+			midiDensity,
+			enableRandomSkip,
+			randomSkipChance,
+			audioDuration,
+			bpm: analysisData.bpm
+		});
 
 		console.log(
-			`[VideoWorkbench] Filtered MIDI markers: ${midiMarkers.length} -> ${markers.length} (density=${density.toFixed(2)}, randomSkip=${doRandomSkip})`
+			`[VideoWorkbench] Filtered MIDI markers: ${midiMarkers.length} -> ${markers.length} (density=${midiDensity.toFixed(2)}, randomSkip=${enableRandomSkip})`
 		);
 		return markers;
 	});
 
 	const filteredEssentiaOnsets = $derived.by(() => {
-		// Track onsetDensity to ensure reactivity
-		const density = onsetDensity;
-		const doRandomSkip = enableRandomSkip;
-		const skipChance = randomSkipChance;
-
-		if (!analysisData.onsets || analysisData.onsets.length === 0) {
-			return [];
-		}
-
-		const bpm = analysisData.bpm > 0 ? analysisData.bpm : 120;
-		const secondsPerBeat = 60 / bpm;
-		const interval32 = secondsPerBeat / 8; // 1/32 note duration
-
-		// Map density slider (0.0-1.0) to interval multiplier
-		const scaler = 1 + (1 - density) * 31;
-		const effectiveMinInterval = interval32 * scaler;
-
-		let result = [];
-		let lastTime = -effectiveMinInterval; // Ensure first can be picked
-
-		for (const onset of analysisData.onsets) {
-			if (onset - lastTime >= effectiveMinInterval) {
-				result.push(onset);
-				lastTime = onset;
-			}
-		}
-
-		// Apply random skip
-		if (doRandomSkip && skipChance > 0) {
-			result = result.filter((_, i) => seededRandom(i + 1000) > skipChance);
-		}
+		const result = filterEssentiaOnsets({
+			onsets: analysisData.onsets,
+			onsetDensity,
+			enableRandomSkip,
+			randomSkipChance,
+			bpm: analysisData.bpm
+		});
 
 		console.log(
-			`[VideoWorkbench] filteredEssentiaOnsets: density=${density.toFixed(2)}, randomSkip=${doRandomSkip}, filtered ${result.length} from ${analysisData.onsets.length} onsets`
+			`[VideoWorkbench] filteredEssentiaOnsets: density=${onsetDensity.toFixed(2)}, randomSkip=${enableRandomSkip}, filtered ${result.length} from ${analysisData.onsets.length} onsets`
 		);
 		return result;
 	});
@@ -336,26 +227,23 @@
 
 	// Helper functions for section video pools
 	function isVideoInSection(sectionIndex, videoIndex) {
-		const pool = sectionVideoPools[sectionIndex];
-		if (!pool) return true; // Default: all videos in all sections
-		return pool.includes(videoIndex);
+		const hasSections = (analysisData.structure?.sections?.length || 0) > 0;
+		return isVideoInSectionPool(
+			sectionVideoPools,
+			sectionIndex,
+			videoIndex,
+			$videoAssets.length,
+			hasSections
+		);
 	}
 
 	function toggleVideoInSection(sectionIndex, videoIndex) {
-		// Initialize pool if needed (default to all videos)
-		if (!sectionVideoPools[sectionIndex]) {
-			sectionVideoPools[sectionIndex] = $videoAssets.map((_, i) => i);
-		}
-
-		const pool = sectionVideoPools[sectionIndex];
-		const idx = pool.indexOf(videoIndex);
-		if (idx >= 0) {
-			pool.splice(idx, 1);
-		} else {
-			pool.push(videoIndex);
-		}
-		// Trigger reactivity
-		sectionVideoPools = { ...sectionVideoPools };
+		sectionVideoPools = toggleVideoInSectionPool(
+			sectionVideoPools,
+			sectionIndex,
+			videoIndex,
+			$videoAssets.length
+		);
 	}
 
 	function getSectionColor(sectionIndex) {
@@ -363,18 +251,8 @@
 	}
 
 	function getSectionPoolIndices(sectionIndex) {
-		const pool = sectionVideoPools[sectionIndex];
-		if (Array.isArray(pool)) return pool;
-
-		// Default bucket policy when sections exist:
-		// - first section gets all clips by default
-		// - other sections start empty until user adds clips
 		const hasSections = (analysisData.structure?.sections?.length || 0) > 0;
-		if (hasSections) {
-			return sectionIndex === 0 ? $videoAssets.map((_, i) => i) : [];
-		}
-
-		return $videoAssets.map((_, i) => i);
+		return resolveSectionPoolIndices(sectionVideoPools, sectionIndex, $videoAssets.length, hasSections);
 	}
 
 	async function ensureWaveformLayout() {
@@ -439,21 +317,7 @@
 	});
 
 	function remapSectionPoolsAfterFailures(failedIndices) {
-		if (!failedIndices || failedIndices.length === 0) return;
-		const failedSet = new Set(failedIndices);
-		const failedSorted = [...failedSet].sort((a, b) => a - b);
-		const remapped = {};
-
-		for (const [sectionKey, pool] of Object.entries(sectionVideoPools)) {
-			if (!Array.isArray(pool)) continue;
-			const nextPool = pool
-				.filter((index) => !failedSet.has(index))
-				.map((index) => index - failedSorted.filter((failedIndex) => failedIndex < index).length)
-				.filter((index) => index >= 0);
-			remapped[sectionKey] = nextPool;
-		}
-
-		sectionVideoPools = remapped;
+		sectionVideoPools = remapSectionPoolsForFailures(sectionVideoPools, failedIndices);
 	}
 
 	function formatSectionTime(seconds) {
@@ -537,243 +401,9 @@
 	let baseNoiseValue = 0;
 	let baseRgbShiftValue = 0.0015;
 
-	let uniforms = $state({
-		// VHS shader uniforms
-		u_time: { value: 0.0 },
-		u_distortion: { value: 0.075 },
-		u_scanlineIntensity: { value: 0.26 },
-		u_rgbShift: { value: 0.0015 },
-		u_noise: { value: 0.0 },
-		u_flickerIntensity: { value: 0.5 },
-		u_trackingIntensity: { value: 0.1 },
-		u_trackingSpeed: { value: 1.2 },
-		u_trackingFreq: { value: 8.0 },
-		u_waveAmplitude: { value: 0.1 },
-
-		// Existing shader uniforms (Grayscale)
-		u_strength: { value: 0.5 },
-		// Old Vignette shader uniforms (kept for compatibility)
-		u_vignette_strength: { value: 0.5 },
-		u_vignette_falloff: { value: 0.3 },
-
-		// XlsczN audio-reactive uniforms
-		u_audioLevel: { value: 0.0 },
-		u_bassLevel: { value: 0.0 },
-		u_midLevel: { value: 0.0 },
-		u_trebleLevel: { value: 0.0 },
-		u_intensity: { value: 0.5 },
-		u_colorShift: { value: 0.3 },
-		u_pulseSpeed: { value: 2.0 },
-		u_waveAmplitude: { value: 0.5 },
-		u_resolution: { value: [1280, 720] },
-
-		// Water shader uniforms
-		u_factor: { value: 0.5 },
-
-		// Chromatic Aberration uniforms
-		u_offset: { value: [0.002, 0.002] },
-		u_radialModulation: { value: 0.0 },
-		u_modulationOffset: { value: 0.15 },
-
-		// Glitch uniforms
-		u_glitch_strength: { value: 0.5 },
-		u_columns: { value: 20.0 },
-		u_ratio: { value: 0.5 },
-		u_duration: { value: 0.6 },
-		u_delay: { value: 1.5 },
-
-		// Noise uniforms
-		u_opacity: { value: 0.02 },
-		u_premultiply: { value: 0.0 },
-
-		// Vignette (new) uniforms
-		u_offset_vignette: { value: 0.5 },
-		u_darkness: { value: 0.5 },
-		u_eskil: { value: 0.0 },
-
-		// Bloom uniforms
-		u_intensity_bloom: { value: 1.0 },
-		u_luminanceThreshold: { value: 0.9 },
-		u_luminanceSmoothing: { value: 0.025 },
-
-		// Depth of Field uniforms
-		u_focusDistance: { value: 0.3 },
-		u_focusRange: { value: 0.5 },
-		u_bokehScale: { value: 2.0 },
-		u_focusPoint: { value: [0.5, 0.5] },
-
-		// Depth visualization uniforms
-		u_near: { value: 0.0 },
-		u_far: { value: 1.0 },
-		u_inverted: { value: 0.0 },
-
-		// Sepia uniforms
-		u_sepia_intensity: { value: 1.0 },
-
-		// Scanline uniforms
-		u_scanline_density: { value: 1.25 },
-		u_scanline_intensity: { value: 0.3 },
-		u_scanline_width: { value: 2.0 },
-		u_scanline_speed: { value: 0.0 },
-		u_scanline_offset: { value: 0.0 },
-
-		// Pixelation uniforms
-		u_granularity: { value: 20.0 },
-
-		// Dot Screen uniforms
-		u_dot_angle: { value: 1.57 },
-		u_dot_scale: { value: 1.0 },
-
-		// Hue Saturation uniforms
-		u_hue: { value: 0.0 },
-		u_saturation: { value: 0.0 },
-
-		// Brightness Contrast uniforms
-		u_brightness: { value: 0.0 },
-		u_contrast: { value: 0.0 },
-
-		// Color Depth uniforms
-		u_bits: { value: 16.0 },
-
-		// Tilt Shift uniforms
-		u_tilt_offset: { value: 0.3 },
-		u_tilt_feather: { value: 0.2 },
-		u_tilt_rotation: { value: 0.0 },
-
-		// Tone Mapping uniforms
-		u_exposure: { value: 1.0 },
-		u_maxLuminance: { value: 16.0 },
-		u_middleGrey: { value: 0.6 },
-
-		// ASCII uniforms
-		u_charSize: { value: 8.0 },
-
-		// Grid uniforms
-		u_grid_scale: { value: 1.0 },
-		u_grid_lineWidth: { value: 0.0 },
-
-		// Lens Flare uniforms
-		u_flareBrightness: { value: 1.0 },
-		u_flareSize: { value: 0.005 },
-		u_flareSpeed: { value: 0.4 },
-		u_flareShape: { value: 0.1 },
-		u_ghostScale: { value: 0.1 },
-		u_haloScale: { value: 0.5 },
-		u_starBurst: { value: 1.0 },
-		u_sunPosition: { value: [0.5, 0.5, -1.0] },
-		u_anamorphic: { value: 0.0 },
-		u_colorGain: { value: [1.0, 0.8, 0.6] },
-		u_secondaryGhosts: { value: 1.0 },
-		u_additionalStreaks: { value: 1.0 },
-
-		// CRT uniforms
-		u_pixelSize: { value: 5.0 },
-		u_distortion: { value: 0.3 },
-		u_blur: { value: 0.3 },
-		u_aberration: { value: 0.05 },
-		u_scanlineIntensity: { value: 0.05 },
-		u_scanlineSpeed: { value: 100.0 },
-		u_gridIntensity: { value: 0.1 },
-		u_vignetteIntensity: { value: 1.0 },
-		u_dither: { value: 0.1 },
-
-		// Anamorphic Breathe uniforms
-		u_chromatic_enable: { value: 1.0 },
-		u_chromatic_amount: { value: 0.5 },
-		u_chromatic_speed: { value: 0.8 },
-		u_chromatic_style: { value: 1.0 },
-		u_defocus_enable: { value: 1.0 },
-		u_defocus_amount: { value: 0.4 },
-		u_defocus_speed: { value: 0.5 },
-		u_anamorphic_ratio: { value: 1.5 },
-		u_breathe_intensity: { value: 1.0 },
-		u_breathe_sync: { value: 1.0 }
-	});
+	let uniforms = $state(createDefaultUniforms());
 	const fragmentShader = $derived.by(() => {
-		let shader;
-		switch (selectedShaderName) {
-			case 'VHS':
-				shader = vhsFragmentShader;
-				break;
-			case 'XlsczN':
-				shader = xlsczNFragmentShader;
-				break;
-			case 'Water':
-				shader = waterFragmentShader;
-				break;
-			case 'ChromaticAberration':
-				shader = chromaticAberrationFragmentShader;
-				break;
-			case 'Glitch':
-				shader = glitchFragmentShader;
-				break;
-			case 'Noise':
-				shader = noiseFragmentShader;
-				break;
-			case 'Vignette':
-				shader = vignetteFragmentShader;
-				break;
-			case 'Bloom':
-				shader = bloomFragmentShader;
-				break;
-			case 'DepthOfField':
-				shader = depthOfFieldFragmentShader;
-				break;
-			case 'Depth':
-				shader = depthFragmentShader;
-				break;
-			case 'Sepia':
-				shader = sepiaFragmentShader;
-				break;
-			case 'Scanline':
-				shader = scanlineFragmentShader;
-				break;
-			case 'Pixelation':
-				shader = pixelationFragmentShader;
-				break;
-			case 'DotScreen':
-				shader = dotScreenFragmentShader;
-				break;
-			case 'HueSaturation':
-				shader = hueSaturationFragmentShader;
-				break;
-			case 'BrightnessContrast':
-				shader = brightnessContrastFragmentShader;
-				break;
-			case 'ColorDepth':
-				shader = colorDepthFragmentShader;
-				break;
-			case 'ColorAverage':
-				shader = colorAverageFragmentShader;
-				break;
-			case 'TiltShift':
-				shader = tiltShiftFragmentShader;
-				break;
-			case 'ToneMapping':
-				shader = toneMappingFragmentShader;
-				break;
-			case 'ASCII':
-				shader = asciiFragmentShader;
-				break;
-			case 'Grid':
-				shader = gridFragmentShader;
-				break;
-			case 'LensFlare':
-				shader = lensFlareFragmentShader;
-				break;
-			case 'CRT':
-				shader = crtFragmentShader;
-				break;
-			case 'AnamorphicBreathe':
-				shader = anamorphicBreatheFragmentShader;
-				break;
-			case 'Grayscale':
-				shader = shaders.Grayscale;
-				break;
-			default:
-				shader = shaders.Vignette;
-				break;
-		}
+		const shader = getFragmentShaderByName(selectedShaderName);
 		console.log(
 			'[VideoWorkbench] Selected shader:',
 			selectedShaderName,
@@ -806,113 +436,71 @@
 	let processedTimeRemap = $state(null); // Float32Array of cumulative time values
 	let speedCurveTimestep = $state(0); // Seconds per sample in the curve
 
-	// Offset to handle smooth transitions when toggling speed ramping
-	let speedRampTimeOffset = $state(0); // Added to remapped time for continuity
-	let wasSpeedRampingEnabled = false; // Track previous state
-
 	// Visual feedback for speed ramping
 	let currentSpeed = $state(1.0); // Current playback speed (for display)
 	let currentEnergy = $state(0); // Current energy level (for display)
 
-	const ESSENTIA_HOP_SIZE = 512;
-	const ESSENTIA_SAMPLE_RATE = 44100;
-	const SECONDS_PER_FRAME = ESSENTIA_HOP_SIZE / ESSENTIA_SAMPLE_RATE;
 	const TARGET_FPS = 24; // Video frame rate for audio-to-frame sync
+	const playbackEngine = createPlaybackEngine({ targetFps: TARGET_FPS });
 
 	/**
 	 * Pre-process energy curve into speed and time remap curves
 	 * Called once when Essentia data loads or when parameters change
 	 */
 	function preprocessSpeedCurve() {
-		if (!analysisData.energy?.curve || analysisData.energy.curve.length === 0) {
+		const rawCurve = analysisData.energy?.curve;
+		if (!rawCurve || rawCurve.length === 0) {
 			processedSpeedCurve = null;
 			processedTimeRemap = null;
+			speedCurveTimestep = 0;
 			console.log('[SpeedRamp] No energy curve available');
 			return;
 		}
 
-		const rawCurve = analysisData.energy.curve;
-		const N = rawCurve.length;
+		const processed = preprocessSpeedRampCurve({
+			rawCurve,
+			audioDuration,
+			minSpeed: speedRampMinSpeed,
+			maxSpeed: speedRampMaxSpeed,
+			smoothing: speedRampSmoothing,
+			punch: speedRampPunch
+		});
 
-		// Calculate mean and std locally from the curve (API values are unreliable)
-		let sum = 0;
-		for (let i = 0; i < N; i++) {
-			sum += rawCurve[i];
+		if (!processed) {
+			processedSpeedCurve = null;
+			processedTimeRemap = null;
+			speedCurveTimestep = 0;
+			console.warn('[SpeedRamp] Failed to preprocess curve');
+			return;
 		}
-		const mean = sum / N;
 
-		let sqDiffSum = 0;
-		for (let i = 0; i < N; i++) {
-			const diff = rawCurve[i] - mean;
-			sqDiffSum += diff * diff;
-		}
-		const std = Math.sqrt(sqDiffSum / N) || 1; // Fallback to 1 if std is 0
-		// Use audio duration from the loaded audio element, or calculate from hop size
-		const duration = audioDuration > 0 ? audioDuration : N * SECONDS_PER_FRAME;
-		const dt = duration / Math.max(1, N - 1);
-		speedCurveTimestep = dt;
+		processedSpeedCurve = processed.speedCurve;
+		processedTimeRemap = processed.timeRemap;
+		speedCurveTimestep = processed.timestep;
+
+		const { stats } = processed;
+		const { count, duration, timestep, sampleIndices, minComputedSpeed, maxComputedSpeed, mean, std } =
+			stats;
 
 		console.log(
-			`[SpeedRamp] Pre-processing ${N} samples, duration=${duration.toFixed(2)}s, dt=${(dt * 1000).toFixed(2)}ms`
+			`[SpeedRamp] Pre-processing ${count} samples, duration=${duration.toFixed(2)}s, dt=${(timestep * 1000).toFixed(2)}ms`
 		);
 		console.log(
 			`[SpeedRamp] Params: min=${speedRampMinSpeed}x, max=${speedRampMaxSpeed}x, smooth=${speedRampSmoothing}, punch=${speedRampPunch}`
 		);
-
-		// Step 1: Z-score normalize using mean/std from Essentia
-		const normalized = new Float32Array(N);
-		for (let i = 0; i < N; i++) {
-			const z = (rawCurve[i] - mean) / (std || 1e-9);
-			// Map z-score (typically -2 to +2) to 0-1 range
-			normalized[i] = Math.max(0, Math.min(1, (z + 2) / 4));
-		}
-
-		// Step 2: EMA smoothing (if enabled)
-		const smoothed = new Float32Array(N);
-		if (speedRampSmoothing > 0) {
-			const alpha = speedRampSmoothing;
-			smoothed[0] = normalized[0];
-			for (let i = 1; i < N; i++) {
-				smoothed[i] = alpha * normalized[i] + (1 - alpha) * smoothed[i - 1];
-			}
-		} else {
-			smoothed.set(normalized);
-		}
-
-		// Step 3: Gamma correction (punch) and map to speed range
-		const speeds = new Float32Array(N);
-		const speedRange = speedRampMaxSpeed - speedRampMinSpeed;
-		for (let i = 0; i < N; i++) {
-			const shaped = Math.pow(smoothed[i], speedRampPunch);
-			speeds[i] = speedRampMinSpeed + speedRange * shaped;
-		}
-
-		// Step 4: Compute cumulative time remap (integral of speed)
-		const timeRemap = new Float32Array(N);
-		timeRemap[0] = 0;
-		for (let i = 1; i < N; i++) {
-			const avgSpeed = (speeds[i - 1] + speeds[i]) * 0.5;
-			timeRemap[i] = timeRemap[i - 1] + avgSpeed * dt;
-		}
-
-		processedSpeedCurve = speeds;
-		processedTimeRemap = timeRemap;
-
-		// Debug: sample some values
-		const sampleIndices = [0, Math.floor(N / 4), Math.floor(N / 2), Math.floor((3 * N) / 4), N - 1];
 		console.log(
-			`[SpeedRamp] Pre-processing complete. Speed range: ${Math.min(...speeds).toFixed(2)}x - ${Math.max(...speeds).toFixed(2)}x`
+			`[SpeedRamp] Pre-processing complete. Speed range: ${minComputedSpeed.toFixed(2)}x - ${maxComputedSpeed.toFixed(2)}x`
 		);
 		console.log(
-			`[SpeedRamp] Total remapped duration: ${timeRemap[N - 1].toFixed(2)}s (original: ${duration.toFixed(2)}s)`
+			`[SpeedRamp] Total remapped duration: ${processedTimeRemap[count - 1].toFixed(2)}s (original: ${duration.toFixed(2)}s)`
 		);
 		console.log(
 			`[SpeedRamp] Sample speeds:`,
-			sampleIndices.map((i) => `[${i}]=${speeds[i]?.toFixed(2)}x`).join(', ')
+			sampleIndices.map((i) => `[${i}]=${processedSpeedCurve[i]?.toFixed(2)}x`).join(', ')
 		);
 		console.log(
 			`[SpeedRamp] Sample timeRemap:`,
-			sampleIndices.map((i) => `[${i}]=${timeRemap[i]?.toFixed(2)}s`).join(', ')
+			sampleIndices.map((i) => `[${i}]=${processedTimeRemap[i]?.toFixed(2)}s`).join(', ')
 		);
 		console.log(
 			`[SpeedRamp] Raw energy samples:`,
@@ -942,101 +530,27 @@
 
 	// High-precision time loop for sub-beat synchronization
 	function updateTime() {
-		if (sharedAudioRef && !sharedAudioRef.paused) {
-			audioCurrentTime = sharedAudioRef.currentTime;
+		const frameState = playbackEngine.step({
+			sharedAudioRef,
+			audioAnalyzer,
+			uniforms,
+			checkBeatTriggers,
+			audioMasterEnabled,
+			shaderPlayerRef,
+			enableSpeedRamping,
+			processedSpeedCurve,
+			processedTimeRemap,
+			speedCurveTimestep,
+			speedRampMinSpeed,
+			speedRampMaxSpeed
+		});
 
-			if (audioAnalyzer) {
-				const { audioLevel, bassLevel, midLevel, trebleLevel } = audioAnalyzer.getAudioData();
-				if (uniforms.u_audioLevel) uniforms.u_audioLevel.value = audioLevel;
-				if (uniforms.u_bassLevel) uniforms.u_bassLevel.value = bassLevel;
-				if (uniforms.u_midLevel) uniforms.u_midLevel.value = midLevel;
-				if (uniforms.u_trebleLevel) uniforms.u_trebleLevel.value = trebleLevel;
-			}
+		if (!frameState) return;
 
-			// Check beat triggers BEFORE computing frame index.
-			// This ensures any clip switch (seekToClip) happens before setAudioTime()
-			// computes the frame, eliminating the stale-frame race condition.
-			checkBeatTriggers(audioCurrentTime);
-
-			// === AUDIO AS MASTER CLOCK ===
-			// Sync video frame to audio time (Phase 2 feature)
-			if (audioMasterEnabled && shaderPlayerRef) {
-				const canUseSpeedRamp =
-					enableSpeedRamping && processedSpeedCurve && processedTimeRemap && speedCurveTimestep > 0;
-
-				// Handle transition when speed ramping is toggled
-				if (canUseSpeedRamp && !wasSpeedRampingEnabled) {
-					// Just turned ON: calculate offset for continuity
-					const curveIndex = Math.floor(audioCurrentTime / speedCurveTimestep);
-					const clampedIndex = Math.max(0, Math.min(processedTimeRemap.length - 1, curveIndex));
-					const rawRemappedTime = processedTimeRemap[clampedIndex];
-					// Offset = what we were showing (audioCurrentTime) minus what remap would show
-					speedRampTimeOffset = audioCurrentTime - rawRemappedTime;
-					// Switch to direct frame mapping for speed ramp mode
-					shaderPlayerRef.setDirectFrameMapping(true);
-					console.log(
-						`[SpeedRamp] Enabled at audio=${audioCurrentTime.toFixed(2)}s, rawRemap=${rawRemappedTime.toFixed(2)}s, offset=${speedRampTimeOffset.toFixed(2)}s`
-					);
-					wasSpeedRampingEnabled = true;
-				} else if (!canUseSpeedRamp && wasSpeedRampingEnabled) {
-					// Just turned OFF: reset offset and switch back to elapsed-time mapping
-					speedRampTimeOffset = 0;
-					// Recalculate clipStartRampedTime for elapsed-time mode
-					shaderPlayerRef.setDirectFrameMapping(false);
-					wasSpeedRampingEnabled = false;
-					console.log(`[SpeedRamp] Disabled`);
-				}
-
-				if (canUseSpeedRamp) {
-					// Use pre-processed curves - just lookup, no calculation
-					const curveIndex = Math.floor(audioCurrentTime / speedCurveTimestep);
-					const clampedIndex = Math.max(0, Math.min(processedSpeedCurve.length - 1, curveIndex));
-
-					// Update visual feedback from pre-processed data
-					currentSpeed = processedSpeedCurve[clampedIndex];
-					// Energy is derived from speed for display (reverse the formula)
-					const speedRange = speedRampMaxSpeed - speedRampMinSpeed;
-					currentEnergy = speedRange > 0 ? (currentSpeed - speedRampMinSpeed) / speedRange : 0;
-
-					// Use pre-computed time remap + offset for smooth transition
-					const remappedTime = processedTimeRemap[clampedIndex] + speedRampTimeOffset;
-
-					// Debug: log every second
-					if (Math.floor(audioCurrentTime) !== Math.floor(audioCurrentTime - 0.016)) {
-						console.log(
-							`[SpeedRamp] audio=${audioCurrentTime.toFixed(2)}s -> video=${remappedTime.toFixed(2)}s (speed=${currentSpeed.toFixed(2)}x)`
-						);
-					}
-
-					shaderPlayerRef.setAudioTime(remappedTime, TARGET_FPS);
-				} else {
-					// No speed ramping or no curve - direct sync
-					currentSpeed = 1.0;
-					currentEnergy = 0;
-					shaderPlayerRef.setAudioTime(audioCurrentTime, TARGET_FPS);
-				}
-			}
-
-			// Handle Speed Ramping when NOT using audio master clock (direct speed control)
-			if (!audioMasterEnabled && shaderPlayerRef) {
-				if (enableSpeedRamping && processedSpeedCurve) {
-					const curveIndex = Math.floor(audioCurrentTime / speedCurveTimestep);
-					const clampedIndex = Math.max(0, Math.min(processedSpeedCurve.length - 1, curveIndex));
-
-					currentSpeed = processedSpeedCurve[clampedIndex];
-					const speedRange = speedRampMaxSpeed - speedRampMinSpeed;
-					currentEnergy = speedRange > 0 ? (currentSpeed - speedRampMinSpeed) / speedRange : 0;
-
-					shaderPlayerRef.setSpeed(currentSpeed);
-				} else {
-					currentSpeed = 1.0;
-					currentEnergy = 0;
-					shaderPlayerRef.setSpeed(1.0);
-				}
-			}
-
-			rafId = requestAnimationFrame(updateTime);
-		}
+		audioCurrentTime = frameState.audioCurrentTime;
+		currentSpeed = frameState.currentSpeed;
+		currentEnergy = frameState.currentEnergy;
+		rafId = requestAnimationFrame(updateTime);
 	}
 
 	$effect(() => {
@@ -1411,13 +925,8 @@
 	let fxTriggerActive = $state(0); // Current FX trigger level (0-1)
 
 	let previousTime = 0;
-	let nextMarkerIndex = $state(0);
+	let nextMarkerIndex = 0;
 	let previousTriggersLength = 0; // Track triggers array changes
-
-	const findNextMarkerIndex = (triggers, time) => {
-		const nextIndex = triggers.findIndex((marker) => marker > time);
-		return nextIndex === -1 ? triggers.length : nextIndex;
-	};
 
 	/**
 	 * Check for beat triggers and fire clip switches, jump cuts, FX spikes, etc.
@@ -1426,72 +935,37 @@
 	 * @param {number} time - Current audio time in seconds
 	 */
 	function checkBeatTriggers(time) {
-		const triggers = filteredOnsets;
-
-		// Reset tracking on seek or pause (approximate)
-		if (!isPlaying || time < previousTime || Math.abs(time - previousTime) > 1.0) {
-			previousTime = time;
-			nextMarkerIndex = findNextMarkerIndex(triggers, time);
-			return;
-		}
-
-		if (time > previousTime) {
-			// Debug: log every ~1 second to avoid spam
-			if (Math.floor(time) !== Math.floor(previousTime)) {
-				console.log(`[Trigger] time=${time.toFixed(2)}, triggers=${triggers.length}`);
-			}
-
-			while (nextMarkerIndex < triggers.length) {
-				const marker = triggers[nextMarkerIndex];
-				if (marker > time) {
-					break;
-				}
-				if (marker <= previousTime) {
-					nextMarkerIndex++;
-					continue;
-				}
-
+		const result = processTriggerFrame({
+			time,
+			isPlaying,
+			triggers: filteredOnsets,
+			state: { previousTime, nextMarkerIndex },
+			markerCounter,
+			markerSwapThreshold,
+			enableJumpCuts,
+			jumpCutRange,
+			enableFXTriggers,
+			enableGlitchMode,
+			glitchFrameRange,
+			glitchEnergyThreshold,
+			sectionEnergy: currentSection.energy || 0,
+			shaderPlayerRef,
+			onMarkerHit: () => {
 				isBeatActive = true;
-				markerCounter++;
-				setTimeout(() => (isBeatActive = false), 100); // Visual blink duration
-
-				// === TRIGGER: Video Swap (always active) ===
-				if (markerCounter >= markerSwapThreshold) {
-					console.log(
-						`[VideoWorkbench] Video swap triggered! Counter: ${markerCounter}/${markerSwapThreshold}`
-					);
-					nextVideo();
-					markerCounter = 0;
-				}
-
-				// === TRIGGER: Jump Cut ===
-				if (enableJumpCuts && shaderPlayerRef) {
-					const jumpAmount = Math.floor(Math.random() * jumpCutRange * 2) - jumpCutRange;
-					shaderPlayerRef.jumpFrames(jumpAmount);
-				}
-
-				// === TRIGGER: FX Spike ===
-				if (enableFXTriggers) {
-					fxTriggerActive = 1.0; // Full spike
-				}
-
-				// === TRIGGER: Glitch Mode (high-energy micro-jumps) ===
-				if (enableGlitchMode && shaderPlayerRef) {
-					// Check if we're in a high-energy section
-					const sectionEnergy = currentSection.energy || 0;
-					const isHighEnergy = sectionEnergy > glitchEnergyThreshold;
-
-					if (isHighEnergy) {
-						// Rapid micro-jumps
-						const microJump = Math.floor(Math.random() * glitchFrameRange * 2) - glitchFrameRange;
-						shaderPlayerRef.jumpFrames(microJump);
-					}
-				}
-
-				nextMarkerIndex++;
+				setTimeout(() => (isBeatActive = false), 100);
+			},
+			onVideoSwap: (counter, threshold) => {
+				console.log(`[VideoWorkbench] Video swap triggered! Counter: ${counter}/${threshold}`);
+				nextVideo();
 			}
+		});
+
+		previousTime = result.state.previousTime;
+		nextMarkerIndex = result.state.nextMarkerIndex;
+		markerCounter = result.markerCounter;
+		if (result.fxTriggered) {
+			fxTriggerActive = 1.0;
 		}
-		previousTime = time;
 	}
 
 	// Reset trigger cursor when filteredOnsets changes (density slider, MIDI toggle, etc.)
@@ -1631,14 +1105,9 @@
 
 		console.log('[VideoWorkbench] Processing', files.length, 'video files');
 
-		// Filter out duplicates (by name and size)
-		const existingFiles = new Set($videoAssets.map((a) => `${a.name}-${a.file?.size || 0}`));
-		const newFiles = files.filter((f) => !existingFiles.has(`${f.name}-${f.size}`));
-
-		if (newFiles.length < files.length) {
-			console.log(
-				`[VideoWorkbench] Filtered out ${files.length - newFiles.length} duplicate files`
-			);
+		const { newFiles, skippedCount } = filterDuplicateVideoFiles(files, $videoAssets);
+		if (skippedCount > 0) {
+			console.log(`[VideoWorkbench] Filtered out ${skippedCount} duplicate files`);
 		}
 
 		if (newFiles.length === 0) {
@@ -1650,13 +1119,7 @@
 
 		// Add to asset list for thumbnails
 		for (const file of newFiles) {
-			const newAsset = {
-				id: crypto.randomUUID(),
-				file: file,
-				name: file.name,
-				objectUrl: URL.createObjectURL(file),
-				thumbnailUrl: null
-			};
+			const newAsset = createVideoAsset(file);
 
 			videoAssets.update((assets) => [...assets, newAsset]);
 			if ($videoAssets.length === 1) activeVideo.set(newAsset);
@@ -1678,37 +1141,22 @@
 
 		// Global upload behavior with sections: place new clips into the first section bucket only.
 		const hasSections = (analysisData.structure?.sections?.length || 0) > 0;
-		if (targetSectionIndex === null && hasSections) {
-			targetSectionIndex = 0;
-			exclusiveToSection = true;
-		}
+		const uploadTarget = resolveSectionUploadTarget(targetSectionIndex, hasSections, exclusiveToSection);
+		targetSectionIndex = uploadTarget.targetSectionIndex;
+		exclusiveToSection = uploadTarget.exclusiveToSection;
 
 		// Assign newly uploaded videos to a specific section bucket when requested.
 		if (targetSectionIndex !== null && newAssetIds.length > 0) {
-			const idToIndex = new Map($videoAssets.map((asset, index) => [asset.id, index]));
-			const newIndices = newAssetIds
-				.map((id) => idToIndex.get(id))
-				.filter((index) => Number.isInteger(index));
-
-			if (newIndices.length > 0) {
-				if (exclusiveToSection && analysisData.structure?.sections?.length > 0) {
-					const nextPools = {};
-					for (let i = 0; i < analysisData.structure.sections.length; i++) {
-						const pool = getSectionPoolIndices(i).filter((index) => !newIndices.includes(index));
-						nextPools[i] = pool;
-					}
-					nextPools[targetSectionIndex] = [
-						...new Set([...nextPools[targetSectionIndex], ...newIndices])
-					].sort((a, b) => a - b);
-					sectionVideoPools = { ...sectionVideoPools, ...nextPools };
-				} else {
-					const pool = getSectionPoolIndices(targetSectionIndex);
-					sectionVideoPools = {
-						...sectionVideoPools,
-						[targetSectionIndex]: [...new Set([...pool, ...newIndices])].sort((a, b) => a - b)
-					};
-				}
-			}
+			const newIndices = collectAssetIndicesByIds($videoAssets, newAssetIds);
+			const sectionsCount = analysisData.structure?.sections?.length || 0;
+			sectionVideoPools = assignUploadedIndicesToSectionPools({
+				sectionVideoPools,
+				sectionsCount,
+				getSectionPoolIndices,
+				newIndices,
+				targetSectionIndex,
+				exclusiveToSection
+			});
 		}
 
 		ensureWaveformLayout();
@@ -1792,7 +1240,12 @@
 	 * Used by seekToClip callers to tell ShaderPlayer which frame mapping mode to use.
 	 */
 	function isSpeedRampActive() {
-		return enableSpeedRamping && audioMasterEnabled && processedTimeRemap && speedCurveTimestep > 0;
+		return canUseSpeedRamp({
+			enableSpeedRamping,
+			audioMasterEnabled,
+			processedTimeRemap,
+			speedCurveTimestep
+		});
 	}
 
 	// Video cycling functionality - now uses section-constrained pools
@@ -1874,52 +1327,7 @@
 
 	// VHS presets
 	function applyVHSPreset(preset) {
-		switch (preset) {
-			case 'classic':
-				uniforms.u_distortion.value = 0.075;
-				uniforms.u_scanlineIntensity.value = 0.26;
-				uniforms.u_rgbShift.value = 0.0015;
-				uniforms.u_noise.value = 0.022;
-				uniforms.u_flickerIntensity.value = 0.5;
-				uniforms.u_trackingIntensity.value = 0.1;
-				uniforms.u_trackingSpeed.value = 1.2;
-				uniforms.u_trackingFreq.value = 8.0;
-				uniforms.u_waveAmplitude.value = 0.1;
-				break;
-			case 'damaged':
-				uniforms.u_distortion.value = 0.15;
-				uniforms.u_scanlineIntensity.value = 0.4;
-				uniforms.u_rgbShift.value = 0.005;
-				uniforms.u_noise.value = 0.08;
-				uniforms.u_flickerIntensity.value = 1.2;
-				uniforms.u_trackingIntensity.value = 0.3;
-				uniforms.u_trackingSpeed.value = 2.0;
-				uniforms.u_trackingFreq.value = 12.0;
-				uniforms.u_waveAmplitude.value = 0.3;
-				break;
-			case 'clean':
-				uniforms.u_distortion.value = 0.02;
-				uniforms.u_scanlineIntensity.value = 0.1;
-				uniforms.u_rgbShift.value = 0.0005;
-				uniforms.u_noise.value = 0.005;
-				uniforms.u_flickerIntensity.value = 0.1;
-				uniforms.u_trackingIntensity.value = 0.02;
-				uniforms.u_trackingSpeed.value = 0.5;
-				uniforms.u_trackingFreq.value = 4.0;
-				uniforms.u_waveAmplitude.value = 0.02;
-				break;
-			case 'heavy':
-				uniforms.u_distortion.value = 0.3;
-				uniforms.u_scanlineIntensity.value = 0.6;
-				uniforms.u_rgbShift.value = 0.01;
-				uniforms.u_noise.value = 0.15;
-				uniforms.u_flickerIntensity.value = 1.8;
-				uniforms.u_trackingIntensity.value = 0.5;
-				uniforms.u_trackingSpeed.value = 3.0;
-				uniforms.u_trackingFreq.value = 20.0;
-				uniforms.u_waveAmplitude.value = 0.5;
-				break;
-		}
+		applyVHSPresetValues(uniforms, preset);
 	}
 
 	// Anamorphic Breathe state variables
@@ -1944,56 +1352,12 @@
 
 	// Anamorphic Breathe presets
 	function applyAnamorphicPreset(preset) {
-		switch (preset) {
-			case 'subtle':
-				chromaticEnabled = true;
-				defocusEnabled = true;
-				uniforms.u_chromatic_amount.value = 0.2;
-				uniforms.u_chromatic_speed.value = 0.5;
-				chromaticStyle = 1;
-				uniforms.u_defocus_amount.value = 0.15;
-				uniforms.u_defocus_speed.value = 0.3;
-				uniforms.u_anamorphic_ratio.value = 1.3;
-				uniforms.u_breathe_intensity.value = 0.6;
-				breatheSync = true;
-				break;
-			case 'dreamy':
-				chromaticEnabled = true;
-				defocusEnabled = true;
-				uniforms.u_chromatic_amount.value = 0.5;
-				uniforms.u_chromatic_speed.value = 0.6;
-				chromaticStyle = 1;
-				uniforms.u_defocus_amount.value = 0.5;
-				uniforms.u_defocus_speed.value = 0.4;
-				uniforms.u_anamorphic_ratio.value = 1.5;
-				uniforms.u_breathe_intensity.value = 1.0;
-				breatheSync = true;
-				break;
-			case 'trippy':
-				chromaticEnabled = true;
-				defocusEnabled = true;
-				uniforms.u_chromatic_amount.value = 1.2;
-				uniforms.u_chromatic_speed.value = 1.5;
-				chromaticStyle = 0; // circular for trippy
-				uniforms.u_defocus_amount.value = 0.3;
-				uniforms.u_defocus_speed.value = 0.8;
-				uniforms.u_anamorphic_ratio.value = 1.8;
-				uniforms.u_breathe_intensity.value = 1.5;
-				breatheSync = false; // async for more chaos
-				break;
-			case 'cinematic':
-				chromaticEnabled = true;
-				defocusEnabled = true;
-				uniforms.u_chromatic_amount.value = 0.3;
-				uniforms.u_chromatic_speed.value = 0.4;
-				chromaticStyle = 1;
-				uniforms.u_defocus_amount.value = 0.7;
-				uniforms.u_defocus_speed.value = 0.25;
-				uniforms.u_anamorphic_ratio.value = 2.0;
-				uniforms.u_breathe_intensity.value = 0.8;
-				breatheSync = true;
-				break;
-		}
+		const presetValues = applyAnamorphicPresetValues(uniforms, preset);
+		if (!presetValues) return;
+		chromaticEnabled = presetValues.chromaticEnabled;
+		defocusEnabled = presetValues.defocusEnabled;
+		chromaticStyle = presetValues.chromaticStyle;
+		breatheSync = presetValues.breatheSync;
 	}
 
 	// Sync Video Playback with shared IsPlaying state
@@ -2126,34 +1490,7 @@
 				<Tweakpane.List
 					bind:value={selectedShaderName}
 					label="Shader"
-					options={{
-						VHS: 'VHS',
-						XlsczN: 'XlsczN',
-						Water: 'Water',
-						ChromaticAberration: 'ChromaticAberration',
-						Glitch: 'Glitch',
-						Noise: 'Noise',
-						Vignette: 'Vignette',
-						Bloom: 'Bloom',
-						DepthOfField: 'DepthOfField',
-						Depth: 'Depth',
-						Sepia: 'Sepia',
-						Scanline: 'Scanline',
-						Pixelation: 'Pixelation',
-						DotScreen: 'DotScreen',
-						HueSaturation: 'HueSaturation',
-						BrightnessContrast: 'BrightnessContrast',
-						ColorDepth: 'ColorDepth',
-						ColorAverage: 'ColorAverage',
-						TiltShift: 'TiltShift',
-						ToneMapping: 'ToneMapping',
-						ASCII: 'ASCII',
-						Grid: 'Grid',
-						LensFlare: 'LensFlare',
-						CRT: 'CRT',
-						AnamorphicBreathe: 'AnamorphicBreathe',
-						Grayscale: 'Grayscale'
-					}}
+					options={shaderOptions}
 				/>
 
 				<!-- Video Controls -->
