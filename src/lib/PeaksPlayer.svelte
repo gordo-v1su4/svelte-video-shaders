@@ -1,5 +1,5 @@
 <script>
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import Peaks from 'peaks.js';
 
 	let {
@@ -15,6 +15,7 @@
 		midiMarkers = [], // Array of timestamps for MIDI markers
 		showOnsets = $bindable(true), // Toggle for showing Essentia onsets
 		showMIDIMarkers = $bindable(true), // Toggle for showing MIDI markers
+		showSectionOverlays = $bindable(true), // Toggle structure section rectangles on the waveform
 		sections = [], // Song structure sections (intro, verse, chorus, etc.)
 		loopSectionIndex = -1, // Index of section being looped (-1 = none)
 		currentTime = $bindable(0),
@@ -29,13 +30,24 @@
 		onNextVideo = () => {}, // Callback for next video button
 		onTogglePlayback = () => {}, // Callback for play/pause (parent is playback master)
 		mediaElement = null, // External audio element
-		grid = [] // 1/32 note grid markers
+		grid = [], // 1/32 note grid markers
+		/** Hex colors per section index — same order as sequencer / clip buckets */
+		sectionColorPalette = [],
+		/** Fired after user drags section handles (sync to analysis structure) */
+		onSectionBoundsChange = (/** @type {number} */ _index, /** @type {number} */ _start, /** @type {number} */ _end) => {},
+		/** Fired after user renames a structure section (double-click label) */
+		onSectionLabelChange = (/** @type {number} */ _index, /** @type {string} */ _label) => {},
+		/** Fired when user adds a segment via + Segment — parent inserts into structure + sequencer + buckets */
+		onSectionAdd = (/** @type {{ start: number; end: number; label: string }} */ _payload) => {},
+		/** Bumped on every structure mutation so overlays repaint (avoids stale fingerprint / shallow prop issues) */
+		sectionStructureRevision = 0
 	} = $props();
 
 	let zoomviewContainer;
 	let overviewContainer;
-	// audioRef is now just a local reference to mediaElement for convenience, or we use mediaElement directly
-	let peaksInstance;
+	// Must be reactive: $effect that paints markers/sections must re-run after Peaks.init assigns this.
+	// $state.raw avoids deep-proxying the Peaks API object; reassignment still triggers effects.
+	let peaksInstance = $state.raw(null);
 	let isReady = $state(false);
 	let previewTime = $state(null);
 	let previewX = $state(0);
@@ -45,6 +57,80 @@
 	const id = Math.random().toString(36).substr(2, 9);
 	const zoomId = `peaks-zoom-${id}`;
 	const overviewId = `peaks-overview-${id}`;
+
+	/** Section overlay fill alpha (20% more opaque than previous 0.38) */
+	const SECTION_OVERLAY_ALPHA = Math.min(1, 0.38 * 1.2);
+
+	function hexToRgba(hex, alpha = SECTION_OVERLAY_ALPHA) {
+		if (typeof hex !== 'string' || !hex.startsWith('#')) return `rgba(200, 200, 200, ${alpha})`;
+		const raw = hex.slice(1);
+		const full = raw.length === 3 ? raw.split('').map((c) => c + c).join('') : raw;
+		if (full.length !== 6) return `rgba(200, 200, 200, ${alpha})`;
+		const r = parseInt(full.slice(0, 2), 16);
+		const g = parseInt(full.slice(2, 4), 16);
+		const b = parseInt(full.slice(4, 6), 16);
+		if ([r, g, b].some((n) => Number.isNaN(n))) return `rgba(200, 200, 200, ${alpha})`;
+		return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+	}
+
+	function attachSegmentEditingHandlers(peaks) {
+		try {
+			const zoomview = peaks.views?.getView?.('zoomview');
+			const overview = peaks.views?.getView?.('overview');
+			if (typeof zoomview?.enableSegmentDragging === 'function') {
+				zoomview.enableSegmentDragging(true);
+			}
+			if (typeof overview?.enableSegmentDragging === 'function') {
+				overview.enableSegmentDragging(true);
+			}
+		} catch (e) {
+			console.warn('[PeaksPlayer] enableSegmentDragging:', e);
+		}
+
+		peaks.on('segments.dragend', (event) => {
+			const seg = event?.segment;
+			const sid = seg?.id;
+			if (!sid || typeof sid !== 'string' || !sid.startsWith('section-')) return;
+			const index = parseInt(sid.slice('section-'.length), 10);
+			if (!Number.isInteger(index) || index < 0) return;
+			const start = Number(seg.startTime);
+			const end = Number(seg.endTime);
+			if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+			onSectionBoundsChange(index, start, end);
+		});
+
+		peaks.on('segments.dblclick', (event) => {
+			const seg = event?.segment;
+			if (!seg) return;
+			const sid = seg.id;
+			const current = seg.labelText ?? '';
+			const next =
+				typeof window !== 'undefined' && window.prompt
+					? window.prompt('Rename segment', current)
+					: null;
+			if (next === null) return;
+			const label = next.trim() || current;
+			seg.update({ labelText: label });
+			if (typeof sid === 'string' && sid.startsWith('section-')) {
+				const index = parseInt(sid.slice('section-'.length), 10);
+				if (Number.isInteger(index) && index >= 0) {
+					onSectionLabelChange(index, label);
+				}
+			}
+		});
+
+		peaks.on('points.dblclick', (event) => {
+			const pt = event?.point;
+			if (!pt) return;
+			const current = pt.labelText ?? '';
+			const next =
+				typeof window !== 'undefined' && window.prompt
+					? window.prompt('Rename marker', current)
+					: null;
+			if (next === null) return;
+			pt.update({ labelText: next.trim() || current });
+		});
+	}
 
 	// Format time as mm:ss.ms
 	function formatTime(seconds) {
@@ -122,10 +208,32 @@
 	$effect(() => {
 		// Wait for both audioFile AND mediaElement to be present/loaded
 		if (audioFile && mounted && mediaElement) {
-			// Small delay to ensure DOM paint and element readiness
-			setTimeout(() => initPeaks(), 100);
+			const id = setTimeout(() => void initPeaks(), 100);
+			return () => clearTimeout(id);
 		}
 	});
+
+	/** Wait until the media element has readable metadata (Peaks decodes via Web Audio). */
+	function waitForMediaMetadata(el) {
+		return new Promise((resolve, reject) => {
+			if (el.readyState >= 1) {
+				resolve();
+				return;
+			}
+			const onMeta = () => {
+				el.removeEventListener('loadedmetadata', onMeta);
+				el.removeEventListener('error', onErr);
+				resolve();
+			};
+			const onErr = () => {
+				el.removeEventListener('loadedmetadata', onMeta);
+				el.removeEventListener('error', onErr);
+				reject(el.error || new Error('Media load failed'));
+			};
+			el.addEventListener('loadedmetadata', onMeta);
+			el.addEventListener('error', onErr);
+		});
+	}
 
 	// Sync playback state
 	$effect(() => {
@@ -168,6 +276,18 @@
 			return;
 		}
 
+		if (!audioEl.src) {
+			console.warn('[PeaksPlayer] media element has no src yet; skip Peaks.init');
+			return;
+		}
+
+		try {
+			await waitForMediaMetadata(audioEl);
+		} catch (e) {
+			console.error('[PeaksPlayer] audio failed before Peaks.init:', e);
+			return;
+		}
+
 		const options = {
 			zoomview: {
 				container: zoomEl
@@ -184,24 +304,26 @@
 			keyboard: true,
 			showPlayheadTime: true,
 			emitCueEvents: true,
+			enablePoints: true,
+			enableSegments: true,
 			zoomWaveformColor: waveColor,
 			overviewWaveformColor: waveColor,
 			playedWaveformColor: playedWaveColor,
 			overviewHighlightRectangleColor: 'rgba(168, 130, 255, 0.4)',
-			segments: segments, // User segments
-			points: [], // We manage points manually
+			segments: Array.isArray(segments) ? segments : [],
+			points: [],
 			segmentOptions: {
 				markers: true,
 				overlay: true,
 				waveformColor: waveColor,
-				overlayColor: 'rgba(168, 130, 255, 0.3)', // Semi-transparent purple
-				overlayOpacity: 0.3,
+				overlayColor: 'rgba(168, 130, 255, 0.3)',
+				overlayOpacity: 0.35,
 				overlayBorderColor: 'rgba(168, 130, 255, 1.0)',
 				overlayBorderWidth: 2,
 				overlayCornerRadius: 4,
-				overlayOffset: 0, // Full height
-				overlayLabelAlign: 'left',
-				overlayLabelVerticalAlign: 'top',
+				overlayOffset: 0,
+				// Peaks API: 'top-left' | 'center' (not 'left')
+				overlayLabelAlign: 'top-left',
 				overlayLabelPadding: 8,
 				overlayLabelColor: '#ffffff',
 				overlayFontFamily: 'sans-serif',
@@ -223,6 +345,14 @@
 			console.log("PeaksPlayer: Success!");
 			peaksInstance = peaks;
 			isReady = true;
+			// 'overlap' disables Peaks' forced flush boundaries so gaps can exist between sections.
+			// Non-overlap + gaps are enforced in VideoWorkbench when syncing bounds from dragend.
+			try {
+				peaks.views?.getView?.('zoomview')?.setSegmentDragMode?.('overlap');
+				peaks.views?.getView?.('overview')?.setSegmentDragMode?.('overlap');
+			} catch (e) {
+				console.warn('[PeaksPlayer] setSegmentDragMode:', e);
+			}
 			// Ensure initial viewport is a strict duration fit. This avoids first-click zoom jumps.
 			requestAnimationFrame(() => fitWaveformToView());
 			
@@ -239,21 +369,18 @@
 				onSeek(time);
 			});
 
-			peaks.on('segments.click', (segment) => {
-                onSegmentClick(segment);
-            });
+			peaks.on('segments.click', (event) => {
+				const seg = event?.segment ?? event;
+				onSegmentClick(seg);
+			});
 
-			// Initial render of markers - the $effect will handle subsequent updates
-			renderMarkersSync(showOnsets, showMIDIMarkers, onsets, midiMarkers, grid);
-			
-			// Render section overlays if available
-			renderSections(sections, loopSectionIndex);
+			attachSegmentEditingHandlers(peaks);
+
+			// Markers + structure sections: reactive $effect runs after this callback
+			// (avoids stale `sections` when analysis finishes after Peaks.init).
 		});
 	}
 
-	// Track render version to prevent stale updates
-	let renderVersion = $state(0);
-	
 	// Track array changes by creating a fingerprint that includes first, last, and length
 	const onsetsFingerprint = $derived(() => {
 		if (!onsets || onsets.length === 0) return 'empty';
@@ -267,42 +394,58 @@
 		const last = midiMarkers[midiMarkers.length - 1]?.toFixed(3) || '0';
 		return `${first}-${last}-${midiMarkers.length}`;
 	});
-	const gridFingerprint = $derived(() => grid ? grid.length.toString() : '0');
+	const gridFingerprint = $derived(() => {
+		if (!grid || grid.length === 0) return 'empty';
+		const first = Number(grid[0]).toFixed(4);
+		const last = Number(grid[grid.length - 1]).toFixed(4);
+		return `${first}-${last}-${grid.length}`;
+	});
 	const sectionsFingerprint = $derived(() => {
 		if (!sections || sections.length === 0) return 'empty';
-		return `${sections.length}-${sections.map(s => s.label).join('-')}`;
+		// Higher precision than 3dp so small handle moves still invalidate (toggle was masking this).
+		return sections
+			.map(
+				(s) =>
+					`${Number(s.start).toFixed(5)}-${Number(s.end).toFixed(5)}-${String(s.label ?? '')}`
+			)
+			.join('|');
 	});
 	
 	$effect(() => {
-		// Re-render markers when peaks is ready and data or toggle states change
-		if (peaksInstance) {
-			// Access fingerprints and toggle states to track all changes
-			const _onsetsFp = onsetsFingerprint;
-			const _midiFp = midiFingerprint;
-			const _gridFp = gridFingerprint;
-			const _sectionsFp = sectionsFingerprint;
-			const _showOnsets = showOnsets;
-			const _showMIDI = showMIDIMarkers;
-			const _loopSectionIndex = loopSectionIndex;
-			
-			// Capture current array values to avoid stale closures
+		if (!peaksInstance) return;
+
+		// Subscribe only to stable fingerprints + toggles — NOT raw array props.
+		// Parent re-renders every frame (bind:currentTime) can pass new [] references for derived
+		// arrays; tracking those here caused effect_update_depth_exceeded with Peaks fitToContainer/timeupdate.
+		const _onsetsFp = onsetsFingerprint;
+		const _midiFp = midiFingerprint;
+		const _gridFp = gridFingerprint;
+		const _sectionsFp = sectionsFingerprint;
+		const _sectionsRev = sectionStructureRevision;
+		const _showOnsets = showOnsets;
+		const _showMIDI = showMIDIMarkers;
+		const _showSectionOverlays = showSectionOverlays;
+		const _loopSectionIndex = loopSectionIndex;
+		void sectionColorPalette;
+
+		untrack(() => {
 			const currentOnsets = onsets ? [...onsets] : [];
 			const currentMidi = midiMarkers ? [...midiMarkers] : [];
 			const currentGrid = grid ? [...grid] : [];
-			
-			console.log(`[PeaksPlayer] $effect triggered: onsetsFp=${_onsetsFp}, midiFp=${_midiFp}, showOnsets=${_showOnsets}, showMIDI=${_showMIDI}, loopSectionIndex=${_loopSectionIndex}`);
-			
-			// Increment version and render synchronously
-			renderVersion++;
-			
-			// Render with captured values to avoid stale closure issues
+			const currentSections = sections && sections.length > 0 ? [...sections] : [];
+
+			console.log(
+				`[PeaksPlayer] paint markers/sections: onsetsFp=${_onsetsFp}, midiFp=${_midiFp}, gridFp=${_gridFp}, sectionsFp=${_sectionsFp}, nSections=${currentSections.length}, loop=${_loopSectionIndex}`
+			);
+
 			renderMarkersSync(_showOnsets, _showMIDI, currentOnsets, currentMidi, currentGrid);
-			
-			// Re-render sections when they change or loopSectionIndex changes
-			if (_sectionsFp !== 'empty') {
-				renderSections(sections, _loopSectionIndex);
+
+			if (_showSectionOverlays && _sectionsFp !== 'empty' && currentSections.length > 0) {
+				renderSections(currentSections, _loopSectionIndex);
+			} else {
+				clearStructureSectionSegments();
 			}
-		}
+		});
 	});
 
 	function renderMarkersSync(shouldShowOnsets, shouldShowMIDI, onsetData, midiData, gridData) {
@@ -434,58 +577,75 @@
 		}
 	}
 	
-	function renderSections(sectionsData, activeLoopIndex = -1) {
-		if (!peaksInstance || !sectionsData || sectionsData.length === 0) {
-			return;
-		}
-		
-		// Remove existing section segments (they have a special prefix)
+	function clearStructureSectionSegments() {
+		if (!peaksInstance) return;
 		try {
 			const existingSegments = peaksInstance.segments.getSegments();
-			const sectionSegments = existingSegments.filter(seg => seg.id?.startsWith('section-'));
-			
+			const sectionSegments = existingSegments.filter((seg) => seg.id?.startsWith('section-'));
 			for (const seg of sectionSegments) {
 				peaksInstance.segments.removeById(seg.id);
 			}
 		} catch (e) {
-			console.warn('[PeaksPlayer] Error removing section segments:', e);
+			console.warn('[PeaksPlayer] Error clearing section segments:', e);
 		}
+	}
+
+	function renderSections(sectionsData, activeLoopIndex = -1) {
+		if (!peaksInstance || !sectionsData || sectionsData.length === 0) {
+			return;
+		}
+
+		clearStructureSectionSegments();
 		
-		// Add section segments - increased opacity for more prominent overlays
-		const sectionColors = {
-			'intro': 'rgba(255, 200, 100, 0.35)',
-			'verse': 'rgba(100, 150, 255, 0.35)',
-			'chorus': 'rgba(255, 100, 150, 0.4)',
-			'bridge': 'rgba(150, 255, 100, 0.35)',
-			'outro': 'rgba(200, 100, 255, 0.35)',
-			'default': 'rgba(200, 200, 200, 0.25)'
+		// Fallback tint when no palette (label-keyword hints)
+		const keywordColors = {
+			intro: `rgba(255, 200, 100, ${Math.min(1, 0.38 * 1.2)})`,
+			verse: `rgba(100, 150, 255, ${Math.min(1, 0.38 * 1.2)})`,
+			chorus: `rgba(255, 100, 150, ${Math.min(1, 0.42 * 1.2)})`,
+			bridge: `rgba(150, 255, 100, ${Math.min(1, 0.38 * 1.2)})`,
+			outro: `rgba(200, 100, 255, ${Math.min(1, 0.38 * 1.2)})`,
+			default: `rgba(200, 200, 200, ${Math.min(1, 0.28 * 1.2)})`
 		};
-		
+
+		const palette =
+			Array.isArray(sectionColorPalette) && sectionColorPalette.length > 0
+				? sectionColorPalette
+				: null;
+
 		// Highlight color for looped section - brighter and more vibrant
-		const loopHighlightColor = 'rgba(0, 255, 200, 0.6)'; // Cyan highlight
-		
+		const loopHighlightColor = `rgba(0, 255, 200, ${Math.min(1, 0.55 * 1.2)})`; // Cyan highlight
+
+		let added = 0;
 		try {
 			sectionsData.forEach((section, index) => {
-				// Validate section times
-				if (!section || typeof section.start !== 'number' || typeof section.end !== 'number') {
-					console.warn(`[PeaksPlayer] Invalid section at index ${index}:`, section);
+				if (!section) return;
+
+				const start = Number(section.start);
+				const end = Number(section.end);
+				if (!Number.isFinite(start) || !Number.isFinite(end)) {
+					console.warn(`[PeaksPlayer] Invalid section times at index ${index}:`, section);
 					return;
 				}
-				
-				// Ensure end time is after start time
-				if (section.end <= section.start) {
-					console.warn(`[PeaksPlayer] Section ${index} has invalid time range: ${section.start} - ${section.end}`);
+				if (end <= start) {
+					console.warn(
+						`[PeaksPlayer] Section ${index} invalid range: ${start} - ${end}`,
+						section
+					);
 					return;
 				}
-				
-				const label = section.label?.toLowerCase() || '';
-				let color = sectionColors.default;
-				
-				// Find matching color
-				for (const [key, sectionColor] of Object.entries(sectionColors)) {
-					if (label.includes(key)) {
-						color = sectionColor;
-						break;
+
+				const labelRaw = section.label != null ? String(section.label) : '';
+				const labelLower = labelRaw.toLowerCase();
+
+				let color = keywordColors.default;
+				if (palette) {
+					color = hexToRgba(palette[index % palette.length], SECTION_OVERLAY_ALPHA);
+				} else {
+					for (const [key, c] of Object.entries(keywordColors)) {
+						if (key !== 'default' && labelLower.includes(key)) {
+							color = c;
+							break;
+						}
 					}
 				}
 				
@@ -493,30 +653,40 @@
 				const isLooped = activeLoopIndex >= 0 && index === activeLoopIndex;
 				const finalColor = isLooped ? loopHighlightColor : color;
 				
-				// Add emoji or indicator to label if looped
-				const labelText = isLooped 
-					? `🔁 ${section.label.toUpperCase()}` 
-					: section.label.toUpperCase();
+				const displayLabel = labelRaw ? labelRaw.toUpperCase() : `SECTION ${index + 1}`;
+				const labelText = isLooped ? `🔁 ${displayLabel}` : displayLabel;
 				
-				// Create segment with explicit times - ensure we're only highlighting this specific section
+				// Editable handles like user-added segments; bounds sync via segments.dragend
 				const segmentConfig = {
 					id: `section-${index}`,
-					startTime: section.start,
-					endTime: section.end,
+					startTime: start,
+					endTime: end,
 					labelText: labelText,
 					color: finalColor,
-					editable: false
+					editable: true
 				};
-				
-				// Add data attribute for CSS targeting if looped
+
 				if (isLooped) {
 					segmentConfig.data = { isLooped: true };
 				}
-				
+
 				peaksInstance.segments.add(segmentConfig);
+				added++;
 			});
-			
-			console.log(`[PeaksPlayer] ✅ Added ${sectionsData.length} section segments${activeLoopIndex >= 0 ? ` (looping section ${activeLoopIndex})` : ''}`);
+
+			console.log(
+				`[PeaksPlayer] ✅ Section segments: added ${added}/${sectionsData.length}${activeLoopIndex >= 0 ? ` (loop ${activeLoopIndex})` : ''}`
+			);
+
+			requestAnimationFrame(() => {
+				try {
+					fitWaveformToView();
+					peaksInstance.views?.getView?.('zoomview')?.fitToContainer?.();
+					peaksInstance.views?.getView?.('overview')?.fitToContainer?.();
+				} catch (e) {
+					console.warn('[PeaksPlayer] post-section layout:', e);
+				}
+			});
 			
 			// Update label colors for looped sections after a short delay to allow DOM to update
 			if (activeLoopIndex >= 0) {
@@ -569,30 +739,52 @@
     }
 
 	export function addSegment(startTime, endTime, labelText) {
-		if (peaksInstance) {
-            const current = peaksInstance.player.getCurrentTime();
-            // Snap the start time if not explicit
-            const start = startTime ?? snapToGrid(current);
-            const end = endTime ?? snapToGrid(current + 5); // Default 5s segment
-            
-			peaksInstance.segments.add({
-				startTime: start,
-				endTime: end,
-				labelText: labelText ?? "New Segment",
-				editable: true,
-                color: 'rgba(168, 130, 255, 0.4)'
-			});
+		if (!peaksInstance) return;
+
+		const current = peaksInstance.player.getCurrentTime();
+		const trackDur = peaksInstance.player?.getDuration?.() ?? duration ?? 0;
+		let start = startTime ?? snapToGrid(current);
+		let end = endTime ?? snapToGrid(current + 5);
+
+		let label = labelText;
+		if (label === undefined || label === null) {
+			label =
+				typeof window !== 'undefined' && window.prompt
+					? window.prompt('Name this segment', 'New segment')
+					: 'New segment';
+			if (label === null) return;
 		}
+		const finalLabel = String(label).trim() || 'New segment';
+
+		start = Math.max(0, Number(start));
+		end = Math.max(start + 0.05, Number(end));
+		if (trackDur > 0) {
+			end = Math.min(end, trackDur);
+			if (end <= start) end = Math.min(trackDur, start + 0.05);
+		}
+
+		// Structure sections are rendered from parent data; sync sequencer + clip buckets here.
+		onSectionAdd({ start, end, label: finalLabel });
 	}
 
 	export function addPoint(time, labelText) {
 		if (peaksInstance) {
-            const current = peaksInstance.player.getCurrentTime();
-            const pointTime = time ?? snapToGrid(current);
-            
+			const current = peaksInstance.player.getCurrentTime();
+			const pointTime = time ?? snapToGrid(current);
+
+			let label = labelText;
+			if (label === undefined || label === null) {
+				label =
+					typeof window !== 'undefined' && window.prompt
+						? window.prompt('Name this marker', 'Marker')
+						: 'Marker';
+				if (label === null) return;
+			}
+			const finalLabel = String(label).trim() || 'Marker';
+
 			peaksInstance.points.add({
 				time: pointTime,
-				labelText: labelText ?? "Point",
+				labelText: finalLabel,
 				editable: true,
 				color: '#00ccff'
 			});
@@ -780,7 +972,7 @@
          </div>
          {/if}
          <button 
-         	class="marker-toggle-btn" 
+         	class="marker-toggle-btn marker-midi-btn" 
 			type="button"
          	class:active={showMIDIMarkers}
          	class:has-data={midiMarkers && midiMarkers.length > 0}
@@ -800,7 +992,7 @@
          	MIDI {midiMarkers && midiMarkers.length > 0 ? `(${midiMarkers.length})` : '(0)'}
          </button>
          <button 
-         	class="marker-toggle-btn" 
+         	class="marker-toggle-btn marker-onsets-btn" 
 			type="button"
          	class:active={showOnsets}
          	class:has-data={onsets && onsets.length > 0}
@@ -818,6 +1010,27 @@
          	title={onsets && onsets.length > 0 ? `Toggle Essentia Onsets (${onsets.length})` : 'No onsets'}
          >
          	Onsets {onsets && onsets.length > 0 ? `(${onsets.length})` : '(0)'}
+         </button>
+         <button
+         	class="marker-toggle-btn marker-sections-btn"
+         	type="button"
+         	class:active={showSectionOverlays}
+         	class:has-data={sections && sections.length > 0}
+         	disabled={!sections || sections.length === 0}
+         	onclick={() => {
+         		const newVal = !showSectionOverlays;
+         		showSectionOverlays = newVal;
+         		if (peaksInstance) {
+         			if (newVal && sections && sections.length > 0) {
+         				renderSections([...sections], loopSectionIndex);
+         			} else {
+         				clearStructureSectionSegments();
+         			}
+         		}
+         	}}
+         	title={sections && sections.length > 0 ? `Toggle section overlays (${sections.length})` : 'No structure sections'}
+         >
+         	Sections {sections && sections.length > 0 ? `(${sections.length})` : '(0)'}
          </button>
         </div>
 	</div>
@@ -879,6 +1092,9 @@
     <button type="button" onclick={() => addPoint()}>+ Point</button>
     <div class="separator"></div>
     <button type="button" onclick={() => logData()}>Log Data</button>
+    <span class="toolbar-hint" title="Rename any segment or point"
+      >Double-click a segment or point to rename</span
+    >
 </div>
 {/if}
 
@@ -1062,29 +1278,42 @@
     }
 
     /* MIDI button - blue when active */
-    .marker-toggle-btn:first-of-type.active.has-data {
+    .marker-midi-btn.active.has-data {
         background: #64c8ff;
         border-color: #64c8ff;
         color: #000;
         font-weight: 600;
     }
 
-    .marker-toggle-btn:first-of-type:not(.active).has-data {
+    .marker-midi-btn:not(.active).has-data {
         border-color: #64c8ff55;
         color: #64c8ff;
     }
 
     /* Onsets button - orange when active */
-    .marker-toggle-btn:last-of-type.active.has-data {
+    .marker-onsets-btn.active.has-data {
         background: #ff8800;
         border-color: #ff8800;
         color: #000;
         font-weight: 600;
     }
 
-    .marker-toggle-btn:last-of-type:not(.active).has-data {
+    .marker-onsets-btn:not(.active).has-data {
         border-color: #ff880055;
         color: #ff8800;
+    }
+
+    /* Structure sections overlay toggle - violet when active */
+    .marker-sections-btn.active.has-data {
+        background: #a78bfa;
+        border-color: #a78bfa;
+        color: #000;
+        font-weight: 600;
+    }
+
+    .marker-sections-btn:not(.active).has-data {
+        border-color: #a78bfa55;
+        color: #a78bfa;
     }
 
 	.placeholder-overlay {
@@ -1108,6 +1337,7 @@
 
     .controls-toolbar {
         display: flex;
+        flex-wrap: wrap;
         gap: 10px;
         margin-top: 10px;
         padding: 10px;
@@ -1152,13 +1382,13 @@
         margin: 0 5px;
     }
 
-    /* Reduce point marker opacity in overview to emphasize sections */
-    .peaks-overview :global(svg) :global(line) {
-        opacity: 0.05 !important;
-    }
-    
-    /* Keep full opacity in zoom view */
-    .peaks-zoomview :global(svg) :global(line) {
-        opacity: 1 !important;
-    }
+	.toolbar-hint {
+		font-size: 0.75rem;
+		color: #888;
+		max-width: 200px;
+		line-height: 1.2;
+	}
+
+	/* Point markers are hidden in overview via showPoints(false); do not dim all SVG lines
+	   or the overview waveform disappears (onset grid uses many thin lines). */
 </style>

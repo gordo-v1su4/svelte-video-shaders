@@ -1,4 +1,5 @@
 <script>
+	import { tick } from 'svelte';
 	import * as Tweakpane from 'svelte-tweakpane-ui';
 	import { ThemeUtils } from 'svelte-tweakpane-ui';
 	import Button from 'svelte-tweakpane-ui/Button.svelte';
@@ -101,6 +102,7 @@
 	let midiMarkers = $state([]);
 	let showMIDIMarkers = $state(true); // Show MIDI markers checkbox
 	let showOnsets = $state(true); // Show Essentia onsets checkbox
+	let showSectionOverlays = $state(true); // Structure section rectangles on Peaks waveform
 	let audioVolume = $state(0.5);
 	let audioIntensity = $state(1.0);
 	let audioColorShift = $state(0.5);
@@ -333,6 +335,24 @@
 	let focusedSectionIndex = $state(-1);
 	let collapsedBucketSections = $state({});
 	let peaksPlayerRef = $state();
+	/** Incremented on every song-structure mutation so Peaks section overlays reliably repaint */
+	let sectionStructureRevision = $state(0);
+	function bumpSectionStructureRevision() {
+		sectionStructureRevision += 1;
+	}
+	/** Sequencer timeline strip (for pointer → time mapping while dragging blocks) */
+	let sequencerTrackEl = $state(/** @type {HTMLElement | null} */ (null));
+	/** Live start/end while resizing a section edge on the sequencer (seconds) */
+	let sequencerDragPreview = $state(/** @type {{ index: number; start: number; end: number } | null} */ (null));
+	let sequencerReorderDragIndex = $state(/** @type {number | null} */ (null));
+	/** Live insert-before index (0..n) while pointer-reordering */
+	let sequencerReorderInsertBefore = $state(/** @type {number | null} */ (null));
+	/** 0–1 horizontal position for drop marker line */
+	let sequencerReorderMarkerFrac = $state(0);
+	/** @type {{ pointerId: number; fromIndex: number; startX: number; startY: number; captureEl: HTMLElement | null } | null} */
+	let sequencerReorderSession = $state(/** @type {{ pointerId: number; fromIndex: number; startX: number; startY: number; captureEl: HTMLElement | null } | null} */ (null));
+	/** @type {{ pointerId: number; index: number; edge: 'start' | 'end'; origStart: number; origEnd: number; totalDur: number; captureEl: HTMLElement | null } | null} */
+	let sequencerResizeSession = null;
 
 	// Helper functions for section video pools
 	function isVideoInSection(sectionIndex, videoIndex) {
@@ -360,6 +380,185 @@
 
 	function getSectionColor(sectionIndex) {
 		return bucketPalette[sectionIndex % bucketPalette.length];
+	}
+
+	const MIN_STRUCTURE_SECTION_DURATION = 0.05;
+	/** Only snap to neighbor boundary when this close (keeps intentional gaps usable) */
+	const SECTION_BOUNDARY_SNAP_SEC = 0.025;
+
+	function rebuildSectionBoundaries(nextSections) {
+		const cuts = new Set();
+		for (const s of nextSections) {
+			cuts.add(s.start);
+			cuts.add(s.end);
+		}
+		return [...cuts].sort((a, b) => a - b);
+	}
+
+	function patchStructureSection(index, patch) {
+		const secs = analysisData.structure?.sections;
+		if (!secs?.[index]) return;
+		const prev = secs[index];
+		const nextRow = { ...prev, ...patch };
+		if (patch.start !== undefined || patch.end !== undefined) {
+			nextRow.start = patch.start !== undefined ? patch.start : prev.start;
+			nextRow.end = patch.end !== undefined ? patch.end : prev.end;
+			nextRow.duration = Math.max(0, nextRow.end - nextRow.start);
+		}
+		const nextSections = secs.map((row, i) => (i === index ? nextRow : row));
+		const boundaries = rebuildSectionBoundaries(nextSections);
+		analysisData = {
+			...analysisData,
+			structure: { ...analysisData.structure, sections: nextSections, boundaries }
+		};
+		bumpSectionStructureRevision();
+	}
+
+	function sectionsRoughlyEqual(a, b) {
+		return (
+			Math.abs(Number(a.start) - Number(b.start)) < 0.02 &&
+			Math.abs(Number(a.end) - Number(b.end)) < 0.02 &&
+			String(a.label || '') === String(b.label || '')
+		);
+	}
+
+	/** Insert a user-added section so sequencer + clip buckets stay in sync with the waveform. */
+	function handlePeaksSectionAdd(payload) {
+		const oldSecs = analysisData.structure?.sections ? [...analysisData.structure.sections] : [];
+		const trackEnd = Math.max(
+			audioDuration || 0,
+			...oldSecs.map((s) => Number(s.end) || 0),
+			Number(payload.end),
+			Number(payload.start) + MIN_STRUCTURE_SECTION_DURATION
+		);
+
+		let s = Math.max(0, Number(payload.start));
+		let e = Math.max(s + MIN_STRUCTURE_SECTION_DURATION, Number(payload.end));
+		e = Math.min(e, trackEnd);
+		if (e <= s) e = Math.min(trackEnd, s + MIN_STRUCTURE_SECTION_DURATION);
+
+		const newRow = {
+			start: s,
+			end: e,
+			label: String(payload.label || 'Section').trim() || 'Section',
+			duration: e - s
+		};
+
+		const nextSections = [...oldSecs, newRow].sort((a, b) => Number(a.start) - Number(b.start));
+
+		const newPools = {};
+		const newCollapsed = {};
+		for (let j = 0; j < nextSections.length; j++) {
+			const sec = nextSections[j];
+			const oldIdx = oldSecs.findIndex((o) => sectionsRoughlyEqual(o, sec));
+			if (oldIdx >= 0) {
+				if (Array.isArray(sectionVideoPools[oldIdx])) {
+					newPools[j] = [...sectionVideoPools[oldIdx]];
+				}
+				if (collapsedBucketSections[oldIdx]) {
+					newCollapsed[j] = true;
+				}
+			} else {
+				newPools[j] = [];
+			}
+		}
+
+		sectionVideoPools = newPools;
+		collapsedBucketSections = newCollapsed;
+
+		const ni = nextSections.indexOf(newRow);
+		focusedSectionIndex = ni;
+
+		if (loopSectionIndex >= 0 && oldSecs[loopSectionIndex]) {
+			const target = oldSecs[loopSectionIndex];
+			const nj = nextSections.findIndex((x) => sectionsRoughlyEqual(x, target));
+			if (nj >= 0) loopSectionIndex = nj;
+		}
+
+		const boundaries = rebuildSectionBoundaries(nextSections);
+		analysisData = {
+			...analysisData,
+			structure: { ...analysisData.structure, sections: nextSections, boundaries }
+		};
+
+		bumpSectionStructureRevision();
+		ensureWaveformLayout();
+	}
+
+	/**
+	 * Apply Peaks drag result for one section only: allow gaps, do not resize neighbors.
+	 * Clamps so this segment does not cross into the interior of prev/next intervals.
+	 */
+	function applySectionBoundsWithNeighbors(index, start, end) {
+		const secs = analysisData.structure?.sections;
+		if (!secs?.[index]) return;
+
+		let s = Number(start);
+		let e = Number(end);
+		const trackEnd = Math.max(
+			audioDuration || 0,
+			...secs.map((x) => Number(x.end) || 0),
+			e,
+			s
+		);
+
+		const prev = index > 0 ? secs[index - 1] : null;
+		const next = index < secs.length - 1 ? secs[index + 1] : null;
+		const prevEnd = prev ? Number(prev.end) : 0;
+		const nextStart = next ? Number(next.start) : trackEnd;
+
+		// Hard walls: cannot pull start into previous section's body or end into next's body
+		const minStart = index > 0 ? prevEnd : 0;
+		const maxEnd = index < secs.length - 1 ? nextStart : trackEnd;
+
+		s = Math.max(minStart, s);
+		e = Math.min(maxEnd, e);
+
+		// Optional micro-snap only when already almost flush (won't steal space for new segments)
+		if (index > 0 && Math.abs(s - prevEnd) < SECTION_BOUNDARY_SNAP_SEC) s = prevEnd;
+		if (index < secs.length - 1 && Math.abs(e - nextStart) < SECTION_BOUNDARY_SNAP_SEC) e = nextStart;
+
+		if (e - s < MIN_STRUCTURE_SECTION_DURATION) {
+			e = Math.min(maxEnd, s + MIN_STRUCTURE_SECTION_DURATION);
+			if (e - s < MIN_STRUCTURE_SECTION_DURATION) {
+				s = Math.max(minStart, e - MIN_STRUCTURE_SECTION_DURATION);
+			}
+		}
+
+		// Re-check ordering vs neighbors (Peaks overlap mode can briefly cross)
+		if (index > 0 && s < prevEnd) s = prevEnd;
+		if (index < secs.length - 1 && e > nextStart) e = nextStart;
+		if (e - s < MIN_STRUCTURE_SECTION_DURATION) {
+			e = Math.min(maxEnd, s + MIN_STRUCTURE_SECTION_DURATION);
+			s = Math.max(minStart, e - MIN_STRUCTURE_SECTION_DURATION);
+		}
+		if (e - s < MIN_STRUCTURE_SECTION_DURATION) return;
+
+		const nextSections = secs.map((row) => ({ ...row }));
+		nextSections[index] = {
+			...nextSections[index],
+			start: s,
+			end: e,
+			duration: e - s
+		};
+
+		const boundaries = rebuildSectionBoundaries(nextSections);
+		analysisData = {
+			...analysisData,
+			structure: { ...analysisData.structure, sections: nextSections, boundaries }
+		};
+		bumpSectionStructureRevision();
+		ensureWaveformLayout();
+	}
+
+	function handlePeaksSectionBoundsChange(index, start, end) {
+		applySectionBoundsWithNeighbors(index, start, end);
+	}
+
+	function handlePeaksSectionLabelChange(index, label) {
+		const trimmed = (label || '').trim();
+		if (!trimmed) return;
+		patchStructureSection(index, { label: trimmed });
 	}
 
 	function getSectionPoolIndices(sectionIndex) {
@@ -421,12 +620,18 @@
 		}
 	}
 
+	const timelineTotalDuration = $derived.by(() => {
+		const sections = analysisData.structure?.sections || [];
+		if (sections.length === 0) return 0;
+		const maxEnd = Math.max(0, ...sections.map((sec) => Number(sec.end) || 0));
+		return Math.max(audioDuration || 0, maxEnd);
+	});
+
 	const timelineSections = $derived.by(() => {
 		const sections = analysisData.structure?.sections || [];
 		if (sections.length === 0) return [];
 
-		const lastEnd = sections[sections.length - 1]?.end || 0;
-		const totalDuration = Math.max(audioDuration || 0, lastEnd);
+		const totalDuration = timelineTotalDuration;
 		if (totalDuration <= 0) return [];
 
 		return sections.map((section, index) => {
@@ -437,6 +642,247 @@
 			return { section, index, left, width };
 		});
 	});
+
+	const SEQUENCER_RESIZE_EPS = 0.04;
+
+	function timeFromSequencerTrackClientX(/** @type {number} */ clientX) {
+		const track = sequencerTrackEl;
+		const total = timelineTotalDuration;
+		if (!track || !(total > 0)) return 0;
+		const rect = track.getBoundingClientRect();
+		if (!rect.width) return 0;
+		const t = ((clientX - rect.left) / rect.width) * total;
+		return Math.max(0, Math.min(t, total));
+	}
+
+	/**
+	 * Move one section row to a new slot; keeps the same object references (labels/times unchanged).
+	 * insertBeforeIndex 0..n — insert before that index; n means append.
+	 */
+	function moveSectionToInsertBefore(fromIndex, insertBeforeIndex) {
+		const secs = analysisData.structure?.sections;
+		if (!secs || secs.length === 0) return;
+		const n = secs.length;
+		if (fromIndex < 0 || fromIndex >= n) return;
+		insertBeforeIndex = Math.max(0, Math.min(insertBeforeIndex, n));
+		if (insertBeforeIndex === fromIndex) return;
+
+		const focusSec = focusedSectionIndex >= 0 ? secs[focusedSectionIndex] : null;
+		const loopSec = loopSectionIndex >= 0 ? secs[loopSectionIndex] : null;
+
+		const next = [...secs];
+		const [row] = next.splice(fromIndex, 1);
+		let ins = insertBeforeIndex;
+		if (fromIndex < insertBeforeIndex) ins -= 1;
+		ins = Math.max(0, Math.min(ins, next.length));
+		next.splice(ins, 0, row);
+
+		const perm = secs.map((_, i) => i);
+		const [pi] = perm.splice(fromIndex, 1);
+		let pIns = insertBeforeIndex;
+		if (fromIndex < insertBeforeIndex) pIns -= 1;
+		pIns = Math.max(0, Math.min(pIns, perm.length));
+		perm.splice(pIns, 0, pi);
+
+		const newPools = {};
+		const newCollapsed = {};
+		for (let j = 0; j < next.length; j++) {
+			const oldIdx = perm[j];
+			if (Array.isArray(sectionVideoPools[oldIdx])) newPools[j] = [...sectionVideoPools[oldIdx]];
+			if (collapsedBucketSections[oldIdx]) newCollapsed[j] = true;
+		}
+		sectionVideoPools = newPools;
+		collapsedBucketSections = newCollapsed;
+
+		focusedSectionIndex = focusSec ? next.indexOf(focusSec) : -1;
+		loopSectionIndex = loopSec ? next.indexOf(loopSec) : -1;
+
+		analysisData = {
+			...analysisData,
+			structure: {
+				...analysisData.structure,
+				sections: next,
+				boundaries: rebuildSectionBoundaries(next)
+			}
+		};
+		bumpSectionStructureRevision();
+		ensureWaveformLayout();
+	}
+
+	/**
+	 * Where to insert (0..n) from pointer — works over gaps (dragged block uses pointer-events:none).
+	 * dragFromIndex: ignore that block when hit-testing (first frame still hits self before CSS updates).
+	 */
+	function insertBeforeIndexFromPointer(
+		/** @type {number} */ clientX,
+		/** @type {number} */ clientY,
+		/** @type {number | null} */ dragFromIndex = null
+	) {
+		const track = sequencerTrackEl;
+		const secs = analysisData.structure?.sections || [];
+		const n = secs.length;
+		if (!track || n === 0) return 0;
+
+		const tRect = track.getBoundingClientRect();
+		const frac = Math.min(1, Math.max(0, (clientX - tRect.left) / tRect.width));
+		sequencerReorderMarkerFrac = frac;
+
+		const el = document.elementFromPoint(clientX, clientY);
+		const hitWrap = el?.closest?.('[data-section-index]');
+		if (hitWrap instanceof HTMLElement && track.contains(hitWrap)) {
+			const raw = hitWrap.dataset.sectionIndex;
+			const idx = raw != null ? Number.parseInt(raw, 10) : NaN;
+			if (Number.isFinite(idx) && idx >= 0 && idx < n && idx !== dragFromIndex) {
+				const r = hitWrap.getBoundingClientRect();
+				const mid = r.left + r.width / 2;
+				return clientX < mid ? idx : idx + 1;
+			}
+		}
+
+		return Math.min(n, Math.floor(frac * (n + 1)));
+	}
+
+	function sequencerReorderPointerMove(/** @type {PointerEvent} */ e) {
+		const sess = sequencerReorderSession;
+		if (!sess || e.pointerId !== sess.pointerId) return;
+		sequencerReorderInsertBefore = insertBeforeIndexFromPointer(e.clientX, e.clientY, sess.fromIndex);
+	}
+
+	function sequencerReorderPointerUp(/** @type {PointerEvent} */ e) {
+		const sess = sequencerReorderSession;
+		if (!sess || e.pointerId !== sess.pointerId) return;
+		window.removeEventListener('pointermove', sequencerReorderPointerMove, true);
+		window.removeEventListener('pointerup', sequencerReorderPointerUp, true);
+		window.removeEventListener('pointercancel', sequencerReorderPointerUp, true);
+		try {
+			sess.captureEl?.releasePointerCapture?.(e.pointerId);
+		} catch (_) {
+			/* ignore */
+		}
+
+		const from = sess.fromIndex;
+		const insertBefore =
+			sequencerReorderInsertBefore !== null ? sequencerReorderInsertBefore : from;
+		const movedPx = Math.hypot(e.clientX - sess.startX, e.clientY - sess.startY);
+
+		sequencerReorderSession = null;
+		sequencerReorderDragIndex = null;
+		sequencerReorderInsertBefore = null;
+		sequencerReorderMarkerFrac = 0;
+
+		if (movedPx < 6) return;
+
+		moveSectionToInsertBefore(from, insertBefore);
+	}
+
+	function onSequencerReorderPointerDown(/** @type {PointerEvent} */ e, item) {
+		if (e.button !== 0) return;
+		if ((e.target instanceof HTMLElement) && e.target.closest?.('.seq-resize')) return;
+
+		e.preventDefault();
+		e.stopPropagation();
+
+		const wrap = e.currentTarget instanceof HTMLElement ? e.currentTarget : null;
+		if (wrap?.setPointerCapture) {
+			try {
+				wrap.setPointerCapture(e.pointerId);
+			} catch (err) {
+				console.warn('[Sequencer] reorder capture', err);
+			}
+		}
+
+		sequencerReorderDragIndex = item.index;
+		sequencerReorderInsertBefore = insertBeforeIndexFromPointer(e.clientX, e.clientY, item.index);
+		sequencerReorderSession = {
+			pointerId: e.pointerId,
+			fromIndex: item.index,
+			startX: e.clientX,
+			startY: e.clientY,
+			captureEl: wrap
+		};
+
+		window.addEventListener('pointermove', sequencerReorderPointerMove, true);
+		window.addEventListener('pointerup', sequencerReorderPointerUp, true);
+		window.addEventListener('pointercancel', sequencerReorderPointerUp, true);
+	}
+
+	function sequencerResizePointerMove(/** @type {PointerEvent} */ e) {
+		const sess = sequencerResizeSession;
+		if (!sess || e.pointerId !== sess.pointerId) return;
+		const secs = analysisData.structure?.sections;
+		if (!secs?.[sess.index]) return;
+		const t = timeFromSequencerTrackClientX(e.clientX);
+		const i = sess.index;
+		const prevEnd = i > 0 ? Number(secs[i - 1].end) : 0;
+		const nextStart = i < secs.length - 1 ? Number(secs[i + 1].start) : sess.totalDur;
+		let s = sess.origStart;
+		let en = sess.origEnd;
+		if (sess.edge === 'start') {
+			s = Math.max(prevEnd, Math.min(t, en - MIN_STRUCTURE_SECTION_DURATION));
+		} else {
+			en = Math.min(nextStart, Math.max(t, s + MIN_STRUCTURE_SECTION_DURATION));
+		}
+		sequencerDragPreview = { index: i, start: s, end: en };
+	}
+
+	function sequencerResizePointerUp(/** @type {PointerEvent} */ e) {
+		const sess = sequencerResizeSession;
+		if (!sess || e.pointerId !== sess.pointerId) return;
+		window.removeEventListener('pointermove', sequencerResizePointerMove, true);
+		window.removeEventListener('pointerup', sequencerResizePointerUp, true);
+		window.removeEventListener('pointercancel', sequencerResizePointerUp, true);
+		try {
+			sess.captureEl?.releasePointerCapture?.(e.pointerId);
+		} catch (_) {
+			/* ignore */
+		}
+		sequencerResizeSession = null;
+		const prev = sequencerDragPreview;
+		sequencerDragPreview = null;
+		if (!prev) return;
+		if (
+			Math.abs(prev.start - sess.origStart) < SEQUENCER_RESIZE_EPS &&
+			Math.abs(prev.end - sess.origEnd) < SEQUENCER_RESIZE_EPS
+		) {
+			return;
+		}
+		applySectionBoundsWithNeighbors(prev.index, prev.start, prev.end);
+	}
+
+	function onSequencerEdgePointerDown(
+		/** @type {PointerEvent} */ e,
+		item,
+		/** @type {'start' | 'end'} */ edge
+	) {
+		if (e.button !== 0) return;
+		e.stopPropagation();
+		e.preventDefault();
+		const totalDur = timelineTotalDuration;
+		if (!(totalDur > 0)) return;
+		const start = Math.max(0, Number(item.section.start) || 0);
+		const end = Math.max(start, Number(item.section.end) || start);
+		const captureEl = e.currentTarget instanceof HTMLElement ? e.currentTarget : null;
+		if (captureEl?.setPointerCapture) {
+			try {
+				captureEl.setPointerCapture(e.pointerId);
+			} catch (err) {
+				console.warn('[Sequencer] resize capture', err);
+			}
+		}
+		sequencerResizeSession = {
+			pointerId: e.pointerId,
+			index: item.index,
+			edge,
+			origStart: start,
+			origEnd: end,
+			totalDur,
+			captureEl
+		};
+		sequencerDragPreview = { index: item.index, start, end };
+		window.addEventListener('pointermove', sequencerResizePointerMove, true);
+		window.addEventListener('pointerup', sequencerResizePointerUp, true);
+		window.addEventListener('pointercancel', sequencerResizePointerUp, true);
+	}
 
 	function remapSectionPoolsAfterFailures(failedIndices) {
 		if (!failedIndices || failedIndices.length === 0) return;
@@ -1318,6 +1764,20 @@
 			return;
 		}
 
+		// Bind the media element to this file before updating `audioFile`, so Peaks.js
+		// never runs against a stale/empty src (avoids DEMUXER_ERROR / open context failed).
+		if (sharedAudioRef) {
+			if (audioFileUrl) {
+				URL.revokeObjectURL(audioFileUrl);
+			}
+			audioFileUrl = URL.createObjectURL(file);
+			sharedAudioRef.src = audioFileUrl;
+			sharedAudioRef.volume = audioVolume;
+			sharedAudioRef.onloadedmetadata = () => {
+				audioDuration = sharedAudioRef.duration;
+			};
+		}
+
 		audioFile = file;
 		isAnalyzingAudio = true;
 
@@ -1348,6 +1808,7 @@
 				confidence: result.confidence,
 				structure: processedStructure // Use post-processed sections
 			};
+			bumpSectionStructureRevision();
 
 			console.log(
 				`[VideoWorkbench] Analysis applied: ${analysisData.onsets.length} onsets, ${analysisData.bpm} BPM`
@@ -1367,25 +1828,9 @@
 				structure: { sections: [], boundaries: [] },
 				energy: null
 			};
+			bumpSectionStructureRevision();
 		} finally {
 			isAnalyzingAudio = false;
-		}
-
-		// Audio set up logic simplified - strictly Essentia + Peaks
-		if (sharedAudioRef) {
-			// Revoke old blob URL if exists to prevent memory leak
-			if (audioFileUrl) {
-				URL.revokeObjectURL(audioFileUrl);
-			}
-
-			// Create and store new blob URL
-			audioFileUrl = URL.createObjectURL(file);
-			sharedAudioRef.src = audioFileUrl;
-			sharedAudioRef.volume = audioVolume;
-			// Ensure we catch the duration
-			sharedAudioRef.onloadedmetadata = () => {
-				audioDuration = sharedAudioRef.duration;
-			};
 		}
 
 		await setupAudioAnalyzer();
@@ -1721,9 +2166,10 @@
 	}
 
 	async function onSectionVideoSelected(sectionIndex, event) {
-		const files = Array.from(event.currentTarget.files || []);
+		const input = event.currentTarget;
+		const files = Array.from(input?.files || []);
 		await addVideoFiles(files, { targetSectionIndex: sectionIndex, exclusiveToSection: true });
-		event.currentTarget.value = '';
+		if (input) input.value = '';
 	}
 
 	async function preloadAllVideos() {
@@ -2195,6 +2641,9 @@
 					{/if}
 					{#if analysisData.onsets && analysisData.onsets.length > 0}
 						<Tweakpane.Checkbox bind:value={showOnsets} label="Show Essentia Onsets" />
+					{/if}
+					{#if analysisData.structure?.sections && analysisData.structure.sections.length > 0}
+						<Tweakpane.Checkbox bind:value={showSectionOverlays} label="Show Section Overlays" />
 					{/if}
 
 					{#if audioFile}
@@ -3289,8 +3738,14 @@
 				midiMarkers={filteredMIDIMarkers}
 				bind:showOnsets
 				bind:showMIDIMarkers
+				bind:showSectionOverlays
 				segments={[]}
 				sections={analysisData.structure?.sections || []}
+				sectionColorPalette={bucketPalette}
+				onSectionBoundsChange={handlePeaksSectionBoundsChange}
+				onSectionLabelChange={handlePeaksSectionLabelChange}
+				onSectionAdd={handlePeaksSectionAdd}
+				sectionStructureRevision={sectionStructureRevision}
 				{loopSectionIndex}
 				grid={gridMarkers}
 				onRestart={restartPlayback}
@@ -3314,7 +3769,7 @@
 			<div class="arranger-header">
 				<span class="arranger-title">Sequencer</span>
 				<div class="arranger-header-actions">
-					<span class="arranger-meta">32 bars × 8-count</span>
+					<span class="arranger-meta">Drag blocks to reorder · drag edges to trim · upload via chips below</span>
 					<button type="button" class="panel-toggle" onclick={toggleSequencerCollapsed}>
 						{isSequencerCollapsed ? 'Expand' : 'Collapse'}
 					</button>
@@ -3326,19 +3781,59 @@
 						<div class="arranger-bar">{bar}</div>
 					{/each}
 				</div>
-				<div class="arranger-track">
-					{#if timelineSections.length > 0}
+				<div
+					class="arranger-track"
+					bind:this={sequencerTrackEl}
+					role="region"
+					aria-label="Section timeline"
+				>
+					{#if sequencerReorderDragIndex !== null}
+						<div
+							class="sequencer-reorder-insert-marker"
+							style="left: {sequencerReorderMarkerFrac * 100}%;"
+							aria-hidden="true"
+						></div>
+					{/if}
+					{#if timelineSections.length > 0 && timelineTotalDuration > 0}
 						{#each timelineSections as item}
-								<button
-									type="button"
-									class="arranger-section-block"
+							{@const usePreview = sequencerDragPreview?.index === item.index}
+							{@const s0 = usePreview
+								? sequencerDragPreview.start
+								: Math.max(0, Number(item.section.start) || 0)}
+							{@const e0 = usePreview
+								? sequencerDragPreview.end
+								: Math.max(s0, Number(item.section.end) || s0)}
+							{@const leftPct = (s0 / timelineTotalDuration) * 100}
+							{@const widthPct = Math.max(1.5, ((e0 - s0) / timelineTotalDuration) * 100)}
+							<div
+								class="arranger-section-block-wrap"
 								class:active={focusedSectionIndex === item.index}
-								style="left: {item.left}%; width: {item.width}%; background-color: {getSectionColor(item.index)};"
-								onclick={() => focusSection(item.index, true)}
-								title={`Upload clips to ${item.section.label.toUpperCase()}`}
+								class:dragging-reorder={sequencerReorderDragIndex === item.index}
+								class:resizing-preview={usePreview}
+								style="left: {leftPct}%; width: {widthPct}%; --seq-block: {getSectionColor(item.index)};"
+								data-section-index={item.index}
+								onpointerdown={(e) => onSequencerReorderPointerDown(e, item)}
+								role="group"
+								aria-label={`Section ${item.section.label}, drag to reorder, edges to trim`}
 							>
-								{item.section.label}
-							</button>
+								<div
+									class="seq-resize seq-resize-start"
+									role="separator"
+									aria-orientation="vertical"
+									aria-label="Trim section start"
+									onpointerdown={(e) => onSequencerEdgePointerDown(e, item, 'start')}
+								></div>
+								<div class="seq-block-label" title="Drag block to reorder — use chip below to upload">
+									{item.section.label}
+								</div>
+								<div
+									class="seq-resize seq-resize-end"
+									role="separator"
+									aria-orientation="vertical"
+									aria-label="Trim section end"
+									onpointerdown={(e) => onSequencerEdgePointerDown(e, item, 'end')}
+								></div>
+							</div>
 						{/each}
 					{:else}
 						<div class="arranger-track-empty">Load audio to generate sections</div>
@@ -4085,9 +4580,21 @@
 
 	.arranger-track {
 		position: relative;
-		height: 42px;
+		height: 36px;
 		border-bottom: 1px solid #222;
 		background: #060606;
+	}
+
+	.sequencer-reorder-insert-marker {
+		position: absolute;
+		top: 2px;
+		bottom: 2px;
+		width: 2px;
+		margin-left: -1px;
+		background: rgba(255, 255, 255, 0.95);
+		box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
+		pointer-events: none;
+		z-index: 5;
 	}
 
 	.arranger-track-empty {
@@ -4101,31 +4608,76 @@
 		text-transform: uppercase;
 	}
 
-	.arranger-section-block {
+	.arranger-section-block-wrap {
 		position: absolute;
-		top: 8px;
-		height: 26px;
-		border: none;
-		opacity: 0.72;
-		color: #0f0f0f;
-		font-size: 10px;
+		top: 6px;
+		height: 22px;
+		display: flex;
+		align-items: stretch;
+		box-sizing: border-box;
+		border-radius: 3px;
+		overflow: hidden;
+		opacity: 0.78;
+		color: #0a0a0a;
+		cursor: grab;
+		touch-action: none;
+		user-select: none;
+		background-color: color-mix(in srgb, var(--seq-block, #888) 78%, transparent);
+		border: 1px solid color-mix(in srgb, var(--seq-block, #888) 55%, #000);
+	}
+
+	.arranger-section-block-wrap:hover {
+		opacity: 0.92;
+	}
+
+	.arranger-section-block-wrap.active {
+		opacity: 1;
+		outline: 1px solid #fff;
+		z-index: 2;
+	}
+
+	.arranger-section-block-wrap.dragging-reorder {
+		cursor: grabbing;
+		opacity: 0.55;
+		z-index: 4;
+		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+		pointer-events: none;
+	}
+
+	.arranger-section-block-wrap.resizing-preview {
+		opacity: 1;
+		z-index: 3;
+		box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+	}
+
+	.seq-block-label {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0 4px;
+		font-size: 8px;
 		font-family: monospace;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		padding: 0 6px;
+		letter-spacing: 0.03em;
 		overflow: hidden;
 		white-space: nowrap;
 		text-overflow: ellipsis;
-		cursor: pointer;
+		pointer-events: none;
 	}
 
-	.arranger-section-block:hover {
-		opacity: 0.9;
+	.seq-resize {
+		flex: 0 0 7px;
+		width: 7px;
+		min-width: 7px;
+		cursor: ew-resize;
+		background: rgba(0, 0, 0, 0.35);
+		touch-action: none;
 	}
 
-	.arranger-section-block.active {
-		opacity: 1;
-		outline: 1px solid #fff;
+	.seq-resize:hover {
+		background: rgba(255, 255, 255, 0.25);
 	}
 
 	.arranger-sections {

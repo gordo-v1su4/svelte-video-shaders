@@ -11,8 +11,14 @@
  *   VITE_ESSENTIA_API_KEY=your-api-key-here
  */
 
-// SvelteKit/Vite public env vars are available at build time
-const API_URL = import.meta.env.VITE_ESSENTIA_API_URL || 'https://essentia.v1su4.dev';
+// SvelteKit/Vite public env vars are available at build time.
+// Normalize legacy hostname (invalid cert on .com) so stale .env or cached builds still work.
+function normalizeEssentiaBaseUrl(raw) {
+	const base = (raw || 'https://essentia.v1su4.dev').replace(/\/$/, '');
+	return base.replace(/essentia\.v1su4\.com/i, 'essentia.v1su4.dev');
+}
+
+const API_URL = normalizeEssentiaBaseUrl(import.meta.env.VITE_ESSENTIA_API_URL);
 const API_KEY = import.meta.env.VITE_ESSENTIA_API_KEY || '';
 
 // Log the API URL on module load to verify it's set correctly

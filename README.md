@@ -4,6 +4,12 @@
 
 A high-performance video processing application that uses browser-native WebCodecs API for hardware-accelerated video decoding and Three.js for real-time shader-based effects.
 
+## Preview
+
+Current working UI: Peaks waveform with sections, sequencer strip, clip buckets, and shader controls.
+
+![Video Shaders — current app preview](docs/preview/app-preview.webp)
+
 ## Features
 
 - **Hardware-Accelerated Video Decoding** - Smooth 60fps playback via WebCodecs API

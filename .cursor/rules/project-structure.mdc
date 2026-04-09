@@ -67,7 +67,7 @@ svelte-video-shaders/
 - **[stores.js](mdc:src/lib/stores.js)** - Svelte stores for video assets
 - **[frame-buffer.js](mdc:src/lib/frame-buffer.js)** - Pre-decoded frame buffer for seamless playback
 - **[audio-utils.js](mdc:src/lib/audio-utils.js)** - AudioAnalyzer class (FFT-based real-time analysis)
-- **[essentia-service.js](mdc:src/lib/essentia-service.js)** - Calls external Essentia API (https://essentia.v1su4.com) for beat detection
+- **[essentia-service.js](mdc:src/lib/essentia-service.js)** - Calls external Essentia API (https://essentia.v1su4.dev) for beat detection
 - **[video-utils.js](mdc:src/lib/video-utils.js)** - Thumbnail generation with mediabunny
 
 ### Shader Files (`src/lib/shaders/`)
@@ -151,11 +151,22 @@ import Layout from '$routes/+layout.svelte';
 2. Follow SvelteKit naming conventions (`+page.svelte`, `+layout.svelte`)
 3. Add any route-specific components in the same directory
 
+## Browser debugging (Cursor MCP)
+
+Add these MCP servers in **Cursor Settings → MCP** (or project MCP config) when you need live browser inspection (console, DOM, network, `evaluate_script`):
+
+| Server (typical id) | Purpose |
+| --- | --- |
+| **Chrome DevTools MCP** | Attach to Chrome: `navigate_page`, `list_console_messages`, `evaluate_script`, performance/network. Repo: [ChromeDevTools/chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp). |
+| **Cursor IDE Browser** (`cursor-ide-browser`) | In-IDE browser automation / snapshots for smoke checks. |
+
+Use `http://localhost:5173` while `bun run dev` is running (`vite dev --port 5173`).
+
 ## Important Notes
 
 - **Svelte 5 syntax** is used throughout the project (see [svelte-5-syntax.mdc](mdc:.cursor/rules/svelte-5-syntax.mdc))
 - **Bun** is the package manager and runtime
-- **External Essentia API** (https://essentia.v1su4.com) handles audio analysis, beat detection, and energy curves
+- **External Essentia API** (https://essentia.v1su4.dev) handles audio analysis, beat detection, and energy curves
 - **WebCodecs + Three.js** pipeline for hardware-accelerated video playback
 - **Pre-decoded frame buffer** enables seamless retiming and jump cuts
 - **Vite** is used as the build tool with SvelteKit

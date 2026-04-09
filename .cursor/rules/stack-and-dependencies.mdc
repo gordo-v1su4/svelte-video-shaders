@@ -17,7 +17,7 @@ This rule documents the technology stack, major dependencies, their versions, an
 - **Video Demuxing:** mp4box (^1.2.0) - **REQUIRED FOR WebCodecs**
 - **Frame Buffer:** Custom pre-decoded ImageBitmap arrays for seamless retiming
 - **Audio Analysis (Real-time):** Web Audio API FFT (see audio-utils.js)
-- **Audio Analysis (Offline):** External Essentia API (https://essentia.v1su4.com) for beat detection, structure analysis, and energy curves
+- **Audio Analysis (Offline):** External Essentia API (https://essentia.v1su4.dev) for beat detection, structure analysis, and energy curves
 - **Timeline/Waveform:** Custom WaveformDisplay.svelte component
 - **UI Controls:** svelte-tweakpane-ui (^1.5.9), tweakpane (^4.0.5)
 - **Testing:** Vitest (^4.0.14), vitest-browser-svelte (^2.0.1), @vitest/browser-playwright (^4.0.15)
@@ -26,7 +26,7 @@ This rule documents the technology stack, major dependencies, their versions, an
 
 ## External API (Essentia Audio Analysis)
 
-- **Endpoint**: https://essentia.v1su4.com
+- **Endpoint**: https://essentia.v1su4.dev
 - **Repository**: Separate repo at `essentia-endpoint/`
 - **Framework:** FastAPI with uvicorn, Essentia C++ core via Python
 - **Endpoints:**
@@ -130,13 +130,13 @@ This rule documents the technology stack, major dependencies, their versions, an
 
 ### Beat Detection & Audio Analysis Pipeline
 - **Real-time FFT** runs in browser via Web Audio API (audioLevel, bassLevel, midLevel, trebleLevel)
-- **Offline analysis** via external Essentia API at https://essentia.v1su4.com
+- **Offline analysis** via external Essentia API at https://essentia.v1su4.dev
   - Rhythm: BPM, beats, onsets, confidence, duration
   - Energy: High-resolution RMS curve (~86Hz) for speed ramping
   - Structure: Section segmentation with energy values for glitch mode
   - Classification: Genre, mood, tags (optional)
 - **Local development:** Use external API or run local instance from `essentia-endpoint/` repo
-- **Configuration:** `VITE_ESSENTIA_API_URL=https://essentia.v1su4.com` in `.env`
+- **Configuration:** `VITE_ESSENTIA_API_URL=https://essentia.v1su4.dev` in `.env`
 
 ### General
 - **Bun:** Use `bun install`, `bun run dev`, etc. instead of npm/pnpm

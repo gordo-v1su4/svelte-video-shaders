@@ -2,8 +2,27 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import { playwright } from '@vitest/browser-playwright';
 
+// Rollup warns on misplaced /* @__PURE__ */ before Symbol() in svelte-tweakpane-ui dist; strip before Svelte compile.
+function stripTweakpaneGenericBindingPure() {
+	return {
+		name: 'strip-tweakpane-genericbinding-pure',
+		enforce: 'pre',
+		transform(code, id) {
+			const path = id.split('\\').join('/');
+			if (!path.includes('svelte-tweakpane-ui/dist/internal/GenericBinding.svelte')) return null;
+			if (!code.includes('@__PURE__')) return null;
+			const next = code.replace(
+				/const\s+key\s*=\s*\/\*\s*@__PURE__\s*\*\/\s*Symbol\('key'\)/,
+				"const key = Symbol('key')"
+			);
+			return next === code ? null : { code: next, map: null };
+		}
+	};
+}
+
 export default defineConfig(({ ssrBuild }) => ({
 	plugins: [
+		stripTweakpaneGenericBindingPure(),
 		sveltekit(),
 		{
 			name: 'configure-response-headers',
@@ -21,19 +40,19 @@ export default defineConfig(({ ssrBuild }) => ({
 	},
 	build: {
 		chunkSizeWarningLimit: 1500,
-		// Only apply manualChunks to the client build; SSR treats some deps as external
-		...(ssrBuild
-			? {}
-			: {
-				rollupOptions: {
-					output: {
-						manualChunks: {
-							// three is often external in SSR; split only tweakpane here
-							tweakpane: ['svelte-tweakpane-ui']
+		rollupOptions: {
+			// Only apply manualChunks to the client build; SSR treats some deps as external
+			...(ssrBuild
+				? {}
+				: {
+						output: {
+							manualChunks: {
+								// three is often external in SSR; split only tweakpane here
+								tweakpane: ['svelte-tweakpane-ui']
+							}
 						}
-					}
-				}
-			})
+					})
+		}
 	},
 	server: {
 		port: 5173,

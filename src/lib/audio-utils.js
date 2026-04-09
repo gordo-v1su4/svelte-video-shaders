@@ -46,8 +46,24 @@ export class AudioAnalyzer {
             try {
                 this.source = this.audioContext.createMediaElementSource(this.audioElement);
             } catch (e) {
-                console.warn("MediaElementSource attached? Reusing might fail if not handled.", e);
-                // If already connected, we might need to skip or manage source lifecycle differently.
+                // One MediaElementAudioSourceNode per HTMLMediaElement for the lifetime of the element
+                // (e.g. Peaks.js webAudio or a prior analyzer graph). Tap the element output instead.
+                if (
+                    e?.name === 'InvalidStateError' &&
+                    typeof this.audioElement.captureStream === 'function'
+                ) {
+                    try {
+                        const stream = this.audioElement.captureStream();
+                        this.source = this.audioContext.createMediaStreamSource(stream);
+                    } catch (e2) {
+                        console.warn(
+                            '[AudioAnalyzer] Could not attach via MediaElementSource or captureStream:',
+                            e2
+                        );
+                    }
+                } else {
+                    console.warn('[AudioAnalyzer] MediaElementSource attach failed:', e);
+                }
             }
 
             if (this.source) {
