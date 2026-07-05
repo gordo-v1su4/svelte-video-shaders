@@ -40,8 +40,7 @@ export const asciiFragmentShader = `
 `;
 
 export const asciiUniforms = {
-    u_time: { value: 0.0 },
-    u_charSize: { value: 8.0 },
-    u_resolution: { value: [1920, 1080] }
+	u_time: { value: 0.0 },
+	u_charSize: { value: 8.0 },
+	u_resolution: { value: [1920, 1080] }
 };
-

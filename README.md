@@ -27,6 +27,7 @@ Current working UI: Peaks waveform with sections, sequencer strip, clip buckets,
 - Chrome 94+ or Edge 94+ (WebCodecs support required)
 
 Install Bun:
+
 ```bash
 # Windows (PowerShell)
 powershell -c "irm bun.sh/install.ps1|iex"
@@ -146,21 +147,25 @@ uniform float u_trebleLevel;     // Treble frequencies 0-1
 ## Troubleshooting
 
 ### "Port 5173 already in use"
+
 ```bash
 bun run dev -- --port 3000
 ```
 
 ### "WebCodecs not supported"
+
 - Ensure Chrome/Edge 94+
 - Check `chrome://gpu` for hardware acceleration
 - May require HTTPS in some enterprise environments
 
 ### Video won't load
+
 - Verify H.264 encoding: `ffmpeg -i video.mp4`
 - Check file isn't corrupt by playing in browser directly
 - Inspect browser console for specific errors
 
 ### Shaders not appearing
+
 - Check WebGL support: `chrome://gpu`
 - Inspect console for shader compilation errors
 - Verify Three.js initialized: `window.THREE` in console

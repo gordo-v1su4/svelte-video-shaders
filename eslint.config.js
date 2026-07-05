@@ -13,12 +13,19 @@ const gitignorePath = fileURLToPath(new URL('./.gitignore', import.meta.url));
 export default [
 	// Ignores
 	includeIgnoreFile(gitignorePath),
+	{ ignores: ['static/**'] },
 
 	// Base
 	js.configs.recommended,
 	{
 		languageOptions: {
 			globals: { ...globals.browser, ...globals.node, ...globals.vitest }
+		},
+		rules: {
+			'no-unused-vars': [
+				'error',
+				{ argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'none' }
+			]
 		}
 	},
 

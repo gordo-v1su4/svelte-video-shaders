@@ -1,5 +1,5 @@
 <script>
-	import { onMount, onDestroy, tick, untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import Peaks from 'peaks.js';
 
 	let {
@@ -8,9 +8,9 @@
 		overviewHeight = 80,
 		waveColor = '#5a3fc0',
 		playedWaveColor = '#a882ff',
-		cursorColor = '#ffffff',
+		cursorColor: _cursorColor = '#ffffff',
 		segments = [], // { startTime, endTime, color, labelText, id }
-		points = [],
+		points: _points = [],
 		onsets = [], // Array of timestamps for Essentia onsets
 		midiMarkers = [], // Array of timestamps for MIDI markers
 		showOnsets = $bindable(true), // Toggle for showing Essentia onsets
@@ -21,11 +21,9 @@
 		currentTime = $bindable(0),
 		duration = $bindable(0),
 		isPlaying = $bindable(false),
-		onSeek = (time) => {},
-		onSegmentStart = (segment) => {},
-		onSegmentEnd = (segment) => {},
-		onSegmentClick = (segment) => {},
-		onPreviewTime = (time) => {},
+		onSeek = (_time) => {},
+		onSegmentClick = (_segment) => {},
+		onPreviewTime = (_time) => {},
 		onRestart = () => {}, // Callback for restart button
 		onNextVideo = () => {}, // Callback for next video button
 		onTogglePlayback = () => {}, // Callback for play/pause (parent is playback master)
@@ -34,7 +32,11 @@
 		/** Hex colors per section index — same order as sequencer / clip buckets */
 		sectionColorPalette = [],
 		/** Fired after user drags section handles (sync to analysis structure) */
-		onSectionBoundsChange = (/** @type {number} */ _index, /** @type {number} */ _start, /** @type {number} */ _end) => {},
+		onSectionBoundsChange = (
+			/** @type {number} */ _index,
+			/** @type {number} */ _start,
+			/** @type {number} */ _end
+		) => {},
 		/** Fired after user renames a structure section (double-click label) */
 		onSectionLabelChange = (/** @type {number} */ _index, /** @type {string} */ _label) => {},
 		/** Fired when user adds a segment via + Segment — parent inserts into structure + sequencer + buckets */
@@ -53,7 +55,7 @@
 	let previewX = $state(0);
 	let previewLabelX = $state(0);
 	let previewTarget = $state(null);
-	
+
 	const id = Math.random().toString(36).substr(2, 9);
 	const zoomId = `peaks-zoom-${id}`;
 	const overviewId = `peaks-overview-${id}`;
@@ -64,7 +66,13 @@
 	function hexToRgba(hex, alpha = SECTION_OVERLAY_ALPHA) {
 		if (typeof hex !== 'string' || !hex.startsWith('#')) return `rgba(200, 200, 200, ${alpha})`;
 		const raw = hex.slice(1);
-		const full = raw.length === 3 ? raw.split('').map((c) => c + c).join('') : raw;
+		const full =
+			raw.length === 3
+				? raw
+						.split('')
+						.map((c) => c + c)
+						.join('')
+				: raw;
 		if (full.length !== 6) return `rgba(200, 200, 200, ${alpha})`;
 		const r = parseInt(full.slice(0, 2), 16);
 		const g = parseInt(full.slice(2, 4), 16);
@@ -180,7 +188,7 @@
 
 	onMount(() => {
 		mounted = true;
-		
+
 		// Add resize handler for waveform
 		const handleResize = () => {
 			if (peaksInstance) {
@@ -194,9 +202,9 @@
 				}
 			}
 		};
-		
+
 		window.addEventListener('resize', handleResize);
-		
+
 		return () => {
 			window.removeEventListener('resize', handleResize);
 			if (peaksInstance) {
@@ -244,10 +252,14 @@
 			mediaElement.pause();
 		}
 	});
-	
+
 	// Sync external time
 	$effect(() => {
-		if (mediaElement && Math.abs(mediaElement.currentTime - currentTime) > 0.1 && !mediaElement.seeking) {
+		if (
+			mediaElement &&
+			Math.abs(mediaElement.currentTime - currentTime) > 0.1 &&
+			!mediaElement.seeking
+		) {
 			mediaElement.currentTime = currentTime;
 		}
 	});
@@ -263,16 +275,16 @@
 		const overviewEl = overviewContainer || document.getElementById(overviewId);
 		const audioEl = mediaElement;
 
-		console.log("PeaksPlayer Check:", { 
-			zoomEl, 
-			overviewEl, 
+		console.log('PeaksPlayer Check:', {
+			zoomEl,
+			overviewEl,
 			audioEl,
 			isZoomEl: zoomEl instanceof HTMLElement,
 			isOverviewEl: overviewEl instanceof HTMLElement
 		});
 
 		if (!zoomEl || !overviewEl || !audioEl) {
-			console.error("PeaksPlayer: Elements missing after retry", { zoomEl, overviewEl, audioEl });
+			console.error('PeaksPlayer: Elements missing after retry', { zoomEl, overviewEl, audioEl });
 			return;
 		}
 
@@ -334,15 +346,15 @@
 
 		// audioEl src should already be set by parent or we ensure it here?
 		// Parent manages audio src now.
-		
-		console.log("PeaksPlayer: Calling Peaks.init");
+
+		console.log('PeaksPlayer: Calling Peaks.init');
 		Peaks.init(options, (err, peaks) => {
 			if (err) {
 				console.error('Failed to initialize Peaks.js:', err);
 				return;
 			}
-			
-			console.log("PeaksPlayer: Success!");
+
+			console.log('PeaksPlayer: Success!');
 			peaksInstance = peaks;
 			isReady = true;
 			// 'overlap' disables Peaks' forced flush boundaries so gaps can exist between sections.
@@ -355,16 +367,22 @@
 			}
 			// Ensure initial viewport is a strict duration fit. This avoids first-click zoom jumps.
 			requestAnimationFrame(() => fitWaveformToView());
-			
+
 			peaks.on('player.timeupdate', (time) => {
 				currentTime = time;
 				duration = peaks.player.getDuration();
 			});
-			
-			peaks.on('player.playing', () => { isPlaying = true; });
-			peaks.on('player.pause', () => { isPlaying = false; });
-			peaks.on('player.ended', () => { isPlaying = false; });
-			
+
+			peaks.on('player.playing', () => {
+				isPlaying = true;
+			});
+			peaks.on('player.pause', () => {
+				isPlaying = false;
+			});
+			peaks.on('player.ended', () => {
+				isPlaying = false;
+			});
+
 			peaks.on('player.seek', (time) => {
 				onSeek(time);
 			});
@@ -405,12 +423,11 @@
 		// Higher precision than 3dp so small handle moves still invalidate (toggle was masking this).
 		return sections
 			.map(
-				(s) =>
-					`${Number(s.start).toFixed(5)}-${Number(s.end).toFixed(5)}-${String(s.label ?? '')}`
+				(s) => `${Number(s.start).toFixed(5)}-${Number(s.end).toFixed(5)}-${String(s.label ?? '')}`
 			)
 			.join('|');
 	});
-	
+
 	$effect(() => {
 		if (!peaksInstance) return;
 
@@ -453,12 +470,12 @@
 			console.log(`[PeaksPlayer] renderMarkers: peaksInstance not ready`);
 			return;
 		}
-		
+
 		// Clear all existing points - be aggressive about it
 		try {
 			const existingPoints = peaksInstance.points.getPoints();
 			console.log(`[PeaksPlayer] Clearing ${existingPoints.length} existing points`);
-			
+
 			// Remove points one by one for reliability
 			if (existingPoints.length > 0) {
 				for (let i = existingPoints.length - 1; i >= 0; i--) {
@@ -469,71 +486,77 @@
 					}
 				}
 			}
-			
+
 			// Also try removeAll as backup
 			peaksInstance.points.removeAll();
-			
+
 			// Verify points are cleared
 			const remainingPoints = peaksInstance.points.getPoints();
 			if (remainingPoints.length > 0) {
-				console.warn(`[PeaksPlayer] ⚠️ ${remainingPoints.length} points remain after clear attempt`);
+				console.warn(
+					`[PeaksPlayer] ⚠️ ${remainingPoints.length} points remain after clear attempt`
+				);
 			}
 		} catch (e) {
 			console.warn(`[PeaksPlayer] Error removing points:`, e);
 		}
-        
-        const allPoints = [];
 
-        // 1. Grid Lines (Very faint)
-        if (gridData && gridData.length > 0) {
+		const allPoints = [];
+
+		// 1. Grid Lines (Very faint)
+		if (gridData && gridData.length > 0) {
 			// Cap dense grid markers to keep waveform render responsive.
 			const maxGridPoints = 800;
 			const step = gridData.length > maxGridPoints ? Math.ceil(gridData.length / maxGridPoints) : 1;
-            for (let i = 0; i < gridData.length; i += step) {
+			for (let i = 0; i < gridData.length; i += step) {
 				const time = gridData[i];
-                allPoints.push({
-                    time,
-                    labelText: '',
-                    editable: false,
-                    color: 'rgba(255, 255, 255, 0.05)',
-                });
-            }
-        }
-
-        // 2. Essentia Onsets (Orange) - reduced opacity
-		if (shouldShowOnsets && onsetData && onsetData.length > 0) {
-			console.log(`[PeaksPlayer] ✅ Adding ${onsetData.length} Essentia onsets`);
-			onsetData.forEach((time, i) => {
-				const pointTime = typeof time === 'number' ? time : parseFloat(time);
-				if (!isNaN(pointTime) && pointTime >= 0) {
-					allPoints.push({
-						time: pointTime,
-						labelText: '',
-						editable: false,
-						color: 'rgba(255, 136, 0, 0.25)',  // 25% opacity orange
-					});
-				}
-			});
-		} else {
-			console.log(`[PeaksPlayer] ❌ Skipping onsets: show=${shouldShowOnsets}, count=${onsetData?.length || 0}`);
+				allPoints.push({
+					time,
+					labelText: '',
+					editable: false,
+					color: 'rgba(255, 255, 255, 0.05)'
+				});
+			}
 		}
 
-        // 3. MIDI Markers (Blue) - match onset opacity
-		if (shouldShowMIDI && midiData && midiData.length > 0) {
-			console.log(`[PeaksPlayer] ✅ Adding ${midiData.length} MIDI markers`);
-			midiData.forEach((time, i) => {
+		// 2. Essentia Onsets (Orange) - reduced opacity
+		if (shouldShowOnsets && onsetData && onsetData.length > 0) {
+			console.log(`[PeaksPlayer] ✅ Adding ${onsetData.length} Essentia onsets`);
+			onsetData.forEach((time) => {
 				const pointTime = typeof time === 'number' ? time : parseFloat(time);
 				if (!isNaN(pointTime) && pointTime >= 0) {
 					allPoints.push({
 						time: pointTime,
 						labelText: '',
 						editable: false,
-						color: 'rgba(100, 200, 255, 0.25)',  // 25% opacity blue (matches onset opacity)
+						color: 'rgba(255, 136, 0, 0.25)' // 25% opacity orange
 					});
 				}
 			});
 		} else {
-			console.log(`[PeaksPlayer] ❌ Skipping MIDI: show=${shouldShowMIDI}, count=${midiData?.length || 0}`);
+			console.log(
+				`[PeaksPlayer] ❌ Skipping onsets: show=${shouldShowOnsets}, count=${onsetData?.length || 0}`
+			);
+		}
+
+		// 3. MIDI Markers (Blue) - match onset opacity
+		if (shouldShowMIDI && midiData && midiData.length > 0) {
+			console.log(`[PeaksPlayer] ✅ Adding ${midiData.length} MIDI markers`);
+			midiData.forEach((time) => {
+				const pointTime = typeof time === 'number' ? time : parseFloat(time);
+				if (!isNaN(pointTime) && pointTime >= 0) {
+					allPoints.push({
+						time: pointTime,
+						labelText: '',
+						editable: false,
+						color: 'rgba(100, 200, 255, 0.25)' // 25% opacity blue (matches onset opacity)
+					});
+				}
+			});
+		} else {
+			console.log(
+				`[PeaksPlayer] ❌ Skipping MIDI: show=${shouldShowMIDI}, count=${midiData?.length || 0}`
+			);
 		}
 
 		// Add all points at once
@@ -545,14 +568,16 @@
 				console.error(`[PeaksPlayer] ❌ Error adding points:`, e);
 			}
 		} else {
-			console.log(`[PeaksPlayer] ⚠️ No points to add (toggles: onsets=${shouldShowOnsets}, midi=${shouldShowMIDI})`);
+			console.log(
+				`[PeaksPlayer] ⚠️ No points to add (toggles: onsets=${shouldShowOnsets}, midi=${shouldShowMIDI})`
+			);
 		}
-		
+
 		// Force redraw of views and hide points in overview
 		try {
 			const zoomview = peaksInstance.views.getView('zoomview');
 			const overview = peaksInstance.views.getView('overview');
-			
+
 			// Keep redraw minimal and avoid brittle DOM queries into Peaks internals.
 			if (zoomview) {
 				if (typeof zoomview.fitToContainer === 'function') {
@@ -570,13 +595,13 @@
 					overview.showPoints(false);
 				}
 			}
-			
+
 			console.log(`[PeaksPlayer] Forced redraw of views`);
 		} catch (e) {
 			console.warn(`[PeaksPlayer] Error forcing redraw:`, e);
 		}
 	}
-	
+
 	function clearStructureSectionSegments() {
 		if (!peaksInstance) return;
 		try {
@@ -596,7 +621,7 @@
 		}
 
 		clearStructureSectionSegments();
-		
+
 		// Fallback tint when no palette (label-keyword hints)
 		const keywordColors = {
 			intro: `rgba(255, 200, 100, ${Math.min(1, 0.38 * 1.2)})`,
@@ -627,10 +652,7 @@
 					return;
 				}
 				if (end <= start) {
-					console.warn(
-						`[PeaksPlayer] Section ${index} invalid range: ${start} - ${end}`,
-						section
-					);
+					console.warn(`[PeaksPlayer] Section ${index} invalid range: ${start} - ${end}`, section);
 					return;
 				}
 
@@ -648,14 +670,14 @@
 						}
 					}
 				}
-				
+
 				// If this section is being looped, use highlight color
 				const isLooped = activeLoopIndex >= 0 && index === activeLoopIndex;
 				const finalColor = isLooped ? loopHighlightColor : color;
-				
+
 				const displayLabel = labelRaw ? labelRaw.toUpperCase() : `SECTION ${index + 1}`;
 				const labelText = isLooped ? `🔁 ${displayLabel}` : displayLabel;
-				
+
 				// Editable handles like user-added segments; bounds sync via segments.dragend
 				const segmentConfig = {
 					id: `section-${index}`,
@@ -687,31 +709,31 @@
 					console.warn('[PeaksPlayer] post-section layout:', e);
 				}
 			});
-			
+
 			// Update label colors for looped sections after a short delay to allow DOM to update
 			if (activeLoopIndex >= 0) {
 				setTimeout(() => {
 					try {
 						const zoomEl = document.querySelector(`#${zoomId}`);
 						const overviewEl = document.querySelector(`#${overviewId}`);
-						
+
 						// Find segment labels that contain the loop emoji and style them
-						[zoomEl, overviewEl].forEach(container => {
+						[zoomEl, overviewEl].forEach((container) => {
 							if (!container) return;
-							
+
 							// Peaks.js creates segment labels in SVG text elements
 							const textElements = container.querySelectorAll('text');
-							textElements.forEach(textEl => {
+							textElements.forEach((textEl) => {
 								if (textEl.textContent?.includes('🔁')) {
 									textEl.setAttribute('fill', '#00ffc8');
 									textEl.style.fill = '#00ffc8';
 									textEl.style.fontWeight = '600';
 								}
 							});
-							
+
 							// Also check for segment overlay labels in div elements
 							const labelDivs = container.querySelectorAll('[class*="label"], [class*="segment"]');
-							labelDivs.forEach(div => {
+							labelDivs.forEach((div) => {
 								if (div.textContent?.includes('🔁')) {
 									div.style.color = '#00ffc8';
 									div.style.fontWeight = '600';
@@ -723,20 +745,19 @@
 					}
 				}, 100);
 			}
-			
 		} catch (e) {
 			console.error('[PeaksPlayer] Error adding section segments:', e);
 		}
 	}
-    
-    function snapToGrid(time) {
-        if (!grid || grid.length === 0) return time;
-        // Find closest grid point
-        const closest = grid.reduce((prev, curr) => {
-            return (Math.abs(curr - time) < Math.abs(prev - time) ? curr : prev);
-        });
-        return closest;
-    }
+
+	function snapToGrid(time) {
+		if (!grid || grid.length === 0) return time;
+		// Find closest grid point
+		const closest = grid.reduce((prev, curr) => {
+			return Math.abs(curr - time) < Math.abs(prev - time) ? curr : prev;
+		});
+		return closest;
+	}
 
 	export function addSegment(startTime, endTime, labelText) {
 		if (!peaksInstance) return;
@@ -791,13 +812,13 @@
 		}
 	}
 
-    export function logData() {
-        if (!peaksInstance) return;
-        const segments = peaksInstance.segments.getSegments();
-        const points = peaksInstance.points.getPoints();
-        console.log("Current Segments:", segments);
-        console.log("Current Points:", points);
-    }
+	export function logData() {
+		if (!peaksInstance) return;
+		const segments = peaksInstance.segments.getSegments();
+		const points = peaksInstance.points.getPoints();
+		console.log('Current Segments:', segments);
+		console.log('Current Points:', points);
+	}
 
 	const MIN_ZOOM_SECONDS = 0.15;
 	const ZOOM_IN_FACTOR = 0.85;
@@ -828,10 +849,7 @@
 		if (!(trackDuration > 0)) return;
 
 		const clampedSpan = Math.min(trackDuration, Math.max(MIN_ZOOM_SECONDS, spanSeconds));
-		const currentAnchor =
-			anchorTime ??
-			peaksInstance.player?.getCurrentTime?.() ??
-			(clampedSpan / 2);
+		const currentAnchor = anchorTime ?? peaksInstance.player?.getCurrentTime?.() ?? clampedSpan / 2;
 		const maxStart = Math.max(0, trackDuration - clampedSpan);
 		const targetStart = Math.min(maxStart, Math.max(0, currentAnchor - clampedSpan / 2));
 
@@ -874,7 +892,7 @@
 		}
 	}
 
-    export function zoomIn() {
+	export function zoomIn() {
 		if (!peaksInstance) return;
 		const trackDuration = getSafeDuration();
 		const currentSpan = getCurrentZoomSpan() || trackDuration;
@@ -882,7 +900,7 @@
 		setZoomSpan(nextSpan);
 	}
 
-    export function zoomOut() {
+	export function zoomOut() {
 		if (!peaksInstance) return;
 		const trackDuration = getSafeDuration();
 		const currentSpan = getCurrentZoomSpan() || trackDuration;
@@ -915,7 +933,7 @@
 	<div class="controls-header">
 		<div class="header-left">
 			<!-- Restart button -->
-			<button 
+			<button
 				class="transport-btn restart-btn"
 				type="button"
 				onclick={onRestart}
@@ -923,11 +941,11 @@
 				title="Restart"
 			>
 				<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-					<path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+					<path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
 				</svg>
 			</button>
 			<!-- Play/Pause button -->
-			<button 
+			<button
 				class="play-btn"
 				type="button"
 				onclick={handlePlayPause}
@@ -936,17 +954,17 @@
 			>
 				{#if isPlaying}
 					<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-						<rect x="6" y="4" width="4" height="16"/>
-						<rect x="14" y="4" width="4" height="16"/>
+						<rect x="6" y="4" width="4" height="16" />
+						<rect x="14" y="4" width="4" height="16" />
 					</svg>
 				{:else}
 					<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-						<polygon points="5,3 19,12 5,21"/>
+						<polygon points="5,3 19,12 5,21" />
 					</svg>
 				{/if}
 			</button>
 			<!-- Next Video button -->
-			<button 
+			<button
 				class="transport-btn next-btn"
 				type="button"
 				onclick={onNextVideo}
@@ -954,7 +972,7 @@
 				title="Next Video"
 			>
 				<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-					<path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+					<path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
 				</svg>
 			</button>
 			<!-- Time display -->
@@ -963,76 +981,104 @@
 			</span>
 			<span class="label">Zoom View</span>
 		</div>
-        <div class="header-controls">
-         {#if isReady}
-         <div class="zoom-controls"> 
-             <button type="button" onclick={zoomIn} title="Zoom in">+</button>
-             <button type="button" onclick={zoomOut} title="Zoom out">-</button>
-             <button type="button" onclick={fitZoom} title="Fit to view">Fit</button>
-         </div>
-         {/if}
-         <button 
-         	class="marker-toggle-btn marker-midi-btn" 
-			type="button"
-         	class:active={showMIDIMarkers}
-         	class:has-data={midiMarkers && midiMarkers.length > 0}
-         	disabled={!midiMarkers || midiMarkers.length === 0}
-         	onclick={() => { 
-         		const newVal = !showMIDIMarkers;
-         		console.log('[PeaksPlayer] MIDI toggle clicked, changing from', showMIDIMarkers, 'to', newVal);
-         		showMIDIMarkers = newVal; 
-         		// Force immediate re-render
-         		if (peaksInstance) {
-         			console.log('[PeaksPlayer] Forcing immediate MIDI re-render');
-         			renderMarkersSync(showOnsets, newVal, onsets ? [...onsets] : [], midiMarkers ? [...midiMarkers] : [], grid ? [...grid] : []);
-         		}
-         	}}
-         	title={midiMarkers && midiMarkers.length > 0 ? `Toggle MIDI Markers (${midiMarkers.length})` : 'No MIDI markers'}
-         >
-         	MIDI {midiMarkers && midiMarkers.length > 0 ? `(${midiMarkers.length})` : '(0)'}
-         </button>
-         <button 
-         	class="marker-toggle-btn marker-onsets-btn" 
-			type="button"
-         	class:active={showOnsets}
-         	class:has-data={onsets && onsets.length > 0}
-         	disabled={!onsets || onsets.length === 0}
-         	onclick={() => { 
-         		const newVal = !showOnsets;
-         		console.log('[PeaksPlayer] Onsets toggle clicked, changing from', showOnsets, 'to', newVal);
-         		showOnsets = newVal; 
-         		// Force immediate re-render
-         		if (peaksInstance) {
-         			console.log('[PeaksPlayer] Forcing immediate Onsets re-render');
-         			renderMarkersSync(newVal, showMIDIMarkers, onsets ? [...onsets] : [], midiMarkers ? [...midiMarkers] : [], grid ? [...grid] : []);
-         		}
-         	}}
-         	title={onsets && onsets.length > 0 ? `Toggle Essentia Onsets (${onsets.length})` : 'No onsets'}
-         >
-         	Onsets {onsets && onsets.length > 0 ? `(${onsets.length})` : '(0)'}
-         </button>
-         <button
-         	class="marker-toggle-btn marker-sections-btn"
-         	type="button"
-         	class:active={showSectionOverlays}
-         	class:has-data={sections && sections.length > 0}
-         	disabled={!sections || sections.length === 0}
-         	onclick={() => {
-         		const newVal = !showSectionOverlays;
-         		showSectionOverlays = newVal;
-         		if (peaksInstance) {
-         			if (newVal && sections && sections.length > 0) {
-         				renderSections([...sections], loopSectionIndex);
-         			} else {
-         				clearStructureSectionSegments();
-         			}
-         		}
-         	}}
-         	title={sections && sections.length > 0 ? `Toggle section overlays (${sections.length})` : 'No structure sections'}
-         >
-         	Sections {sections && sections.length > 0 ? `(${sections.length})` : '(0)'}
-         </button>
-        </div>
+		<div class="header-controls">
+			{#if isReady}
+				<div class="zoom-controls">
+					<button type="button" onclick={zoomIn} title="Zoom in">+</button>
+					<button type="button" onclick={zoomOut} title="Zoom out">-</button>
+					<button type="button" onclick={fitZoom} title="Fit to view">Fit</button>
+				</div>
+			{/if}
+			<button
+				class="marker-toggle-btn marker-midi-btn"
+				type="button"
+				class:active={showMIDIMarkers}
+				class:has-data={midiMarkers && midiMarkers.length > 0}
+				disabled={!midiMarkers || midiMarkers.length === 0}
+				onclick={() => {
+					const newVal = !showMIDIMarkers;
+					console.log(
+						'[PeaksPlayer] MIDI toggle clicked, changing from',
+						showMIDIMarkers,
+						'to',
+						newVal
+					);
+					showMIDIMarkers = newVal;
+					// Force immediate re-render
+					if (peaksInstance) {
+						console.log('[PeaksPlayer] Forcing immediate MIDI re-render');
+						renderMarkersSync(
+							showOnsets,
+							newVal,
+							onsets ? [...onsets] : [],
+							midiMarkers ? [...midiMarkers] : [],
+							grid ? [...grid] : []
+						);
+					}
+				}}
+				title={midiMarkers && midiMarkers.length > 0
+					? `Toggle MIDI Markers (${midiMarkers.length})`
+					: 'No MIDI markers'}
+			>
+				MIDI {midiMarkers && midiMarkers.length > 0 ? `(${midiMarkers.length})` : '(0)'}
+			</button>
+			<button
+				class="marker-toggle-btn marker-onsets-btn"
+				type="button"
+				class:active={showOnsets}
+				class:has-data={onsets && onsets.length > 0}
+				disabled={!onsets || onsets.length === 0}
+				onclick={() => {
+					const newVal = !showOnsets;
+					console.log(
+						'[PeaksPlayer] Onsets toggle clicked, changing from',
+						showOnsets,
+						'to',
+						newVal
+					);
+					showOnsets = newVal;
+					// Force immediate re-render
+					if (peaksInstance) {
+						console.log('[PeaksPlayer] Forcing immediate Onsets re-render');
+						renderMarkersSync(
+							newVal,
+							showMIDIMarkers,
+							onsets ? [...onsets] : [],
+							midiMarkers ? [...midiMarkers] : [],
+							grid ? [...grid] : []
+						);
+					}
+				}}
+				title={onsets && onsets.length > 0
+					? `Toggle Essentia Onsets (${onsets.length})`
+					: 'No onsets'}
+			>
+				Onsets {onsets && onsets.length > 0 ? `(${onsets.length})` : '(0)'}
+			</button>
+			<button
+				class="marker-toggle-btn marker-sections-btn"
+				type="button"
+				class:active={showSectionOverlays}
+				class:has-data={sections && sections.length > 0}
+				disabled={!sections || sections.length === 0}
+				onclick={() => {
+					const newVal = !showSectionOverlays;
+					showSectionOverlays = newVal;
+					if (peaksInstance) {
+						if (newVal && sections && sections.length > 0) {
+							renderSections([...sections], loopSectionIndex);
+						} else {
+							clearStructureSectionSegments();
+						}
+					}
+				}}
+				title={sections && sections.length > 0
+					? `Toggle section overlays (${sections.length})`
+					: 'No structure sections'}
+			>
+				Sections {sections && sections.length > 0 ? `(${sections.length})` : '(0)'}
+			</button>
+		</div>
 	</div>
 	<div
 		bind:this={zoomviewContainer}
@@ -1075,27 +1121,25 @@
 
 	{#if !audioFile}
 		<div class="placeholder-overlay">
-			<div class="placeholder-content">
-				Load Audio to Initialize Waveforms
-			</div>
+			<div class="placeholder-content">Load Audio to Initialize Waveforms</div>
 		</div>
 	{/if}
 </div>
 
 {#if isReady}
-<div class="controls-toolbar">
-    <button type="button" onclick={() => zoomIn()}>Zoom In</button>
-    <button type="button" onclick={() => zoomOut()}>Zoom Out</button>
-    <button type="button" onclick={() => fitZoom()}>Fit</button>
-    <div class="separator"></div>
-    <button type="button" onclick={() => addSegment()}>+ Segment</button>
-    <button type="button" onclick={() => addPoint()}>+ Point</button>
-    <div class="separator"></div>
-    <button type="button" onclick={() => logData()}>Log Data</button>
-    <span class="toolbar-hint" title="Rename any segment or point"
-      >Double-click a segment or point to rename</span
-    >
-</div>
+	<div class="controls-toolbar">
+		<button type="button" onclick={() => zoomIn()}>Zoom In</button>
+		<button type="button" onclick={() => zoomOut()}>Zoom Out</button>
+		<button type="button" onclick={() => fitZoom()}>Fit</button>
+		<div class="separator"></div>
+		<button type="button" onclick={() => addSegment()}>+ Segment</button>
+		<button type="button" onclick={() => addPoint()}>+ Point</button>
+		<div class="separator"></div>
+		<button type="button" onclick={() => logData()}>Log Data</button>
+		<span class="toolbar-hint" title="Rename any segment or point"
+			>Double-click a segment or point to rename</span
+		>
+	</div>
 {/if}
 
 <style>
@@ -1111,11 +1155,12 @@
 		position: relative;
 	}
 
-	.peaks-zoomview, .peaks-overview {
+	.peaks-zoomview,
+	.peaks-overview {
 		background: #1a1a1a;
 		width: 100%;
 		border-radius: 4px;
-        position: relative;
+		position: relative;
 	}
 
 	.preview-playhead {
@@ -1222,99 +1267,99 @@
 		letter-spacing: 0.5px;
 	}
 
-    .header-controls {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
+	.header-controls {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
 
-    .zoom-controls {
-        display: flex;
-        gap: 4px;
-    }
+	.zoom-controls {
+		display: flex;
+		gap: 4px;
+	}
 
-    .zoom-controls button {
-        background: #333;
-        border: none;
-        color: #fff;
-        min-width: 20px;
-        width: auto;
-        height: 20px;
-        padding: 0 6px;
-        border-radius: 2px;
-        cursor: pointer;
-        font-size: 11px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
+	.zoom-controls button {
+		background: #333;
+		border: none;
+		color: #fff;
+		min-width: 20px;
+		width: auto;
+		height: 20px;
+		padding: 0 6px;
+		border-radius: 2px;
+		cursor: pointer;
+		font-size: 11px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
 
-    .zoom-controls button:hover {
-        background: #444;
-    }
+	.zoom-controls button:hover {
+		background: #444;
+	}
 
-    .marker-toggle-btn {
-        padding: 4px 10px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 11px;
-        font-weight: 500;
-        transition: all 0.15s ease;
-        border: 2px solid #444;
-        background: #2a2a2a;
-        color: #888;
-    }
+	.marker-toggle-btn {
+		padding: 4px 10px;
+		border-radius: 4px;
+		cursor: pointer;
+		font-size: 11px;
+		font-weight: 500;
+		transition: all 0.15s ease;
+		border: 2px solid #444;
+		background: #2a2a2a;
+		color: #888;
+	}
 
-    .marker-toggle-btn:disabled {
-        background: #1a1a1a;
-        color: #555;
-        border-color: #333;
-        cursor: not-allowed;
-        opacity: 0.5;
-    }
+	.marker-toggle-btn:disabled {
+		background: #1a1a1a;
+		color: #555;
+		border-color: #333;
+		cursor: not-allowed;
+		opacity: 0.5;
+	}
 
-    .marker-toggle-btn:not(:disabled):hover {
-        background: #3a3a3a;
-    }
+	.marker-toggle-btn:not(:disabled):hover {
+		background: #3a3a3a;
+	}
 
-    /* MIDI button - blue when active */
-    .marker-midi-btn.active.has-data {
-        background: #64c8ff;
-        border-color: #64c8ff;
-        color: #000;
-        font-weight: 600;
-    }
+	/* MIDI button - blue when active */
+	.marker-midi-btn.active.has-data {
+		background: #64c8ff;
+		border-color: #64c8ff;
+		color: #000;
+		font-weight: 600;
+	}
 
-    .marker-midi-btn:not(.active).has-data {
-        border-color: #64c8ff55;
-        color: #64c8ff;
-    }
+	.marker-midi-btn:not(.active).has-data {
+		border-color: #64c8ff55;
+		color: #64c8ff;
+	}
 
-    /* Onsets button - orange when active */
-    .marker-onsets-btn.active.has-data {
-        background: #ff8800;
-        border-color: #ff8800;
-        color: #000;
-        font-weight: 600;
-    }
+	/* Onsets button - orange when active */
+	.marker-onsets-btn.active.has-data {
+		background: #ff8800;
+		border-color: #ff8800;
+		color: #000;
+		font-weight: 600;
+	}
 
-    .marker-onsets-btn:not(.active).has-data {
-        border-color: #ff880055;
-        color: #ff8800;
-    }
+	.marker-onsets-btn:not(.active).has-data {
+		border-color: #ff880055;
+		color: #ff8800;
+	}
 
-    /* Structure sections overlay toggle - violet when active */
-    .marker-sections-btn.active.has-data {
-        background: #a78bfa;
-        border-color: #a78bfa;
-        color: #000;
-        font-weight: 600;
-    }
+	/* Structure sections overlay toggle - violet when active */
+	.marker-sections-btn.active.has-data {
+		background: #a78bfa;
+		border-color: #a78bfa;
+		color: #000;
+		font-weight: 600;
+	}
 
-    .marker-sections-btn:not(.active).has-data {
-        border-color: #a78bfa55;
-        color: #a78bfa;
-    }
+	.marker-sections-btn:not(.active).has-data {
+		border-color: #a78bfa55;
+		color: #a78bfa;
+	}
 
 	.placeholder-overlay {
 		position: absolute;
@@ -1335,52 +1380,52 @@
 		font-family: sans-serif;
 	}
 
-    .controls-toolbar {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 10px;
-        padding: 10px;
-        background: #1a1a1a;
-        border-radius: 6px;
-        align-items: center;
-    }
+	.controls-toolbar {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		margin-top: 10px;
+		padding: 10px;
+		background: #1a1a1a;
+		border-radius: 6px;
+		align-items: center;
+	}
 
-    .controls-toolbar button {
-        background: #333;
-        color: white;
-        border: 1px solid #444;
-        padding: 6px 12px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 0.85rem;
-        transition: background 0.2s;
-    }
+	.controls-toolbar button {
+		background: #333;
+		color: white;
+		border: 1px solid #444;
+		padding: 6px 12px;
+		border-radius: 4px;
+		cursor: pointer;
+		font-size: 0.85rem;
+		transition: background 0.2s;
+	}
 
 	/* Style for looped section labels - make them cyan to match the highlight */
 	/* Target Peaks.js segment labels that contain the loop emoji */
 	:global(.peaks-segment-label),
-	:global([class*="peaks-segment"][class*="label"]) {
+	:global([class*='peaks-segment'][class*='label']) {
 		transition: color 0.2s ease;
 	}
-	
+
 	/* Use attribute selector to target segments with loop emoji in label */
-	:global(.peaks-segment[data-is-looped="true"] .peaks-segment-label) {
+	:global(.peaks-segment[data-is-looped='true'] .peaks-segment-label) {
 		color: #00ffc8 !important;
 		fill: #00ffc8 !important;
 		font-weight: 600 !important;
 	}
 
-    .controls-toolbar button:hover {
-        background: #444;
-    }
+	.controls-toolbar button:hover {
+		background: #444;
+	}
 
-    .separator {
-        width: 1px;
-        height: 20px;
-        background: #444;
-        margin: 0 5px;
-    }
+	.separator {
+		width: 1px;
+		height: 20px;
+		background: #444;
+		margin: 0 5px;
+	}
 
 	.toolbar-hint {
 		font-size: 0.75rem;

@@ -53,11 +53,10 @@ export const glitchFragmentShader = `
 `;
 
 export const glitchUniforms = {
-    u_time: { value: 0.0 },
-    u_glitch_strength: { value: 0.5 },
-    u_columns: { value: 20.0 },
-    u_ratio: { value: 0.5 },
-    u_duration: { value: 0.6 },
-    u_delay: { value: 1.5 }
+	u_time: { value: 0.0 },
+	u_glitch_strength: { value: 0.5 },
+	u_columns: { value: 20.0 },
+	u_ratio: { value: 0.5 },
+	u_duration: { value: 0.6 },
+	u_delay: { value: 1.5 }
 };
-

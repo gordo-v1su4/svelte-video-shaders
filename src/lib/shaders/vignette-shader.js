@@ -31,9 +31,8 @@ export const vignetteFragmentShader = `
 `;
 
 export const vignetteUniforms = {
-    u_time: { value: 0.0 },
-    u_offset_vignette: { value: 0.5 },
-    u_darkness: { value: 0.5 },
-    u_eskil: { value: 0.0 }
+	u_time: { value: 0.0 },
+	u_offset_vignette: { value: 0.5 },
+	u_darkness: { value: 0.5 },
+	u_eskil: { value: 0.0 }
 };
-

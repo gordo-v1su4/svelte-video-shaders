@@ -1,14 +1,9 @@
-import adapter from '@sveltejs/adapter-static';
+import adapter from '@sveltejs/adapter-vercel';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
 	kit: {
-		adapter: adapter({
-			// Generate a fallback page for client-side routing
-			fallback: 'index.html',
-			// Strict mode - all routes must be prerenderable
-			strict: true
-		})
+		adapter: adapter()
 	}
 };
 

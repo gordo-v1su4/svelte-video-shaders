@@ -19,7 +19,6 @@ export const waterFragmentShader = `
 `;
 
 export const waterUniforms = {
-    u_time: { value: 0.0 },
-    u_factor: { value: 0.5 }
+	u_time: { value: 0.0 },
+	u_factor: { value: 0.5 }
 };
-

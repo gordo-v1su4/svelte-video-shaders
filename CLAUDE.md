@@ -5,6 +5,7 @@ This document provides context and guidelines for working on the Svelte Video Sh
 ## Project Overview
 
 A high-performance video processing application built with **Svelte 5** that provides real-time shader effects using:
+
 - **WebCodecs API** - Hardware-accelerated video decoding (H.264/MP4)
 - **Three.js + WebGL** - Real-time GLSL shader rendering
 - **Essentia.js** - Audio analysis for audio-reactive effects
@@ -35,6 +36,7 @@ A high-performance video processing application built with **Svelte 5** that pro
 ### Svelte 5 Runes Usage
 
 This project heavily uses Svelte 5 runes for state management:
+
 - `$state` - Reactive state (video frame, current shader, parameters)
 - `$derived` - Computed values (e.g., derived from audio analysis)
 - `$effect` - Side effects (DOM setup, cleanup, listeners)
@@ -44,12 +46,14 @@ Avoid `onMount`/`onDestroy` - use `$effect` instead.
 ## Development Workflow
 
 ### Setup
+
 ```bash
 bun install
 bun run dev  # Starts at http://localhost:5173
 ```
 
 ### Build & Test
+
 ```bash
 bun run build      # Production build
 bun run lint       # Prettier + ESLint
@@ -61,17 +65,20 @@ bun run storybook  # Component preview
 ### Common Tasks
 
 **Adding a new shader:**
+
 1. Create `src/lib/shaders/my-shader.js` with `fragmentShader` and `uniforms` exports
 2. Import in VideoControls and add to shader selection dropdown
 3. Define Tweakpane folder structure in VideoControls for parameters
 4. Test audio-reactivity if applicable
 
 **Debugging WebCodecs issues:**
+
 - Check `chrome://gpu` for hardware acceleration status
 - Browser console shows VideoDecoder creation logs
 - Verify video is H.264 encoded MP4 (use `ffmpeg -i video.mp4`)
 
 **Performance optimization:**
+
 - Profile with Chrome DevTools Perf tab (target: 60fps)
 - VideoFrames are auto-released after upload to prevent leaks
 - Three.js renderer targets `window.devicePixelRatio` for sharpness
@@ -85,14 +92,14 @@ bun run storybook  # Component preview
 
 ## Key Dependencies
 
-| Package | Purpose |
-|---------|---------|
-| `three` | WebGL shader rendering |
-| `essentia.js` | Audio analysis (FFT, frequency bands) |
-| `mp4box` | MP4 file parsing for metadata |
-| `tweakpane` + `svelte-tweakpane-ui` | Interactive UI controls |
-| `peaks.js` | Waveform visualization |
-| `mediabunny` | Media utilities |
+| Package                             | Purpose                               |
+| ----------------------------------- | ------------------------------------- |
+| `three`                             | WebGL shader rendering                |
+| `essentia.js`                       | Audio analysis (FFT, frequency bands) |
+| `mp4box`                            | MP4 file parsing for metadata         |
+| `tweakpane` + `svelte-tweakpane-ui` | Interactive UI controls               |
+| `peaks.js`                          | Waveform visualization                |
+| `mediabunny`                        | Media utilities                       |
 
 ## Browser Support
 
