@@ -10,6 +10,7 @@
 	import ExportDialog from '$lib/components/ExportDialog.svelte';
 
 	import { clipPool } from '$lib/media/clip-pool.js';
+	import { videoSourcePool } from '$lib/media/video-source-pool.js';
 	import { clearFilmstripCache } from '$lib/media/filmstrip.js';
 	import {
 		TARGET_FPS,
@@ -24,7 +25,7 @@
 	} from '$lib/playback-engine.js';
 	import { poolForSection } from '$lib/export/edit-timeline.js';
 	import { exportVideo } from '$lib/export/video-export.js';
-	import { AUTOPILOT_STAGES, runAutopilot, mergeKimiStoryIntoPlan } from '$lib/autopilot.js';
+	import { AUTOPILOT_STAGES, runAutopilot, runLyricsPipeline, mergeKimiStoryIntoPlan } from '$lib/autopilot.js';
 	import { EssentiaService } from '$lib/essentia-service.js';
 	import { transcribeAudioWithDeepgram } from '$lib/deepgram-utils.js';
 	import { requestKimiStoryGeneration } from '$lib/kimi-story-engine.js';
@@ -65,6 +66,7 @@
 	let storyDirections = $state([]);
 	let selectedDirectionIndex = $state(0);
 	let storyBusy = $state(false);
+	let stemBusy = $state(false);
 	let stageStates = $state([]);
 	let autopilotRunning = $state(false);
 	let pipelineChunks = [];
@@ -232,10 +234,12 @@
 		}
 
 		if (videoFiles.length > 0) {
-			await clipPool.loadClips(videoFiles, (progress, status) => {
+			loadStatus = 'Loading video clips...';
+			await videoSourcePool.loadClips(videoFiles, (progress, status) => {
 				loadStatus = status;
 			});
-			await clipPool.ensureFirstFrameReady(0);
+			await videoSourcePool.ensureAllPrimed();
+			await videoSourcePool.ensureClipReady(0);
 			currentClipIndex = 0;
 			playerRef?.seekToClip(0, 0, false);
 		}
@@ -291,7 +295,9 @@
 		autopilotRunning = false;
 
 		if (appMode === 'autopilot') {
+			if (videoFiles.length > 0) await videoSourcePool.ensureAllPrimed();
 			restart();
+			await tick();
 			isPlaying = true;
 		}
 	}
@@ -338,6 +344,73 @@
 			console.warn('[Story] regeneration failed:', err);
 		}
 		storyBusy = false;
+	}
+
+	function pipelineServices() {
+		const essentia = new EssentiaService();
+		return {
+			analyze: (file) => essentia.analyzeFile(file),
+			transcribe: (file, opts) => transcribeAudioWithDeepgram(file, opts),
+			story: (payload) => requestKimiStoryGeneration(payload)
+		};
+	}
+
+	function handleStemSelect(file) {
+		stem = file;
+		if (file && appMode === 'studio') inspectorTab = 'story';
+	}
+
+	async function transcribeStem() {
+		if (!stem || !analysis || !song) return;
+		stemBusy = true;
+		if (appMode === 'studio') inspectorTab = 'story';
+
+		try {
+			const essentia = new EssentiaService();
+			await essentia.initialize();
+			const result = await runLyricsPipeline(
+				{
+					song,
+					stem,
+					analysis,
+					videoAssets: videoFiles.map((file, i) => ({ id: String(i), file, name: file.name })),
+					duration
+				},
+				{
+					services: pipelineServices(),
+					onStage: (id, status, detail) => {
+						stageStates = stageStates.map((s) =>
+							s.id === id ? { ...s, status, detail: detail ?? s.detail } : s
+						);
+					},
+					presetId: 'balanced-music-video',
+					seed
+				}
+			);
+			transcript = result.transcript;
+			pipelineChunks = result.chunks || [];
+			storyDirections = result.storyDirections || [];
+			storyPlan = result.storyPlan;
+			if (result.editPlan?.ready) {
+				const plan = result.editPlan;
+				markerSwapThreshold = plan.triggerSettings.markerThreshold;
+				fxIntensity = plan.triggerSettings.intensity;
+				fxDecay = Math.max(0.05, plan.triggerSettings.decay);
+				jumpCuts = plan.triggerSettings.jumpCuts;
+				if (plan.speedRamp?.enabled && analysis?.energy?.curve?.length) {
+					speedRampEnabled = true;
+					speedMin = plan.speedRamp.min;
+					speedMax = plan.speedRamp.max;
+					speedSmoothing = plan.speedRamp.smoothing;
+				}
+				const firstPreset = plan.shaderPresetIds?.[0];
+				const owner = firstPreset ? findShaderByPresetId(firstPreset) : null;
+				if (owner) selectShader(owner.id, firstPreset);
+			}
+		} catch (err) {
+			console.error('[Story] transcription failed:', err);
+		}
+		stemBusy = false;
 	}
 
 	// === Playback engine ===
@@ -400,7 +473,7 @@
 				videoFiles.length,
 				sections.length > 0
 			);
-			if (nextPool.length > 0) clipPool.primeClip(nextPool[0], 0);
+			if (nextPool.length > 0) videoSourcePool.primeClip(nextPool[0], 0);
 		}
 
 		// Beat triggers
@@ -535,6 +608,12 @@
 		exportAbort = new AbortController();
 
 		try {
+			exportStatus = 'Preparing clip decoder for export...';
+			if (clipPool.entries.length === 0) {
+				await clipPool.loadClips(videoFiles, (progress, status) => {
+					exportStatus = status;
+				});
+			}
 			const clipsMeta = videoFiles.map((_, i) => ({
 				frameCount: clipPool.getClipInfo(i)?.frameCount || 1
 			}));
@@ -593,6 +672,7 @@
 		}
 		analyzer?.destroy();
 		analyzer = null;
+		await videoSourcePool.dispose();
 		await clipPool.dispose();
 		clearFilmstripCache();
 		if (exportUrl) URL.revokeObjectURL(exportUrl);
@@ -654,7 +734,7 @@
 			<main class="relative min-w-0 flex-1 bg-black">
 				<ShaderPlayer
 					bind:this={playerRef}
-					pool={clipPool}
+					pool={videoSourcePool}
 					{fragmentShader}
 					bind:uniforms
 					{filtersEnabled}
@@ -716,7 +796,12 @@
 				{storyDirections}
 				bind:selectedDirectionIndex
 				{transcript}
-				{storyBusy}
+				storyBusy={storyBusy}
+				{stem}
+				stemBusy={stemBusy}
+				canTranscribe={!!analysis && !!song}
+				onStemSelect={handleStemSelect}
+				onTranscribeStem={transcribeStem}
 				onRegenerateStory={regenerateStory}
 			/>
 		</div>
@@ -730,6 +815,7 @@
 				bind:isPlaying
 				onsets={analysis?.onsets || []}
 				{sections}
+				lyricChunks={pipelineChunks}
 				sectionColorPalette={SECTION_COLORS}
 				onSeek={handleSeek}
 				onTogglePlayback={togglePlayback}

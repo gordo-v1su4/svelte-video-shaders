@@ -45,6 +45,11 @@
 		selectedDirectionIndex = $bindable(0),
 		transcript = null,
 		storyBusy = false,
+		stem = null,
+		stemBusy = false,
+		canTranscribe = false,
+		onStemSelect = () => {},
+		onTranscribeStem = () => {},
 		onRegenerateStory = () => {}
 	} = $props();
 
@@ -114,6 +119,11 @@
 			/>
 		{:else if activeTab === 'story'}
 			<StoryPanel
+				{stem}
+				{stemBusy}
+				{canTranscribe}
+				{onStemSelect}
+				{onTranscribeStem}
 				{storyPlan}
 				{storyDirections}
 				bind:selectedDirectionIndex

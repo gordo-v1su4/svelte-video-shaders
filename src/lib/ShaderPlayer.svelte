@@ -11,6 +11,11 @@
 		forceBlackout = false
 	} = $props();
 
+	/** True when `pool` exposes getActiveVideo (VideoSourcePool). */
+	function isVideoPool(p) {
+		return p && typeof p.getActiveVideo === 'function';
+	}
+
 	const TARGET_FPS = 24;
 	const FRAME_DURATION_MS = 1000 / TARGET_FPS;
 
@@ -21,6 +26,8 @@
 	// Three.js state
 	let renderer, scene, camera, material, mesh;
 	let texture = null;
+	let videoTexture = null;
+	let lastVideoEl = null;
 	let animationFrameId;
 
 	// Playback state - the heart of retiming
@@ -97,15 +104,24 @@
 		const height = pool?.outputHeight || 720;
 		renderer.setSize(width, height, false);
 
-		texture = new THREE.Texture();
-		texture.minFilter = THREE.LinearFilter;
-		texture.magFilter = THREE.LinearFilter;
-		texture.wrapS = THREE.ClampToEdgeWrapping;
-		texture.wrapT = THREE.ClampToEdgeWrapping;
-		texture.format = THREE.RGBAFormat;
-		texture.generateMipmaps = false;
-		texture.flipY = false;
-		material.uniforms.u_texture.value = texture;
+		if (isVideoPool(pool)) {
+			videoTexture = new THREE.VideoTexture(document.createElement('video'));
+			videoTexture.minFilter = THREE.LinearFilter;
+			videoTexture.magFilter = THREE.LinearFilter;
+			videoTexture.format = THREE.RGBAFormat;
+			videoTexture.generateMipmaps = false;
+			material.uniforms.u_texture.value = videoTexture;
+		} else {
+			texture = new THREE.Texture();
+			texture.minFilter = THREE.LinearFilter;
+			texture.magFilter = THREE.LinearFilter;
+			texture.wrapS = THREE.ClampToEdgeWrapping;
+			texture.wrapT = THREE.ClampToEdgeWrapping;
+			texture.format = THREE.RGBAFormat;
+			texture.generateMipmaps = false;
+			texture.flipY = false;
+			material.uniforms.u_texture.value = texture;
+		}
 
 		render();
 
@@ -113,6 +129,7 @@
 			if (animationFrameId) cancelAnimationFrame(animationFrameId);
 			if (renderer) renderer.dispose();
 			if (texture) texture.dispose();
+			if (videoTexture) videoTexture.dispose();
 		};
 	});
 
@@ -130,9 +147,35 @@
 			material.uniforms.u_time.value = currentTime * 0.001;
 		}
 
-		if (pool && pool.totalFrames > 0) {
-			// Advance frames if playing and NOT externally controlled
-			if (isPlaying && !isExternallyControlled) {
+		if (pool && (isVideoPool(pool) ? pool.entries?.length > 0 : pool.totalFrames > 0)) {
+			if (isVideoPool(pool)) {
+				const video = pool.getActiveVideo();
+				if (video && video !== lastVideoEl) {
+					lastVideoEl = video;
+					if (videoTexture) videoTexture.dispose();
+					videoTexture = new THREE.VideoTexture(video);
+					videoTexture.minFilter = THREE.LinearFilter;
+					videoTexture.magFilter = THREE.LinearFilter;
+					videoTexture.format = THREE.RGBAFormat;
+					videoTexture.generateMipmaps = false;
+					if (material?.uniforms?.u_texture) {
+						material.uniforms.u_texture.value = videoTexture;
+					}
+				}
+				if (videoTexture && video?.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+					videoTexture.needsUpdate = true;
+				}
+			} else if (!isExternallyControlled || frameUpdatedThisCycle) {
+				const frame = pool.getFrame(globalFrameIndex);
+				if (frame && texture) {
+					texture.image = frame;
+					texture.needsUpdate = true;
+				}
+				frameUpdatedThisCycle = false;
+			}
+
+			// Advance frames if playing and NOT externally controlled (bitmap pool only)
+			if (!isVideoPool(pool) && isPlaying && !isExternallyControlled) {
 				accumulatedTime += deltaTime * playbackSpeed;
 				const framesToAdvance = Math.floor(accumulatedTime / FRAME_DURATION_MS);
 				if (framesToAdvance > 0) {
@@ -142,25 +185,13 @@
 				frameUpdatedThisCycle = true;
 			}
 
-			// Looping/clamping (external control handles per-clip wrapping itself)
-			if (!isExternallyControlled) {
+			if (!isVideoPool(pool) && !isExternallyControlled) {
 				if (enableLooping) {
 					globalFrameIndex =
 						((globalFrameIndex % pool.totalFrames) + pool.totalFrames) % pool.totalFrames;
 				} else {
 					globalFrameIndex = Math.max(0, Math.min(pool.totalFrames - 1, globalFrameIndex));
 				}
-			}
-
-			// Only update the texture with a fresh frame index to avoid rendering
-			// stale frames from the previous clip during swaps.
-			if (!isExternallyControlled || frameUpdatedThisCycle) {
-				const frame = pool.getFrame(globalFrameIndex);
-				if (frame) {
-					texture.image = frame;
-					texture.needsUpdate = true;
-				}
-				frameUpdatedThisCycle = false;
 			}
 		}
 
@@ -170,7 +201,9 @@
 	// === External Control API ===
 
 	export function play() {
-		if (!pool || pool.totalFrames === 0) return;
+		if (!pool) return;
+		const ready = isVideoPool(pool) ? pool.entries?.length > 0 : pool.totalFrames > 0;
+		if (!ready) return;
 		isPlaying = true;
 		lastRenderTime = performance.now();
 		accumulatedTime = 0;
@@ -217,7 +250,14 @@
 
 		clipLocalFrame = 0;
 		globalFrameIndex = clipInfo.startFrame;
-		pool.primeClip(clipIndex, 0);
+
+		if (isVideoPool(pool)) {
+			pool.setActiveClip(clipIndex);
+			lastVideoEl = null;
+			pool.seekActive(0, 0);
+		} else {
+			pool.primeClip(clipIndex, 0);
+		}
 	}
 
 	export function setSpeed(speed) {
@@ -273,14 +313,15 @@
 	 * @returns {number} the global frame index that was set
 	 */
 	export function setAudioTime(audioTimeSeconds, fps = 24) {
-		if (!pool || pool.totalFrames === 0) return 0;
+		if (!pool || (isVideoPool(pool) ? pool.entries.length === 0 : pool.totalFrames === 0))
+			return 0;
 
 		isExternallyControlled = true;
 		frameUpdatedThisCycle = true;
 
 		const clipInfo = pool.getClipInfo(currentClipIndex);
 		if (!clipInfo) {
-			globalFrameIndex = Math.floor(audioTimeSeconds * fps) % pool.totalFrames;
+			globalFrameIndex = Math.floor(audioTimeSeconds * fps) % (pool.totalFrames || 1);
 			return globalFrameIndex;
 		}
 
@@ -300,6 +341,11 @@
 		clipLocalFrame =
 			((targetFrame % clipInfo.frameCount) + clipInfo.frameCount) % clipInfo.frameCount;
 		globalFrameIndex = clipInfo.startFrame + clipLocalFrame;
+
+		if (isVideoPool(pool)) {
+			const timeSec = clipLocalFrame / fps;
+			pool.seekActive(timeSec);
+		}
 
 		return globalFrameIndex;
 	}
@@ -411,10 +457,10 @@
 
 	// Reset when the pool's content changes
 	$effect(() => {
-		if (pool && pool.totalFrames > 0) {
+		if (pool && (isVideoPool(pool) ? pool.entries?.length > 0 : pool.totalFrames > 0)) {
 			globalFrameIndex = 0;
 			accumulatedTime = 0;
-			pool.primeAroundFrame(0);
+			if (!isVideoPool(pool)) pool.primeAroundFrame(0);
 		}
 	});
 </script>

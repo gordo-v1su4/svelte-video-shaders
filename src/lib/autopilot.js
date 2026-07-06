@@ -228,3 +228,98 @@ export async function runAutopilot(inputs, options) {
 		warnings
 	};
 }
+
+/**
+ * Re-run lyrics/story (and edit) after a vocal stem is added in Studio.
+ * Requires analysis from a prior song pass.
+ */
+export async function runLyricsPipeline(inputs, options) {
+	const {
+		song,
+		stem,
+		analysis,
+		videoAssets = [],
+		duration = 0,
+		services,
+		onStage = () => {},
+		presetId = 'balanced-music-video',
+		seed = 1
+	} = inputs;
+
+	if (!stem) throw new Error('A vocal stem file is required.');
+	if (!analysis) throw new Error('Run song analysis before transcribing lyrics.');
+
+	const warnings = [];
+	const sections = analysis.structure?.sections || [];
+	let transcript = null;
+	let chunks = [];
+
+	if (services.transcribe) {
+		onStage('transcribe', 'running');
+		try {
+			transcript = await services.transcribe(stem, { duration });
+			chunks = attachSectionContext(transcript.chunks || [], sections);
+			onStage('transcribe', 'done', `${transcript.wordCount || 0} words · ${chunks.length} chunks`);
+		} catch (err) {
+			warnings.push(`Transcription failed: ${err?.message || err}`);
+			onStage('transcribe', 'error', err?.message || 'Transcription unavailable');
+		}
+	} else {
+		onStage('transcribe', 'skipped', 'No transcription service');
+	}
+
+	if (chunks.length === 0 && sections.length > 0) {
+		chunks = chunksFromSections(sections);
+	}
+
+	onStage('story', 'running');
+	const title = storyTitle(song);
+	const storyDirections = generateStoryDirectionOptions(chunks, {
+		title,
+		transcriptSummary: transcript
+	});
+	let storyPlan = generateStoryPlanFromChunks(chunks, {
+		title,
+		storyArcHint: deepgramStoryArcHint(transcript),
+		storyDirection: storyDirections[0] || null
+	});
+	if (services.story && chunks.length > 0) {
+		try {
+			const remote = await services.story({ chunks, storyPlan });
+			if (remote?.success) {
+				storyPlan = mergeKimiStoryIntoPlan(storyPlan, remote);
+				onStage('story', 'done', `Kimi generated ${remote.beats?.length || 0} story beats`);
+			} else {
+				onStage('story', 'done', 'Local story prompts (Kimi unavailable)');
+			}
+		} catch (err) {
+			warnings.push(`Kimi story pass failed: ${err?.message || err}`);
+			onStage('story', 'done', 'Local story prompts (Kimi failed)');
+		}
+	} else {
+		onStage(
+			'story',
+			chunks.length > 0 ? 'done' : 'skipped',
+			chunks.length > 0 ? 'Local story prompts' : 'No chunks available'
+		);
+	}
+
+	onStage('edit', 'running');
+	const editPlan = generateAutoEditPlan({
+		chunks,
+		sections,
+		markers: analysis.onsets,
+		videoAssets,
+		analysisData: analysis,
+		presetId,
+		seed
+	});
+	if (editPlan.ready) {
+		onStage('edit', 'done', `${editPlan.presetLabel}: ${editPlan.cutMarkers.length} cuts`);
+	} else {
+		warnings.push(editPlan.reason);
+		onStage('edit', 'error', editPlan.reason);
+	}
+
+	return { transcript, chunks, storyDirections, storyPlan, editPlan, warnings };
+}

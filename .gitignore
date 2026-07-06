@@ -40,3 +40,4 @@ api/models/
 /docs/*
 !/docs/preview/
 !/docs/preview/**
+.env*

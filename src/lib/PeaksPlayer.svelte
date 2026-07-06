@@ -42,7 +42,10 @@
 		/** Fired when user adds a segment via + Segment — parent inserts into structure + sequencer + buckets */
 		onSectionAdd = (/** @type {{ start: number; end: number; label: string }} */ _payload) => {},
 		/** Bumped on every structure mutation so overlays repaint (avoids stale fingerprint / shallow prop issues) */
-		sectionStructureRevision = 0
+		sectionStructureRevision = 0,
+		/** SRT / lyric chunks from transcription — shown as labeled regions */
+		lyricChunks = [],
+		showLyrics = true
 	} = $props();
 
 	let zoomviewContainer;
@@ -428,6 +431,16 @@
 			.join('|');
 	});
 
+	const lyricsFingerprint = $derived(() => {
+		if (!lyricChunks || lyricChunks.length === 0) return 'empty';
+		return lyricChunks
+			.map(
+				(c) =>
+					`${Number(c.start).toFixed(5)}-${Number(c.end).toFixed(5)}-${String(c.text ?? '').slice(0, 16)}`
+			)
+			.join('|');
+	});
+
 	$effect(() => {
 		if (!peaksInstance) return;
 
@@ -439,6 +452,8 @@
 		const _gridFp = gridFingerprint;
 		const _sectionsFp = sectionsFingerprint;
 		const _sectionsRev = sectionStructureRevision;
+		const _lyricsFp = lyricsFingerprint;
+		const _showLyrics = showLyrics;
 		const _showOnsets = showOnsets;
 		const _showMIDI = showMIDIMarkers;
 		const _showSectionOverlays = showSectionOverlays;
@@ -461,6 +476,13 @@
 				renderSections(currentSections, _loopSectionIndex);
 			} else {
 				clearStructureSectionSegments();
+			}
+
+			const currentLyrics = lyricChunks?.length ? [...lyricChunks] : [];
+			if (_showLyrics && _lyricsFp !== 'empty' && currentLyrics.length > 0) {
+				renderLyricSegments(currentLyrics);
+			} else {
+				clearLyricSegments();
 			}
 		});
 	});
@@ -612,6 +634,46 @@
 			}
 		} catch (e) {
 			console.warn('[PeaksPlayer] Error clearing section segments:', e);
+		}
+	}
+
+	function clearLyricSegments() {
+		if (!peaksInstance) return;
+		try {
+			const existingSegments = peaksInstance.segments.getSegments();
+			const lyricSegments = existingSegments.filter((seg) => seg.id?.startsWith('lyric-'));
+			for (const seg of lyricSegments) {
+				peaksInstance.segments.removeById(seg.id);
+			}
+		} catch (e) {
+			console.warn('[PeaksPlayer] Error clearing lyric segments:', e);
+		}
+	}
+
+	function renderLyricSegments(chunks) {
+		if (!peaksInstance || !chunks?.length) return;
+		clearLyricSegments();
+		const toAdd = [];
+		chunks.forEach((chunk, index) => {
+			const start = Number(chunk.start);
+			const end = Number(chunk.end);
+			if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+			const label = (chunk.text || chunk.sectionLabel || '').trim().slice(0, 48);
+			toAdd.push({
+				id: `lyric-${index}`,
+				startTime: start,
+				endTime: end,
+				labelText: label || `Lyric ${index + 1}`,
+				editable: false,
+				color: 'rgba(236, 72, 153, 0.22)'
+			});
+		});
+		if (toAdd.length > 0) {
+			try {
+				peaksInstance.segments.add(toAdd);
+			} catch (e) {
+				console.warn('[PeaksPlayer] Error adding lyric segments:', e);
+			}
 		}
 	}
 

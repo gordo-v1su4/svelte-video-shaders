@@ -2,6 +2,11 @@
 	import { Button } from 'svelte-ux';
 
 	let {
+		stem = null,
+		stemBusy = false,
+		canTranscribe = false,
+		onStemSelect = (/** @type {File} */ _file) => {},
+		onTranscribeStem = () => {},
 		storyPlan = null,
 		storyDirections = [],
 		selectedDirectionIndex = $bindable(0),
@@ -9,9 +14,63 @@
 		busy = false,
 		onRegenerate = () => {}
 	} = $props();
+
+	let stemInput = $state();
+
+	function handleStemPick(event) {
+		const file = event.currentTarget.files?.[0];
+		if (file) onStemSelect(file);
+		event.currentTarget.value = '';
+	}
 </script>
 
-<div class="flex flex-col gap-3">
+<div class="flex flex-col gap-4">
+	<div class="rounded-xl border border-fuchsia-900/50 bg-fuchsia-950/20 p-3">
+		<div class="mb-1 text-xs font-semibold tracking-widest text-fuchsia-300 uppercase">
+			Vocal stem
+		</div>
+		<p class="mb-3 text-xs text-zinc-500">
+			Upload the isolated vocal track (not the full song). Deepgram uses this for lyrics and story
+			beats.
+		</p>
+		{#if stem}
+			<div
+				class="mb-3 flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-200"
+			>
+				<span class="truncate">{stem.name}</span>
+				<button
+					type="button"
+					class="shrink-0 text-zinc-500 hover:text-rose-400"
+					aria-label="Remove vocal stem"
+					onclick={() => onStemSelect(null)}>✕</button
+				>
+			</div>
+		{:else}
+			<p class="mb-3 text-xs text-zinc-600">No vocal stem yet.</p>
+		{/if}
+		<div class="flex flex-wrap gap-2">
+			<Button
+				size="sm"
+				variant="outline"
+				color="default"
+				loading={stemBusy}
+				on:click={() => stemInput?.click()}
+			>
+				{stem ? 'Replace stem' : 'Upload vocal stem'}
+			</Button>
+			<Button
+				size="sm"
+				variant="fill"
+				color="primary"
+				disabled={!stem || !canTranscribe}
+				loading={stemBusy}
+				on:click={onTranscribeStem}
+			>
+				{transcript ? 'Re-transcribe lyrics' : 'Transcribe lyrics'}
+			</Button>
+		</div>
+	</div>
+
 	<span class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">Story</span>
 
 	{#if transcript?.wordCount}
@@ -74,7 +133,16 @@
 		>
 	{:else}
 		<p class="text-xs text-zinc-600">
-			Run analysis (and optionally drop a vocal stem) to build a story plan for the edit.
+			After song analysis, upload a vocal stem above and run transcription to build lyric-driven
+			story beats.
 		</p>
 	{/if}
+
+	<input
+		type="file"
+		bind:this={stemInput}
+		onchange={handleStemPick}
+		accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg"
+		class="sr-only"
+	/>
 </div>
