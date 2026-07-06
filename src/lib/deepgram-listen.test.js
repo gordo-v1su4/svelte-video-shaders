@@ -16,12 +16,12 @@ describe('deepgram-listen', () => {
 	it('uses proxy for small files without a client key', () => {
 		const file = new File(['x'], 'stem.wav', { type: 'audio/wav' });
 		Object.defineProperty(file, 'size', { value: 1024 });
-		expect(pickTranscribeTransport(file)).toBe('proxy');
+		expect(pickTranscribeTransport(file, '')).toBe('proxy');
 	});
 
 	it('prefers direct when file exceeds Vercel body limit', () => {
 		const file = new File(['x'], 'stem.wav', { type: 'audio/wav' });
 		Object.defineProperty(file, 'size', { value: VERCEL_TRANSCRIBE_BODY_LIMIT + 1 });
-		expect(pickTranscribeTransport(file)).toBe('direct');
+		expect(pickTranscribeTransport(file, '')).toBe('direct');
 	});
 });
