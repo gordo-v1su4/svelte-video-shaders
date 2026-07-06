@@ -1,10 +1,15 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+import {
+	buildDeepgramListenQuery,
+	DEEPGRAM_LISTEN_URL,
+	VERCEL_TRANSCRIBE_BODY_LIMIT
+} from '$lib/deepgram-listen.js';
 
 /**
- * Deepgram transcription proxy. Accepts raw audio bytes and forwards them to
- * Deepgram nova-3 with the settings the client pipeline expects. The API key
- * stays server-side.
+ * Deepgram transcription proxy for small vocal stems. Large files must use
+ * browser-direct Deepgram (VITE_DEEPGRAM_API_KEY) — Vercel caps request bodies
+ * at ~4.5 MB. Song analysis avoids this by posting straight to Essentia.
  */
 export async function POST({ request }) {
 	const apiKey = env.DEEPGRAM_API_KEY || env.DEEPGRAM_TOKEN;
@@ -21,24 +26,24 @@ export async function POST({ request }) {
 		return json({ ok: false, error: 'No audio bytes received.' }, { status: 400 });
 	}
 
-	const model = env.DEEPGRAM_MODEL || 'nova-3';
-	const query = new URLSearchParams({
-		model,
-		summarize: 'v2',
-		topics: 'true',
-		intents: 'true',
-		smart_format: 'true',
-		punctuate: 'true',
-		utterances: 'true',
-		utt_split: '0.8',
-		paragraphs: 'true',
-		detect_entities: 'false',
-		sentiment: 'false',
+	if (body.byteLength > VERCEL_TRANSCRIBE_BODY_LIMIT) {
+		const mb = Math.round(VERCEL_TRANSCRIBE_BODY_LIMIT / (1024 * 1024));
+		return json(
+			{
+				ok: false,
+				error: `Audio is too large for the server proxy (${mb} MB Vercel limit). Set VITE_DEEPGRAM_API_KEY so the browser calls Deepgram directly — same pattern as VITE_ESSENTIA_API_KEY for song analysis.`
+			},
+			{ status: 413 }
+		);
+	}
+
+	const query = buildDeepgramListenQuery({
+		model: env.DEEPGRAM_MODEL || 'nova-3',
 		language: env.DEEPGRAM_LANGUAGE || 'en'
 	});
 
 	try {
-		const deepgramResponse = await fetch(`https://api.deepgram.com/v1/listen?${query}`, {
+		const deepgramResponse = await fetch(`${DEEPGRAM_LISTEN_URL}?${query}`, {
 			method: 'POST',
 			headers: {
 				Authorization: `Token ${apiKey}`,

@@ -16,6 +16,16 @@
 		return p && typeof p.getActiveVideo === 'function';
 	}
 
+	/** Match ImageBitmap path: vertex shader flips V; don't also flip in VideoTexture upload. */
+	function configureVideoTexture(tex) {
+		tex.minFilter = THREE.LinearFilter;
+		tex.magFilter = THREE.LinearFilter;
+		tex.format = THREE.RGBAFormat;
+		tex.generateMipmaps = false;
+		tex.flipY = false;
+		return tex;
+	}
+
 	const TARGET_FPS = 24;
 	const FRAME_DURATION_MS = 1000 / TARGET_FPS;
 
@@ -105,11 +115,7 @@
 		renderer.setSize(width, height, false);
 
 		if (isVideoPool(pool)) {
-			videoTexture = new THREE.VideoTexture(document.createElement('video'));
-			videoTexture.minFilter = THREE.LinearFilter;
-			videoTexture.magFilter = THREE.LinearFilter;
-			videoTexture.format = THREE.RGBAFormat;
-			videoTexture.generateMipmaps = false;
+			videoTexture = configureVideoTexture(new THREE.VideoTexture(document.createElement('video')));
 			material.uniforms.u_texture.value = videoTexture;
 		} else {
 			texture = new THREE.Texture();
@@ -153,11 +159,7 @@
 				if (video && video !== lastVideoEl) {
 					lastVideoEl = video;
 					if (videoTexture) videoTexture.dispose();
-					videoTexture = new THREE.VideoTexture(video);
-					videoTexture.minFilter = THREE.LinearFilter;
-					videoTexture.magFilter = THREE.LinearFilter;
-					videoTexture.format = THREE.RGBAFormat;
-					videoTexture.generateMipmaps = false;
+					videoTexture = configureVideoTexture(new THREE.VideoTexture(video));
 					if (material?.uniforms?.u_texture) {
 						material.uniforms.u_texture.value = videoTexture;
 					}

@@ -409,6 +409,11 @@
 			}
 		} catch (err) {
 			console.error('[Story] transcription failed:', err);
+			stageStates = stageStates.map((s) =>
+				s.id === 'transcribe'
+					? { ...s, status: 'error', detail: err?.message || 'Transcription failed' }
+					: s
+			);
 		}
 		stemBusy = false;
 	}

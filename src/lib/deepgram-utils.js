@@ -1,6 +1,88 @@
 import { exportSRT } from './srt-utils.js';
+import {
+	buildDeepgramListenQuery,
+	DEEPGRAM_LISTEN_URL,
+	pickTranscribeTransport,
+	VERCEL_TRANSCRIBE_BODY_LIMIT
+} from './deepgram-listen.js';
 
 export const DEEPGRAM_DEV_TRANSCRIBE_ENDPOINT = '/api/transcribe';
+
+function deepgramListenOptions(options = {}) {
+	return {
+		model: options.model || import.meta.env.VITE_DEEPGRAM_MODEL || 'nova-3',
+		language: options.language || import.meta.env.VITE_DEEPGRAM_LANGUAGE || 'en'
+	};
+}
+
+async function parseDeepgramHttpResponse(response) {
+	let payload;
+	const text = await response.text();
+	try {
+		payload = text ? JSON.parse(text) : {};
+	} catch {
+		payload = { error: text };
+	}
+	return { payload, text };
+}
+
+function throwDeepgramHttpError(response, payload, text) {
+	if (response.status === 401) {
+		throw new Error(
+			'Deepgram authentication failed (401). Check DEEPGRAM_API_KEY (server) or VITE_DEEPGRAM_API_KEY (browser for large stems), then restart and retry.'
+		);
+	}
+	if (response.status === 413) {
+		throw new Error(
+			`Vocal stem is too large for the server proxy (${Math.round(VERCEL_TRANSCRIBE_BODY_LIMIT / (1024 * 1024))} MB Vercel limit). Add VITE_DEEPGRAM_API_KEY to your environment so transcription runs directly from the browser to Deepgram (same pattern as Essentia).`
+		);
+	}
+	throw new Error(
+		payload?.error || payload?.reason || payload?.err_msg || text || `Deepgram transcription failed (${response.status})`
+	);
+}
+
+async function postAudioToDeepgramListen(file, options = {}) {
+	const apiKey = import.meta.env.VITE_DEEPGRAM_API_KEY;
+	if (!apiKey) {
+		throw new Error(
+			`Vocal stem exceeds the ${Math.round(VERCEL_TRANSCRIBE_BODY_LIMIT / (1024 * 1024))} MB server upload limit. Set VITE_DEEPGRAM_API_KEY in .env / Vercel so Deepgram is called directly from the browser (no size cap through Vercel).`
+		);
+	}
+
+	const query = buildDeepgramListenQuery(deepgramListenOptions(options));
+	const response = await fetch(`${DEEPGRAM_LISTEN_URL}?${query}`, {
+		method: 'POST',
+		headers: {
+			Authorization: `Token ${apiKey}`,
+			'Content-Type': file.type || 'application/octet-stream'
+		},
+		body: file
+	});
+
+	const { payload, text } = await parseDeepgramHttpResponse(response);
+	if (!response.ok || payload?.ok === false) {
+		throwDeepgramHttpError(response, payload, text);
+	}
+	return payload;
+}
+
+async function postAudioToTranscribeProxy(file, endpoint) {
+	const response = await fetch(endpoint, {
+		method: 'POST',
+		headers: {
+			'Content-Type': file.type || 'application/octet-stream',
+			'X-Audio-Filename': encodeURIComponent(file.name || 'song-audio')
+		},
+		body: file
+	});
+
+	const { payload, text } = await parseDeepgramHttpResponse(response);
+	if (!response.ok || payload?.ok === false) {
+		throwDeepgramHttpError(response, payload, text);
+	}
+	return payload;
+}
 
 function getPrimaryAlternative(response) {
 	return response?.results?.channels?.[0]?.alternatives?.[0] || {};
@@ -186,35 +268,15 @@ export function summarizeDeepgramResponse(response, options = {}) {
 }
 
 export async function transcribeAudioWithDeepgram(file, options = {}) {
-	if (!file) throw new Error('Select a song before transcription.');
+	if (!file) throw new Error('Select a vocal stem before transcription.');
+
 	const endpoint = options.endpoint || DEEPGRAM_DEV_TRANSCRIBE_ENDPOINT;
-	const response = await fetch(endpoint, {
-		method: 'POST',
-		headers: {
-			'Content-Type': file.type || 'application/octet-stream',
-			'X-Audio-Filename': encodeURIComponent(file.name || 'song-audio')
-		},
-		body: file
-	});
+	const transport = options.transport || pickTranscribeTransport(file);
 
-	let payload;
-	const text = await response.text();
-	try {
-		payload = text ? JSON.parse(text) : {};
-	} catch {
-		payload = { error: text };
-	}
-
-	if (!response.ok || payload?.ok === false) {
-		if (response.status === 401) {
-			throw new Error(
-				'Deepgram authentication failed (401). Update DEEPGRAM_API_KEY in the dev server environment, then restart the app and re-upload the vocal stem.'
-			);
-		}
-		throw new Error(
-			payload?.error || payload?.reason || `Deepgram transcription failed (${response.status})`
-		);
-	}
+	const payload =
+		transport === 'direct'
+			? await postAudioToDeepgramListen(file, options)
+			: await postAudioToTranscribeProxy(file, endpoint);
 
 	return summarizeDeepgramResponse(payload, {
 		duration: options.duration,
