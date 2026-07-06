@@ -31,7 +31,7 @@ export async function POST({ request }) {
 		return json(
 			{
 				ok: false,
-				error: `Audio is too large for the server proxy (${mb} MB Vercel limit). Set VITE_DEEPGRAM_API_KEY so the browser calls Deepgram directly — same pattern as VITE_ESSENTIA_API_KEY for song analysis.`
+				error: `Audio is too large for the server proxy (${mb} MB Vercel limit). DEEPGRAM_API_KEY is used for browser-direct uploads at build time — ensure it is set on Vercel and redeploy.`
 			},
 			{ status: 413 }
 		);

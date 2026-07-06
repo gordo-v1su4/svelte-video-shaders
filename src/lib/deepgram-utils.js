@@ -34,7 +34,7 @@ function throwDeepgramHttpError(response, payload, text) {
 	}
 	if (response.status === 413) {
 		throw new Error(
-			`Vocal stem is too large for the server proxy (${Math.round(VERCEL_TRANSCRIBE_BODY_LIMIT / (1024 * 1024))} MB Vercel limit). Add VITE_DEEPGRAM_API_KEY to your environment so transcription runs directly from the browser to Deepgram (same pattern as Essentia).`
+			`Vocal stem is too large for the server proxy (${Math.round(VERCEL_TRANSCRIBE_BODY_LIMIT / (1024 * 1024))} MB Vercel limit). Ensure DEEPGRAM_API_KEY is set in .env / Vercel (it is bridged to the browser for direct Deepgram uploads).`
 		);
 	}
 	throw new Error(
@@ -46,7 +46,7 @@ async function postAudioToDeepgramListen(file, options = {}) {
 	const apiKey = import.meta.env.VITE_DEEPGRAM_API_KEY;
 	if (!apiKey) {
 		throw new Error(
-			`Vocal stem exceeds the ${Math.round(VERCEL_TRANSCRIBE_BODY_LIMIT / (1024 * 1024))} MB server upload limit. Set VITE_DEEPGRAM_API_KEY in .env / Vercel so Deepgram is called directly from the browser (no size cap through Vercel).`
+			`Vocal stem exceeds the ${Math.round(VERCEL_TRANSCRIBE_BODY_LIMIT / (1024 * 1024))} MB server upload limit. Set DEEPGRAM_API_KEY in .env / Vercel (restart dev server after changes).`
 		);
 	}
 
