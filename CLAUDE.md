@@ -130,3 +130,21 @@ bun run storybook  # Component preview
 - **Component tests** in Storybook
 - **Browser tests** use Vitest + Playwright
 - Focus on shader parameter validation and WebCodecs error handling
+
+## Autopilot pipeline — current status (Jul 2026)
+
+**Branch:** `feat/autopilot-freecut-pipeline` · **PR:** [#9](https://github.com/gordo-v1su4/svelte-video-shaders/pull/9)
+
+| Stage | Input | Service |
+|-------|--------|---------|
+| Analysis | **Song** (full mix) | Essentia `POST /analyze/fast` — BPM, beats, onsets, **structure** |
+| Transcription | **Vocal stem** only | Deepgram (browser-direct for large files) |
+| Story | Lyric chunks | Kimi `/api/story` |
+| Preview | Clips | `videoSourcePool` + `ShaderPlayer` (WebGL) |
+| Export | Timeline | `clipPool` + mediabunny MP4 |
+
+**Essentia:** `/analyze/fast` is correct — structure sections are included. `/analyze/full` adds slower endpoints we do not use. Labels are post-processed in `playback-engine.js` (`postProcessSections`).
+
+**Recent fixes:** PeaksPlayer `$derived.by` fingerprints (onset/section overlays repaint); VideoWorkbench section drag/rename/add handlers re-wired; `pipelineChunks` is `$state`.
+
+**Next session:** Manual pass — run Autopilot, confirm section bands + draggable handles on waveform, onsets as markers, clip buckets per section. Optional: timeline clip lanes, loop-section UI, trim PeaksPlayer debug logs.

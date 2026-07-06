@@ -21,7 +21,8 @@
 		preprocessSpeedCurve,
 		sampleSpeedCurve,
 		sectionAtTime,
-		seededRandom
+		seededRandom,
+		rebuildSectionBoundaries
 	} from '$lib/playback-engine.js';
 	import { poolForSection } from '$lib/export/edit-timeline.js';
 	import { exportVideo } from '$lib/export/video-export.js';
@@ -43,6 +44,8 @@
 		'#fbbf24'
 	];
 	const JUMP_CUT_RANGE = 30;
+	const MIN_STRUCTURE_SECTION_DURATION = 0.05;
+	const SECTION_BOUNDARY_SNAP_SEC = 0.025;
 
 	// --- Mode & media ---
 	let appMode = $state('landing'); // 'landing' | 'autopilot' | 'studio'
@@ -69,8 +72,10 @@
 	let stemBusy = $state(false);
 	let stageStates = $state([]);
 	let autopilotRunning = $state(false);
-	let pipelineChunks = [];
+	let pipelineChunks = $state([]);
 	let seed = $state(1);
+	/** Bumped on structure edits so Peaks section overlays repaint reliably */
+	let sectionStructureRevision = $state(0);
 
 	const sections = $derived(analysis?.structure?.sections || []);
 
@@ -161,6 +166,157 @@
 			maxDuration: duration
 		});
 	});
+
+	const gridMarkers = $derived.by(() => {
+		if (!duration || !analysis?.bpm) return [];
+		return computeGridMarkers({
+			bpm: analysis.bpm,
+			duration,
+			beats: analysis.beats || []
+		});
+	});
+
+	function bumpSectionStructureRevision() {
+		sectionStructureRevision += 1;
+	}
+
+	function patchStructureSection(index, patch) {
+		const secs = analysis?.structure?.sections;
+		if (!secs?.[index]) return;
+		const prev = secs[index];
+		const nextRow = { ...prev, ...patch };
+		if (patch.start !== undefined || patch.end !== undefined) {
+			nextRow.start = patch.start !== undefined ? patch.start : prev.start;
+			nextRow.end = patch.end !== undefined ? patch.end : prev.end;
+			nextRow.duration = Math.max(0, nextRow.end - nextRow.start);
+		}
+		const nextSections = secs.map((row, i) => (i === index ? nextRow : row));
+		const boundaries = rebuildSectionBoundaries(nextSections);
+		analysis = {
+			...analysis,
+			structure: { ...analysis.structure, sections: nextSections, boundaries }
+		};
+		bumpSectionStructureRevision();
+	}
+
+	function sectionsRoughlyEqual(a, b) {
+		return (
+			Math.abs(Number(a.start) - Number(b.start)) < 0.02 &&
+			Math.abs(Number(a.end) - Number(b.end)) < 0.02 &&
+			String(a.label || '') === String(b.label || '')
+		);
+	}
+
+	function applySectionBoundsWithNeighbors(index, start, end) {
+		const secs = analysis?.structure?.sections;
+		if (!secs?.[index]) return;
+
+		let s = Number(start);
+		let e = Number(end);
+		const trackEnd = Math.max(
+			duration || 0,
+			...secs.map((x) => Number(x.end) || 0),
+			e,
+			s
+		);
+
+		const prev = index > 0 ? secs[index - 1] : null;
+		const next = index < secs.length - 1 ? secs[index + 1] : null;
+		const prevEnd = prev ? Number(prev.end) : 0;
+		const nextStart = next ? Number(next.start) : trackEnd;
+
+		const minStart = index > 0 ? prevEnd : 0;
+		const maxEnd = index < secs.length - 1 ? nextStart : trackEnd;
+
+		s = Math.max(minStart, s);
+		e = Math.min(maxEnd, e);
+
+		if (index > 0 && Math.abs(s - prevEnd) < SECTION_BOUNDARY_SNAP_SEC) s = prevEnd;
+		if (index < secs.length - 1 && Math.abs(e - nextStart) < SECTION_BOUNDARY_SNAP_SEC) e = nextStart;
+
+		if (e - s < MIN_STRUCTURE_SECTION_DURATION) {
+			e = Math.min(maxEnd, s + MIN_STRUCTURE_SECTION_DURATION);
+			if (e - s < MIN_STRUCTURE_SECTION_DURATION) {
+				s = Math.max(minStart, e - MIN_STRUCTURE_SECTION_DURATION);
+			}
+		}
+
+		if (index > 0 && s < prevEnd) s = prevEnd;
+		if (index < secs.length - 1 && e > nextStart) e = nextStart;
+		if (e - s < MIN_STRUCTURE_SECTION_DURATION) {
+			e = Math.min(maxEnd, s + MIN_STRUCTURE_SECTION_DURATION);
+			s = Math.max(minStart, e - MIN_STRUCTURE_SECTION_DURATION);
+		}
+		if (e - s < MIN_STRUCTURE_SECTION_DURATION) return;
+
+		const nextSections = secs.map((row) => ({ ...row }));
+		nextSections[index] = {
+			...nextSections[index],
+			start: s,
+			end: e,
+			duration: e - s
+		};
+
+		const boundaries = rebuildSectionBoundaries(nextSections);
+		analysis = {
+			...analysis,
+			structure: { ...analysis.structure, sections: nextSections, boundaries }
+		};
+		bumpSectionStructureRevision();
+	}
+
+	function handlePeaksSectionBoundsChange(index, start, end) {
+		applySectionBoundsWithNeighbors(index, start, end);
+	}
+
+	function handlePeaksSectionLabelChange(index, label) {
+		const trimmed = (label || '').trim();
+		if (!trimmed) return;
+		patchStructureSection(index, { label: trimmed });
+	}
+
+	function handlePeaksSectionAdd(payload) {
+		const oldSecs = analysis?.structure?.sections ? [...analysis.structure.sections] : [];
+		const trackEnd = Math.max(
+			duration || 0,
+			...oldSecs.map((sec) => Number(sec.end) || 0),
+			Number(payload.end),
+			Number(payload.start) + MIN_STRUCTURE_SECTION_DURATION
+		);
+
+		let s = Math.max(0, Number(payload.start));
+		let e = Math.max(s + MIN_STRUCTURE_SECTION_DURATION, Number(payload.end));
+		e = Math.min(e, trackEnd);
+		if (e <= s) e = Math.min(trackEnd, s + MIN_STRUCTURE_SECTION_DURATION);
+
+		const newRow = {
+			start: s,
+			end: e,
+			label: String(payload.label || 'Section').trim() || 'Section',
+			duration: e - s
+		};
+
+		const nextSections = [...oldSecs, newRow].sort((a, b) => Number(a.start) - Number(b.start));
+
+		const newPools = {};
+		for (let j = 0; j < nextSections.length; j++) {
+			const sec = nextSections[j];
+			const oldIdx = oldSecs.findIndex((o) => sectionsRoughlyEqual(o, sec));
+			if (oldIdx >= 0 && Array.isArray(sectionVideoPools[oldIdx])) {
+				newPools[j] = [...sectionVideoPools[oldIdx]];
+			} else {
+				newPools[j] = [];
+			}
+		}
+		sectionVideoPools = newPools;
+
+		const boundaries = rebuildSectionBoundaries(nextSections);
+		analysis = {
+			...analysis,
+			structure: { ...analysis.structure, sections: nextSections, boundaries }
+		};
+		bumpSectionStructureRevision();
+	}
 
 	const stepCompleted = $derived({
 		media: videoFiles.length > 0 && !!song,
@@ -824,8 +980,13 @@
 				bind:isPlaying
 				onsets={analysis?.onsets || []}
 				{sections}
+				grid={gridMarkers}
 				lyricChunks={pipelineChunks}
 				sectionColorPalette={SECTION_COLORS}
+				sectionStructureRevision={sectionStructureRevision}
+				onSectionBoundsChange={handlePeaksSectionBoundsChange}
+				onSectionLabelChange={handlePeaksSectionLabelChange}
+				onSectionAdd={handlePeaksSectionAdd}
 				onSeek={handleSeek}
 				onTogglePlayback={togglePlayback}
 				onRestart={restart}

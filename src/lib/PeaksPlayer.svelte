@@ -403,25 +403,25 @@
 	}
 
 	// Track array changes by creating a fingerprint that includes first, last, and length
-	const onsetsFingerprint = $derived(() => {
+	const onsetsFingerprint = $derived.by(() => {
 		if (!onsets || onsets.length === 0) return 'empty';
 		const first = onsets[0]?.toFixed(3) || '0';
 		const last = onsets[onsets.length - 1]?.toFixed(3) || '0';
 		return `${first}-${last}-${onsets.length}`;
 	});
-	const midiFingerprint = $derived(() => {
+	const midiFingerprint = $derived.by(() => {
 		if (!midiMarkers || midiMarkers.length === 0) return 'empty';
 		const first = midiMarkers[0]?.toFixed(3) || '0';
 		const last = midiMarkers[midiMarkers.length - 1]?.toFixed(3) || '0';
 		return `${first}-${last}-${midiMarkers.length}`;
 	});
-	const gridFingerprint = $derived(() => {
+	const gridFingerprint = $derived.by(() => {
 		if (!grid || grid.length === 0) return 'empty';
 		const first = Number(grid[0]).toFixed(4);
 		const last = Number(grid[grid.length - 1]).toFixed(4);
 		return `${first}-${last}-${grid.length}`;
 	});
-	const sectionsFingerprint = $derived(() => {
+	const sectionsFingerprint = $derived.by(() => {
 		if (!sections || sections.length === 0) return 'empty';
 		// Higher precision than 3dp so small handle moves still invalidate (toggle was masking this).
 		return sections
@@ -431,7 +431,7 @@
 			.join('|');
 	});
 
-	const lyricsFingerprint = $derived(() => {
+	const lyricsFingerprint = $derived.by(() => {
 		if (!lyricChunks || lyricChunks.length === 0) return 'empty';
 		return lyricChunks
 			.map(

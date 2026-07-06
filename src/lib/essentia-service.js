@@ -70,8 +70,14 @@ export class EssentiaService {
 	}
 
 	/**
-	 * Analyzes an audio file for beats, BPM, structure, and classification via the API.
-	 * Uses the official Essentia API /analyze/full endpoint for complete analysis.
+	 * Analyzes an audio file for beats, BPM, onsets, and song structure via the API.
+	 *
+	 * Endpoint: POST /analyze/fast (see https://essentia.v1su4.dev/docs)
+	 * - **fast** — shorter jobs we actually need (BPM, beats, onsets, structure/sections).
+	 *   Structure labels are not perfect; client-side `postProcessSections()` relabels/splits them.
+	 * - **full** — superset of slower endpoints (classification, tonal, etc.) we do not use yet.
+	 *
+	 * Do not switch to /analyze/full unless you need extra fields; structure already comes from fast.
 	 * @param {File} audioFile - The audio file to analyze
 	 * @returns {Promise<{bpm: number, beats: number[], confidence: number, onsets: number[], duration: number, structure: object, classification?: object, tonal?: object}>}
 	 */
