@@ -114,12 +114,18 @@
 		<div class="panel-scroll flex max-h-64 flex-col gap-1.5 overflow-y-auto">
 			{#each storyPlan.chunks || [] as chunk, i (i)}
 				<div class="rounded-lg border border-zinc-800/70 bg-zinc-900/60 px-3 py-2">
-					<div class="flex items-center justify-between text-[10px] text-zinc-600">
-						<span class="tracking-wider uppercase">{chunk.sectionLabel || 'scene'}</span>
-						<span class="metric">{Math.floor(chunk.start || 0)}s</span>
+					<div class="flex items-center justify-between gap-2 text-[10px] text-zinc-600">
+						<span class="tracking-wider uppercase">
+							{#if chunk.text}
+								{Math.floor(chunk.start || 0)}s · {chunk.sectionLabel || 'lyric'}
+							{:else}
+								{chunk.sectionLabel || 'scene'}
+							{/if}
+						</span>
+						<span class="metric shrink-0">{Math.floor(chunk.start || 0)}–{Math.floor(chunk.end || 0)}s</span>
 					</div>
 					{#if chunk.text}
-						<p class="mt-0.5 text-xs text-zinc-300 italic">“{chunk.text}”</p>
+						<p class="mt-0.5 text-xs text-zinc-200">“{chunk.text}”</p>
 					{/if}
 					{#if chunk.prompt}
 						<p class="mt-1 line-clamp-2 text-[11px] text-zinc-500">{chunk.prompt}</p>

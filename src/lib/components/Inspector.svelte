@@ -23,11 +23,14 @@
 		sectionVideoPools = $bindable({}),
 		sectionColorPalette = [],
 		selectedSectionIndex = $bindable(-1),
+		activeSectionIndex = -1,
 		onPreviewClip = () => {},
 		// TriggerControls
 		triggerSource = $bindable('onsets'),
 		hasMidi = false,
 		hasOnsets = false,
+		onsetCount = 0,
+		beatCount = 0,
 		markerDensity = $bindable(0.6),
 		markerSwapThreshold = $bindable(4),
 		randomSkip = $bindable(false),
@@ -98,6 +101,7 @@
 				bind:sectionVideoPools
 				{sectionColorPalette}
 				bind:selectedSectionIndex
+				activeSectionIndex={activeSectionIndex}
 				{onPreviewClip}
 			/>
 		{:else if activeTab === 'triggers'}
@@ -105,6 +109,10 @@
 				bind:triggerSource
 				{hasMidi}
 				{hasOnsets}
+				{bpm}
+				{onsetCount}
+				{beatCount}
+				{sections}
 				bind:markerDensity
 				bind:markerSwapThreshold
 				bind:randomSkip

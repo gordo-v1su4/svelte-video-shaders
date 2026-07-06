@@ -11,6 +11,7 @@
 		sectionVideoPools = $bindable({}),
 		sectionColorPalette = [],
 		selectedSectionIndex = $bindable(-1),
+		activeSectionIndex = -1,
 		onPreviewClip = (/** @type {number} */ _clipIndex) => {}
 	} = $props();
 
@@ -31,8 +32,11 @@
 	});
 
 	function poolFor(sectionIndex) {
-		const pool = sectionVideoPools[sectionIndex];
-		return Array.isArray(pool) && pool.length > 0 ? pool : clips.map((_, i) => i);
+		if (sectionVideoPools && sectionIndex in sectionVideoPools) {
+			const pool = sectionVideoPools[sectionIndex];
+			return Array.isArray(pool) ? pool : clips.map((_, i) => i);
+		}
+		return clips.map((_, i) => i);
 	}
 
 	function toggleClip(sectionIndex, clipIndex) {
@@ -59,7 +63,8 @@
 
 	{#if sections.length === 0}
 		<p class="text-xs text-zinc-600">
-			Run analysis to detect song sections, then assign clips per section.
+			Run analysis to detect song sections. Tap a section chip, then click clips to choose which
+			videos can play during that part of the song.
 		</p>
 	{:else}
 		<div class="flex flex-wrap gap-1.5">
@@ -67,8 +72,10 @@
 				<button
 					type="button"
 					class="rounded-full border px-2.5 py-1 text-[11px] transition-colors"
-					style:border-color={selectedSectionIndex === i ? colorFor(i) : 'transparent'}
-					style:background-color={`${colorFor(i)}${selectedSectionIndex === i ? '44' : '22'}`}
+					style:border-color={selectedSectionIndex === i || activeSectionIndex === i
+						? colorFor(i)
+						: 'transparent'}
+					style:background-color={`${colorFor(i)}${selectedSectionIndex === i || activeSectionIndex === i ? '44' : '22'}`}
 					onclick={() => (selectedSectionIndex = selectedSectionIndex === i ? -1 : i)}
 				>
 					<span style:color={colorFor(i)}

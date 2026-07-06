@@ -104,7 +104,7 @@
 	let currentTime = $state(0);
 	let duration = $state(0);
 	let currentClipIndex = $state(0);
-	let currentSectionIndex = -1;
+	let currentSectionIndex = $state(-1);
 	let markerCounter = $state(0);
 	let beatActive = $state(false);
 	let currentSpeed = $state(1);
@@ -468,8 +468,9 @@
 				videoFiles.length,
 				sections.length > 0
 			);
-			if (pool.length > 0 && !pool.includes(currentClipIndex)) {
-				swapToClip(pool[0], mappedTime);
+			if (pool.length > 0) {
+				const preferred = pool[section.index % pool.length];
+				swapToClip(preferred, mappedTime);
 			}
 			// Prewarm first pool clip of the NEXT section for a hitch-free boundary
 			const nextPool = poolForSection(
@@ -782,10 +783,13 @@
 				bind:sectionVideoPools
 				sectionColorPalette={SECTION_COLORS}
 				bind:selectedSectionIndex
+				activeSectionIndex={currentSectionIndex}
 				onPreviewClip={previewClip}
 				bind:triggerSource
 				hasMidi={false}
 				hasOnsets={(analysis?.onsets?.length || 0) > 0}
+				onsetCount={analysis?.onsets?.length || 0}
+				beatCount={analysis?.beats?.length || 0}
 				bind:markerDensity
 				bind:markerSwapThreshold
 				bind:randomSkip

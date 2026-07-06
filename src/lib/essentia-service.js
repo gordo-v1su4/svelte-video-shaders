@@ -82,7 +82,7 @@ export class EssentiaService {
 			);
 		}
 
-		console.log(`[EssentiaService] 📤 Sending audio file to ${API_URL}/analyze/full`);
+		console.log(`[EssentiaService] 📤 Sending audio file to ${API_URL}/analyze/fast`);
 		console.log(
 			`[EssentiaService] File: ${audioFile.name}, Size: ${(audioFile.size / 1024).toFixed(2)} KB`
 		);
@@ -93,7 +93,7 @@ export class EssentiaService {
 		try {
 			const startTime = performance.now();
 			const response = await fetch(
-				`${API_URL}/analyze/full`,
+				`${API_URL}/analyze/fast`,
 				buildFetchOptions({
 					method: 'POST',
 					body: formData
@@ -131,14 +131,7 @@ export class EssentiaService {
 			return result;
 		} catch (e) {
 			console.error('[EssentiaService] ❌ Analysis failed:', e);
-			return {
-				bpm: 0,
-				beats: [],
-				confidence: 0,
-				onsets: [],
-				duration: 0,
-				structure: { sections: [], boundaries: [] }
-			};
+			throw e instanceof Error ? e : new Error(String(e));
 		}
 	}
 

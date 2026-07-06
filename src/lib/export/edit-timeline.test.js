@@ -12,8 +12,12 @@ describe('poolForSection', () => {
 		expect(poolForSection(0, {}, 3, true)).toEqual([0, 1, 2]);
 	});
 
-	it('defaults later sections to empty when sections exist', () => {
-		expect(poolForSection(2, {}, 3, true)).toEqual([]);
+	it('defaults later sections to all clips when pool unset', () => {
+		expect(poolForSection(2, {}, 3)).toEqual([0, 1, 2]);
+	});
+
+	it('honors explicit empty pools', () => {
+		expect(poolForSection(1, { 1: [] }, 3)).toEqual([]);
 	});
 
 	it('defaults to all clips when there are no sections', () => {

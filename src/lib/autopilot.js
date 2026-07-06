@@ -119,7 +119,9 @@ export async function runAutopilot(inputs, options) {
 	let analysis;
 	try {
 		const raw = await services.analyze(song);
-		const structure = postProcessSections(raw.structure, raw.duration || duration);
+		const structure = postProcessSections(raw.structure, raw.duration || duration, {
+			energyCurve: raw.energy?.curve
+		});
 		analysis = {
 			bpm: raw.bpm || 0,
 			beats: raw.beats || [],

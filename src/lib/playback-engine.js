@@ -229,31 +229,136 @@ export function rebuildSectionBoundaries(sections) {
 	return Array.from(new Set(cuts)).sort((a, b) => a - b);
 }
 
-/**
- * Post-process structure sections from the analysis API; falls back to a
- * synthesized intro/verse/chorus/outro layout when detection is unusable.
- */
-export function postProcessSections(structure, duration) {
-	if (!structure || !structure.sections || !duration) {
-		return { sections: [], boundaries: [] };
+function normalizeSectionRow(section, songDuration = 0) {
+	const start = Math.max(0, Number(section.start) || 0);
+	let end = Number(section.end);
+	if (!Number.isFinite(end) || end <= start) {
+		end = songDuration > start ? songDuration : start + 1;
+	}
+	const span = end - start;
+	const duration =
+		Number.isFinite(Number(section.duration)) && Number(section.duration) > 0
+			? Number(section.duration)
+			: span;
+	return {
+		start,
+		end,
+		duration,
+		energy: Number(section.energy) || 0,
+		label: String(section.label ?? '').trim()
+	};
+}
+
+function meanEnergyForSection(energyCurve, start, end, songDuration) {
+	if (!energyCurve?.length || !songDuration) return null;
+	const n = energyCurve.length;
+	const i0 = Math.max(0, Math.floor((start / songDuration) * n));
+	const i1 = Math.min(n, Math.ceil((end / songDuration) * n));
+	if (i1 <= i0) return energyCurve[i0] ?? 0;
+	let sum = 0;
+	for (let i = i0; i < i1; i++) sum += energyCurve[i];
+	return sum / (i1 - i0);
+}
+
+/** Fix common Essentia / SBic label typos and aliases. */
+export function mapEssentiaSectionLabel(label) {
+	const raw = String(label || '')
+		.trim()
+		.toLowerCase();
+	if (!raw || raw === 'full' || raw === 'segment' || raw === 'section' || raw === 'unknown') {
+		return '';
+	}
+	if (raw === 'course' || raw === 'hook' || raw === 'refrain') return 'chorus';
+	if (raw === 'prechorus' || raw === 'pre-chorus' || raw === 'pre_chorus') return 'pre-chorus';
+	if (raw === 'break' || raw === 'breakdown' || raw === 'drop') return 'bridge';
+	if (/^verse\s*\d*$/.test(raw)) return 'verse';
+	if (/^chorus\s*\d*$/.test(raw)) return 'chorus';
+	if (['intro', 'verse', 'chorus', 'bridge', 'outro', 'pre-chorus', 'instrumental', 'solo'].includes(raw)) {
+		return raw;
+	}
+	if (/^[a-d]$/.test(raw)) {
+		const map = { a: 'intro', b: 'verse', c: 'chorus', d: 'outro' };
+		return map[raw] || raw;
+	}
+	return raw;
+}
+
+function isMusicalSectionLabel(label) {
+	return /^(intro|verse|chorus|bridge|outro|pre-chorus|instrumental|solo)/.test(
+		String(label || '').toLowerCase()
+	);
+}
+
+function relabelSectionsByEnergy(sections, energyCurve, songDuration) {
+	if (sections.length === 0) return sections;
+
+	const scored = sections.map((section, index) => {
+		const meanEnergy =
+			meanEnergyForSection(energyCurve, section.start, section.end, songDuration) ??
+			section.energy;
+		const mapped = mapEssentiaSectionLabel(section.label);
+		return { ...section, index, meanEnergy, mappedLabel: mapped };
+	});
+
+	const energies = scored.map((s) => s.meanEnergy);
+	const sorted = [...energies].sort((a, b) => a - b);
+	const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
+	const max = Math.max(...energies, median);
+	const chorusThreshold = median + (max - median) * 0.3;
+
+	const verseCount = scored.filter((s) => s.mappedLabel === 'verse').length;
+	const needsRelabel =
+		scored.length > 1 &&
+		(verseCount / scored.length >= 0.75 ||
+			scored.every((s) => !isMusicalSectionLabel(s.mappedLabel)));
+
+	if (!needsRelabel) {
+		return scored.map((s) => ({
+			...s,
+			label: s.mappedLabel || s.label || `section ${s.index + 1}`
+		}));
 	}
 
-	const sections = structure.sections;
-	const hasValidSections = sections.some((s) => s.duration > 5 && s.end > s.start && s.start >= 0);
+	return scored.map((s, i) => {
+		if (isMusicalSectionLabel(s.mappedLabel) && s.mappedLabel !== 'verse') {
+			return { ...s, label: s.mappedLabel };
+		}
+		if (i === 0 && s.duration <= songDuration * 0.14) {
+			return { ...s, label: 'intro' };
+		}
+		if (i === scored.length - 1 && s.duration <= songDuration * 0.14) {
+			return { ...s, label: 'outro' };
+		}
+		if (s.meanEnergy >= chorusThreshold) {
+			return { ...s, label: 'chorus' };
+		}
+		if (i > 0 && i < scored.length - 1 && s.meanEnergy > median * 1.05 && s.duration < songDuration * 0.12) {
+			return { ...s, label: 'bridge' };
+		}
+		return { ...s, label: 'verse' };
+	});
+}
 
-	if (hasValidSections) {
-		const validSections = sections.filter((s) => s.duration > 1 && s.end > s.start && s.start >= 0);
-		if (validSections.length > 0) {
-			return {
-				sections: validSections,
-				boundaries: validSections
-					.map((s) => s.start)
-					.concat([validSections[validSections.length - 1].end])
-			};
+function mergeShortSections(sections, minDuration = 6) {
+	if (sections.length <= 1) return sections;
+	const merged = [];
+	for (const section of sections) {
+		const prev = merged[merged.length - 1];
+		if (prev && section.duration < minDuration) {
+			prev.end = section.end;
+			prev.duration = prev.end - prev.start;
+			prev.energy = (prev.energy + section.energy) / 2;
+			if (!isMusicalSectionLabel(prev.label) && isMusicalSectionLabel(section.label)) {
+				prev.label = section.label;
+			}
+		} else {
+			merged.push({ ...section });
 		}
 	}
+	return merged;
+}
 
-	// Fallback: synthesized sections from typical song structure
+function buildFallbackSections(duration) {
 	const fallbackSections = [];
 	const boundaries = [0];
 
@@ -274,7 +379,7 @@ export function postProcessSections(structure, duration) {
 	const mainDuration = outroStart - mainStart;
 
 	if (mainDuration > 20) {
-		const numParts = Math.max(1, Math.floor(mainDuration / 30));
+		const numParts = Math.max(2, Math.floor(mainDuration / 28));
 		const partDuration = mainDuration / numParts;
 		for (let i = 0; i < numParts; i++) {
 			const start = mainStart + i * partDuration;
@@ -288,7 +393,7 @@ export function postProcessSections(structure, duration) {
 			});
 			boundaries.push(end);
 		}
-	} else {
+	} else if (mainDuration > 0) {
 		fallbackSections.push({
 			start: mainStart,
 			end: outroStart,
@@ -311,6 +416,60 @@ export function postProcessSections(structure, duration) {
 	}
 
 	return { sections: fallbackSections, boundaries };
+}
+
+/**
+ * Post-process structure sections from the analysis API; falls back to a
+ * synthesized intro/verse/chorus/outro layout when detection is unusable.
+ * Uses the energy curve to relabel generic "verse"/"full" SBic output.
+ */
+export function postProcessSections(structure, duration, options = {}) {
+	const energyCurve = options.energyCurve || null;
+	if (!structure || !structure.sections || !duration) {
+		return { sections: [], boundaries: [] };
+	}
+
+	let sections = structure.sections
+		.map((s) => normalizeSectionRow(s, duration))
+		.filter((s) => s.end > s.start + 0.25);
+
+	if (sections.length === 0) {
+		return buildFallbackSections(duration);
+	}
+
+	// Single "full song" segment → split into a musical layout
+	if (
+		sections.length === 1 &&
+		(!sections[0].label || /^(full|song|track)$/i.test(sections[0].label))
+	) {
+		return buildFallbackSections(duration);
+	}
+
+	const hasValidSections = sections.some((s) => s.duration >= 4);
+	if (!hasValidSections) {
+		return buildFallbackSections(duration);
+	}
+
+	sections = sections.map((s) => ({
+		...s,
+		label: mapEssentiaSectionLabel(s.label) || s.label || 'section'
+	}));
+
+	sections = mergeShortSections(sections, 5);
+
+	if (energyCurve?.length) {
+		sections = relabelSectionsByEnergy(sections, energyCurve, duration);
+	}
+
+	sections = sections.map((s) => ({
+		...s,
+		label: mapEssentiaSectionLabel(s.label) || s.label || 'section'
+	}));
+
+	return {
+		sections,
+		boundaries: rebuildSectionBoundaries(sections)
+	};
 }
 
 /** Section lookup for a time (with index), defaulting to a whole-song row. */

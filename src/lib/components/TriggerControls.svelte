@@ -3,6 +3,10 @@
 		triggerSource = $bindable('onsets'), // 'onsets' | 'midi' | 'grid' | 'off'
 		hasMidi = false,
 		hasOnsets = false,
+		bpm = 0,
+		onsetCount = 0,
+		beatCount = 0,
+		sections = [],
 		markerDensity = $bindable(0.6),
 		markerSwapThreshold = $bindable(4),
 		randomSkip = $bindable(false),
@@ -26,6 +30,41 @@
 
 <div class="flex flex-col gap-3">
 	<span class="text-xs font-semibold tracking-widest text-zinc-500 uppercase">Beat Triggers</span>
+
+	{#if bpm > 0 || sections.length > 0}
+		<div class="rounded-lg border border-zinc-800 bg-zinc-900/80 p-2.5 text-[11px] text-zinc-400">
+			{#if bpm > 0}
+				<div class="flex justify-between">
+					<span>BPM</span>
+					<span class="metric text-zinc-200">{Math.round(bpm)}</span>
+				</div>
+			{/if}
+			<div class="mt-1 flex justify-between">
+				<span>Onsets detected</span>
+				<span class="metric text-zinc-200">{onsetCount}</span>
+			</div>
+			{#if sections.length > 0}
+				<div class="mt-2 border-t border-zinc-800 pt-2">
+					<div class="mb-1 text-zinc-500">Song sections</div>
+					<div class="flex flex-wrap gap-1">
+						{#each sections as section, i (i)}
+							<span
+								class="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300 uppercase"
+								title="{Math.floor(section.start)}s – {Math.floor(section.end)}s"
+							>
+								{section.label || `S${i + 1}`}
+							</span>
+						{/each}
+					</div>
+				</div>
+			{:else}
+				<p class="mt-1 text-zinc-600">No sections — re-run analysis or check Essentia connection.</p>
+			{/if}
+			{#if !hasOnsets}
+				<p class="mt-1 text-amber-500/90">Onset markers hidden — analysis may have failed.</p>
+			{/if}
+		</div>
+	{/if}
 
 	<div class="flex gap-1">
 		{#each sources as source (source.id)}

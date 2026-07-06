@@ -11,15 +11,13 @@ import { seededRandom, sectionAtTime, sampleSpeedCurve } from '$lib/playback-eng
 
 /**
  * Replicates the live section pool semantics:
- * - explicit pool array wins
- * - with sections: section 0 defaults to all clips, others default to empty
- * - without sections: all clips
+ * - explicit pool entry (including []) wins
+ * - unset section index defaults to all clips
  */
-export function poolForSection(sectionIndex, sectionVideoPools, clipCount, hasSections) {
-	const pool = sectionVideoPools?.[sectionIndex];
-	if (Array.isArray(pool)) return pool;
-	if (hasSections) {
-		return sectionIndex === 0 ? Array.from({ length: clipCount }, (_, i) => i) : [];
+export function poolForSection(sectionIndex, sectionVideoPools, clipCount) {
+	if (sectionVideoPools && sectionIndex in sectionVideoPools) {
+		const pool = sectionVideoPools[sectionIndex];
+		return Array.isArray(pool) ? pool : [];
 	}
 	return Array.from({ length: clipCount }, (_, i) => i);
 }

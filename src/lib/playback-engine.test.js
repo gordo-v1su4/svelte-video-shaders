@@ -110,15 +110,43 @@ describe('TriggerScheduler', () => {
 });
 
 describe('postProcessSections', () => {
-	it('keeps valid detected sections', () => {
+	it('keeps valid detected sections with mapped labels', () => {
 		const structure = {
 			sections: [
-				{ start: 0, end: 30, duration: 30, label: 'a' },
-				{ start: 30, end: 60, duration: 30, label: 'b' }
+				{ start: 0, end: 30, duration: 30, label: 'a', energy: 0.2 },
+				{ start: 30, end: 60, duration: 30, label: 'c', energy: 0.8 }
 			]
 		};
 		const result = postProcessSections(structure, 60);
 		expect(result.sections).toHaveLength(2);
+		expect(result.sections[0].label).toBe('intro');
+		expect(result.sections[1].label).toBe('chorus');
+	});
+
+	it('splits a single full-song segment into a musical layout', () => {
+		const structure = {
+			sections: [{ start: 0, end: 180, duration: 180, label: 'full', energy: 0 }]
+		};
+		const result = postProcessSections(structure, 180);
+		expect(result.sections.length).toBeGreaterThan(2);
+		const labels = result.sections.map((s) => s.label);
+		expect(labels).toContain('intro');
+		expect(labels).toContain('outro');
+	});
+
+	it('relabels mostly-verse SBic output using energy', () => {
+		const structure = {
+			sections: [
+				{ start: 0, end: 30, duration: 30, label: 'verse', energy: 0.2 },
+				{ start: 30, end: 60, duration: 30, label: 'verse', energy: 0.9 },
+				{ start: 60, end: 90, duration: 30, label: 'verse', energy: 0.25 },
+				{ start: 90, end: 120, duration: 30, label: 'verse', energy: 0.85 }
+			]
+		};
+		const energyCurve = Array.from({ length: 120 }, (_, i) => (i >= 30 && i < 60 ? 0.9 : i >= 90 ? 0.85 : 0.2));
+		const result = postProcessSections(structure, 120, { energyCurve });
+		const labels = result.sections.map((s) => s.label);
+		expect(labels.filter((l) => l === 'chorus').length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('synthesizes a fallback layout for unusable sections', () => {
