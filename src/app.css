@@ -1,7 +1,4 @@
 @import 'tailwindcss';
-@import '@layerstack/tailwind/core.css';
-@import '@layerstack/tailwind/utils.css';
-
 @source '../node_modules/svelte-ux/dist';
 
 /* Dark-first editor theme: one accent, zinc surface scale */
