@@ -5,8 +5,8 @@ import { playwright } from '@vitest/browser-playwright';
 
 export default defineConfig(({ ssrBuild }) => ({
 	plugins: [
-		tailwindcss(),
 		sveltekit(),
+		tailwindcss(),
 		{
 			name: 'configure-response-headers',
 			configureServer: (server) => {
