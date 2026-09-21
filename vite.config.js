@@ -27,9 +27,8 @@ export default defineConfig(({ ssrBuild }) => ({
 			: {
 				rollupOptions: {
 					output: {
-						manualChunks: {
-							// three is often external in SSR; split only tweakpane here
-							tweakpane: ['svelte-tweakpane-ui']
+manualChunks(id) {
+							if (id.includes('svelte-tweakpane-ui')) return 'tweakpane';
 						}
 					}
 				}
