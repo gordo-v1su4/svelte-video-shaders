@@ -16,8 +16,7 @@ export const pixelationFragmentShader = `
 `;
 
 export const pixelationUniforms = {
-    u_time: { value: 0.0 },
-    u_granularity: { value: 20.0 },
-    u_resolution: { value: [1920, 1080] }
+	u_time: { value: 0.0 },
+	u_granularity: { value: 20.0 },
+	u_resolution: { value: [1920, 1080] }
 };
-

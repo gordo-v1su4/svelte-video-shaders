@@ -31,9 +31,8 @@ export const chromaticAberrationFragmentShader = `
 `;
 
 export const chromaticAberrationUniforms = {
-    u_time: { value: 0.0 },
-    u_offset: { value: [0.002, 0.002] },
-    u_radialModulation: { value: 0.0 },
-    u_modulationOffset: { value: 0.15 }
+	u_time: { value: 0.0 },
+	u_offset: { value: [0.002, 0.002] },
+	u_radialModulation: { value: 0.0 },
+	u_modulationOffset: { value: 0.15 }
 };
-

@@ -51,7 +51,6 @@ export async function generateThumbnail(file) {
 				0.8
 			);
 		});
-
 	} catch (err) {
 		console.error('Error generating thumbnail:', err);
 		return null;

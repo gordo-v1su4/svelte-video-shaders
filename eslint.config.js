@@ -1,6 +1,3 @@
-// For more info, see https://github.com/storybookjs/eslint-plugin-storybook#configuration-flat-config-format
-import storybook from 'eslint-plugin-storybook';
-
 import prettier from 'eslint-config-prettier';
 import vitest from 'eslint-plugin-vitest';
 import { includeIgnoreFile } from '@eslint/compat';
@@ -16,12 +13,19 @@ const gitignorePath = fileURLToPath(new URL('./.gitignore', import.meta.url));
 export default [
 	// Ignores
 	includeIgnoreFile(gitignorePath),
+	{ ignores: ['static/**'] },
 
 	// Base
 	js.configs.recommended,
 	{
 		languageOptions: {
 			globals: { ...globals.browser, ...globals.node, ...globals.vitest }
+		},
+		rules: {
+			'no-unused-vars': [
+				'error',
+				{ argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'none' }
+			]
 		}
 	},
 
@@ -71,9 +75,6 @@ export default [
 			'vitest/valid-title': 'error'
 		}
 	},
-
-	// Storybook
-	...storybook.configs['flat/recommended'],
 
 	// Formatting (last - must be after all other configs)
 	prettier

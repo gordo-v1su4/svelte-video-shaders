@@ -50,10 +50,9 @@ export const bloomFragmentShader = `
 `;
 
 export const bloomUniforms = {
-    u_time: { value: 0.0 },
-    u_intensity_bloom: { value: 1.0 },
-    u_luminanceThreshold: { value: 0.9 },
-    u_luminanceSmoothing: { value: 0.025 },
-    u_resolution: { value: [1920, 1080] }
+	u_time: { value: 0.0 },
+	u_intensity_bloom: { value: 1.0 },
+	u_luminanceThreshold: { value: 0.9 },
+	u_luminanceSmoothing: { value: 0.025 },
+	u_resolution: { value: [1920, 1080] }
 };
-

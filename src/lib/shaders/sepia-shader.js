@@ -20,7 +20,6 @@ export const sepiaFragmentShader = `
 `;
 
 export const sepiaUniforms = {
-    u_time: { value: 0.0 },
-    u_sepia_intensity: { value: 1.0 }
+	u_time: { value: 0.0 },
+	u_sepia_intensity: { value: 1.0 }
 };
-

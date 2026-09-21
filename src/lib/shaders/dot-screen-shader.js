@@ -29,8 +29,7 @@ export const dotScreenFragmentShader = `
 `;
 
 export const dotScreenUniforms = {
-    u_time: { value: 0.0 },
-    u_dot_angle: { value: 1.57 },
-    u_dot_scale: { value: 1.0 }
+	u_time: { value: 0.0 },
+	u_dot_angle: { value: 1.57 },
+	u_dot_scale: { value: 1.0 }
 };
-

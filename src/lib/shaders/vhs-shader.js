@@ -117,14 +117,14 @@ export const vhsFragmentShader = `
 `;
 
 export const vhsUniforms = {
-    u_time: { value: 0.0 },
-    u_distortion: { value: 0.1 },
-    u_scanlineIntensity: { value: 0.3 },
-    u_rgbShift: { value: 0.02 },
-    u_noise: { value: 0.1 },
-    u_flickerIntensity: { value: 0.05 },
-    u_trackingIntensity: { value: 0.1 },
-    u_trackingSpeed: { value: 1.0 },
-    u_trackingFreq: { value: 50.0 },
-    u_waveAmplitude: { value: 0.1 }
+	u_time: { value: 0.0 },
+	u_distortion: { value: 0.1 },
+	u_scanlineIntensity: { value: 0.3 },
+	u_rgbShift: { value: 0.02 },
+	u_noise: { value: 0.1 },
+	u_flickerIntensity: { value: 0.05 },
+	u_trackingIntensity: { value: 0.1 },
+	u_trackingSpeed: { value: 1.0 },
+	u_trackingFreq: { value: 50.0 },
+	u_waveAmplitude: { value: 0.1 }
 };

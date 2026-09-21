@@ -26,11 +26,10 @@ export const scanlineFragmentShader = `
 `;
 
 export const scanlineUniforms = {
-    u_time: { value: 0.0 },
-    u_scanline_density: { value: 1.25 },
-    u_scanline_intensity: { value: 0.3 },
-    u_scanline_width: { value: 2.0 },
-    u_scanline_speed: { value: 0.0 },
-    u_scanline_offset: { value: 0.0 }
+	u_time: { value: 0.0 },
+	u_scanline_density: { value: 1.25 },
+	u_scanline_intensity: { value: 0.3 },
+	u_scanline_width: { value: 2.0 },
+	u_scanline_speed: { value: 0.0 },
+	u_scanline_offset: { value: 0.0 }
 };
-

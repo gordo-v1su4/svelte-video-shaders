@@ -37,8 +37,7 @@ export const hueSaturationFragmentShader = `
 `;
 
 export const hueSaturationUniforms = {
-    u_time: { value: 0.0 },
-    u_hue: { value: 0.0 },
-    u_saturation: { value: 0.0 }
+	u_time: { value: 0.0 },
+	u_hue: { value: 0.0 },
+	u_saturation: { value: 0.0 }
 };
-

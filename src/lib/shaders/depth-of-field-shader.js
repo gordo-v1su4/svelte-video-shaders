@@ -59,11 +59,10 @@ export const depthOfFieldFragmentShader = `
 `;
 
 export const depthOfFieldUniforms = {
-    u_time: { value: 0.0 },
-    u_focusDistance: { value: 0.3 },
-    u_focusRange: { value: 0.5 },
-    u_bokehScale: { value: 2.0 },
-    u_resolution: { value: [1920, 1080] },
-    u_focusPoint: { value: [0.5, 0.5] }
+	u_time: { value: 0.0 },
+	u_focusDistance: { value: 0.3 },
+	u_focusRange: { value: 0.5 },
+	u_bokehScale: { value: 2.0 },
+	u_resolution: { value: [1920, 1080] },
+	u_focusPoint: { value: [0.5, 0.5] }
 };
-

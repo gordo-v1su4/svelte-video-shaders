@@ -57,10 +57,9 @@ export const tiltShiftFragmentShader = `
 `;
 
 export const tiltShiftUniforms = {
-    u_time: { value: 0.0 },
-    u_tilt_offset: { value: 0.3 },
-    u_tilt_feather: { value: 0.2 },
-    u_tilt_rotation: { value: 0.0 },
-    u_resolution: { value: [1920, 1080] }
+	u_time: { value: 0.0 },
+	u_tilt_offset: { value: 0.3 },
+	u_tilt_feather: { value: 0.2 },
+	u_tilt_rotation: { value: 0.0 },
+	u_resolution: { value: [1920, 1080] }
 };
-

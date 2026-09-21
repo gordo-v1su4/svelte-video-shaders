@@ -130,16 +130,15 @@ export const crtFragmentShader = `
 `;
 
 export const crtUniforms = {
-    u_time: { value: 0.0 },
-    u_resolution: { value: [1920, 1080] },
-    u_pixelSize: { value: 5.0 },
-    u_distortion: { value: 0.3 },
-    u_blur: { value: 0.3 },
-    u_aberration: { value: 0.05 },
-    u_scanlineIntensity: { value: 0.05 },
-    u_scanlineSpeed: { value: 100.0 },
-    u_gridIntensity: { value: 0.1 },
-    u_vignetteIntensity: { value: 1.0 },
-    u_dither: { value: 0.1 }
+	u_time: { value: 0.0 },
+	u_resolution: { value: [1920, 1080] },
+	u_pixelSize: { value: 5.0 },
+	u_distortion: { value: 0.3 },
+	u_blur: { value: 0.3 },
+	u_aberration: { value: 0.05 },
+	u_scanlineIntensity: { value: 0.05 },
+	u_scanlineSpeed: { value: 100.0 },
+	u_gridIntensity: { value: 0.1 },
+	u_vignetteIntensity: { value: 1.0 },
+	u_dither: { value: 0.1 }
 };
-

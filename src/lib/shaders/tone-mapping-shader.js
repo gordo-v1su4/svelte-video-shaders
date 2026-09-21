@@ -42,9 +42,8 @@ export const toneMappingFragmentShader = `
 `;
 
 export const toneMappingUniforms = {
-    u_time: { value: 0.0 },
-    u_exposure: { value: 1.0 },
-    u_maxLuminance: { value: 16.0 },
-    u_middleGrey: { value: 0.6 }
+	u_time: { value: 0.0 },
+	u_exposure: { value: 1.0 },
+	u_maxLuminance: { value: 16.0 },
+	u_middleGrey: { value: 0.6 }
 };
-

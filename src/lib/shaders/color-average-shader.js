@@ -15,6 +15,5 @@ export const colorAverageFragmentShader = `
 `;
 
 export const colorAverageUniforms = {
-    u_time: { value: 0.0 }
+	u_time: { value: 0.0 }
 };
-

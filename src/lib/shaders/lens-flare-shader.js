@@ -128,18 +128,17 @@ export const lensFlareFragmentShader = `
 `;
 
 export const lensFlareUniforms = {
-    u_time: { value: 0.0 },
-    u_flareBrightness: { value: 1.0 },
-    u_flareSize: { value: 0.005 },
-    u_flareSpeed: { value: 0.4 },
-    u_flareShape: { value: 0.1 },
-    u_ghostScale: { value: 0.1 },
-    u_haloScale: { value: 0.5 },
-    u_starBurst: { value: 1.0 },
-    u_sunPosition: { value: [0.5, 0.5, -1.0] }, // z < 0 means follow mouse mode
-    u_anamorphic: { value: 0.0 },
-    u_colorGain: { value: [1.0, 0.8, 0.6] }, // Warm white
-    u_secondaryGhosts: { value: 1.0 },
-    u_additionalStreaks: { value: 1.0 }
+	u_time: { value: 0.0 },
+	u_flareBrightness: { value: 1.0 },
+	u_flareSize: { value: 0.005 },
+	u_flareSpeed: { value: 0.4 },
+	u_flareShape: { value: 0.1 },
+	u_ghostScale: { value: 0.1 },
+	u_haloScale: { value: 0.5 },
+	u_starBurst: { value: 1.0 },
+	u_sunPosition: { value: [0.5, 0.5, -1.0] }, // z < 0 means follow mouse mode
+	u_anamorphic: { value: 0.0 },
+	u_colorGain: { value: [1.0, 0.8, 0.6] }, // Warm white
+	u_secondaryGhosts: { value: 1.0 },
+	u_additionalStreaks: { value: 1.0 }
 };
-

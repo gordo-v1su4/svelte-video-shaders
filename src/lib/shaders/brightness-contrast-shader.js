@@ -22,8 +22,7 @@ export const brightnessContrastFragmentShader = `
 `;
 
 export const brightnessContrastUniforms = {
-    u_time: { value: 0.0 },
-    u_brightness: { value: 0.0 },
-    u_contrast: { value: 0.0 }
+	u_time: { value: 0.0 },
+	u_brightness: { value: 0.0 },
+	u_contrast: { value: 0.0 }
 };
-

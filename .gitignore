@@ -1,5 +1,8 @@
 node_modules
 
+# Cursor (local rules / IDE)
+.cursor/
+
 # Output
 .output
 .vercel
@@ -32,3 +35,8 @@ api/models/
 *.mid
 *.wav
 *.mp3
+
+# Docs: ignore all except preview/ (images)
+/docs/*
+!/docs/preview/
+!/docs/preview/**

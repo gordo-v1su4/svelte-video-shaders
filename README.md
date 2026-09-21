@@ -4,6 +4,12 @@
 
 A high-performance video processing application that uses browser-native WebCodecs API for hardware-accelerated video decoding and Three.js for real-time shader-based effects.
 
+## Preview
+
+Current working UI: Peaks waveform with sections, sequencer strip, clip buckets, and shader controls.
+
+![Video Shaders — current app preview](docs/preview/app-preview.webp)
+
 ## Features
 
 - **Hardware-Accelerated Video Decoding** - Smooth 60fps playback via WebCodecs API
@@ -21,6 +27,7 @@ A high-performance video processing application that uses browser-native WebCode
 - Chrome 94+ or Edge 94+ (WebCodecs support required)
 
 Install Bun:
+
 ```bash
 # Windows (PowerShell)
 powershell -c "irm bun.sh/install.ps1|iex"
@@ -140,21 +147,25 @@ uniform float u_trebleLevel;     // Treble frequencies 0-1
 ## Troubleshooting
 
 ### "Port 5173 already in use"
+
 ```bash
 bun run dev -- --port 3000
 ```
 
 ### "WebCodecs not supported"
+
 - Ensure Chrome/Edge 94+
 - Check `chrome://gpu` for hardware acceleration
 - May require HTTPS in some enterprise environments
 
 ### Video won't load
+
 - Verify H.264 encoding: `ffmpeg -i video.mp4`
 - Check file isn't corrupt by playing in browser directly
 - Inspect browser console for specific errors
 
 ### Shaders not appearing
+
 - Check WebGL support: `chrome://gpu`
 - Inspect console for shader compilation errors
 - Verify Three.js initialized: `window.THREE` in console

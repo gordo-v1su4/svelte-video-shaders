@@ -36,9 +36,8 @@ export const depthFragmentShader = `
 `;
 
 export const depthUniforms = {
-    u_time: { value: 0.0 },
-    u_near: { value: 0.0 },
-    u_far: { value: 1.0 },
-    u_inverted: { value: 0.0 }
+	u_time: { value: 0.0 },
+	u_near: { value: 0.0 },
+	u_far: { value: 1.0 },
+	u_inverted: { value: 0.0 }
 };
-

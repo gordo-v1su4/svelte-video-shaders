@@ -143,14 +143,14 @@ export const xlsczNFragmentShader = `
 `;
 
 export const xlsczNUniforms = {
-    u_time: { value: 0.0 },
-    u_audioLevel: { value: 0.0 },
-    u_bassLevel: { value: 0.0 },
-    u_midLevel: { value: 0.0 },
-    u_trebleLevel: { value: 0.0 },
-    u_intensity: { value: 0.5 },
-    u_colorShift: { value: 0.3 },
-    u_pulseSpeed: { value: 2.0 },
-    u_waveAmplitude: { value: 0.5 },
-    u_resolution: { value: [1920, 1080] }
+	u_time: { value: 0.0 },
+	u_audioLevel: { value: 0.0 },
+	u_bassLevel: { value: 0.0 },
+	u_midLevel: { value: 0.0 },
+	u_trebleLevel: { value: 0.0 },
+	u_intensity: { value: 0.5 },
+	u_colorShift: { value: 0.3 },
+	u_pulseSpeed: { value: 2.0 },
+	u_waveAmplitude: { value: 0.5 },
+	u_resolution: { value: [1920, 1080] }
 };

@@ -69,15 +69,15 @@ export const anamorphicBreatheFragmentShader = `
 `;
 
 export const anamorphicBreatheUniforms = {
-    u_time: { value: 0.0 },
-    u_chromatic_enable: { value: 1.0 },
-    u_chromatic_amount: { value: 0.5 },
-    u_chromatic_speed: { value: 0.8 },
-    u_chromatic_style: { value: 1.0 },
-    u_defocus_enable: { value: 1.0 },
-    u_defocus_amount: { value: 0.4 },
-    u_defocus_speed: { value: 0.5 },
-    u_anamorphic_ratio: { value: 1.5 },
-    u_breathe_intensity: { value: 1.0 },
-    u_breathe_sync: { value: 1.0 }
+	u_time: { value: 0.0 },
+	u_chromatic_enable: { value: 1.0 },
+	u_chromatic_amount: { value: 0.5 },
+	u_chromatic_speed: { value: 0.8 },
+	u_chromatic_style: { value: 1.0 },
+	u_defocus_enable: { value: 1.0 },
+	u_defocus_amount: { value: 0.4 },
+	u_defocus_speed: { value: 0.5 },
+	u_anamorphic_ratio: { value: 1.5 },
+	u_breathe_intensity: { value: 1.0 },
+	u_breathe_sync: { value: 1.0 }
 };

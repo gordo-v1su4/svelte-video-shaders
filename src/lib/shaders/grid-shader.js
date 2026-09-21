@@ -25,8 +25,7 @@ export const gridFragmentShader = `
 `;
 
 export const gridUniforms = {
-    u_time: { value: 0.0 },
-    u_grid_scale: { value: 1.0 },
-    u_grid_lineWidth: { value: 0.0 }
+	u_time: { value: 0.0 },
+	u_grid_scale: { value: 1.0 },
+	u_grid_lineWidth: { value: 0.0 }
 };
-

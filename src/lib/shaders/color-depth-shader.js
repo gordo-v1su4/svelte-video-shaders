@@ -18,7 +18,6 @@ export const colorDepthFragmentShader = `
 `;
 
 export const colorDepthUniforms = {
-    u_time: { value: 0.0 },
-    u_bits: { value: 16.0 }
+	u_time: { value: 0.0 },
+	u_bits: { value: 16.0 }
 };
-

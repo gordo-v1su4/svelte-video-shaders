@@ -29,8 +29,7 @@ export const noiseFragmentShader = `
 `;
 
 export const noiseUniforms = {
-    u_time: { value: 0.0 },
-    u_opacity: { value: 0.02 },
-    u_premultiply: { value: 0.0 }
+	u_time: { value: 0.0 },
+	u_opacity: { value: 0.02 },
+	u_premultiply: { value: 0.0 }
 };
-
