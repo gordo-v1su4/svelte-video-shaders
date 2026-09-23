@@ -1,8 +1,7 @@
+import { clientToken } from '$lib/public-env.js';
+
 /** Shared Deepgram Listen query params for lyric/SRT extraction. */
-export function buildDeepgramListenQuery({
-	model = 'nova-3',
-	language = 'en'
-} = {}) {
+export function buildDeepgramListenQuery({ model = 'nova-3', language = 'en' } = {}) {
 	return new URLSearchParams({
 		model,
 		summarize: 'v2',
@@ -25,7 +24,7 @@ export const DEEPGRAM_LISTEN_URL = 'https://api.deepgram.com/v1/listen';
 export const VERCEL_TRANSCRIBE_BODY_LIMIT = 4 * 1024 * 1024;
 
 export function getClientDeepgramApiKey() {
-	return import.meta.env.VITE_DEEPGRAM_API_KEY || '';
+	return clientToken(import.meta.env.VITE_DEEPGRAM_API_KEY);
 }
 
 /**
