@@ -1,34 +1,17 @@
 /**
  * Audio Analysis Service - Calls Python Essentia API for beat detection
  *
- * API URL can be configured via environment variable:
- * - VITE_ESSENTIA_API_URL (defaults to https://essentia.v1su4.dev)
- * - VITE_ESSENTIA_API_KEY (optional, for authenticated endpoints)
- * - For production, set this to your deployed API URL
+ * Public build-time env (Vite inlines `VITE_*` into the browser bundle):
+ * - VITE_ESSENTIA_API_URL — single https URL, default https://essentia.v1su4.dev
+ * - VITE_ESSENTIA_API_KEY — optional single-line token
  *
- * To set: Create a .env file in the project root with:
- *   VITE_ESSENTIA_API_URL=https://essentia.v1su4.dev
- *   VITE_ESSENTIA_API_KEY=your-api-key-here
+ * Values that are not a URL or a single token are ignored. They are never logged.
  */
 
-// SvelteKit/Vite public env vars are available at build time.
-// Normalize legacy hostname (invalid cert on .com) so stale .env or cached builds still work.
-function normalizeEssentiaBaseUrl(raw) {
-	const base = (raw || 'https://essentia.v1su4.dev').replace(/\/$/, '');
-	return base.replace(/essentia\.v1su4\.com/i, 'essentia.v1su4.dev');
-}
+import { clientToken, sanitizePublicHttpUrl } from '$lib/public-env.js';
 
-const API_URL = normalizeEssentiaBaseUrl(import.meta.env.VITE_ESSENTIA_API_URL);
-const API_KEY = import.meta.env.VITE_ESSENTIA_API_KEY || '';
-
-// Log the API URL on module load to verify it's set correctly
-console.log(`[EssentiaService] Module loaded. API_URL: ${API_URL}`);
-console.log(`[EssentiaService] API_KEY configured: ${API_KEY ? 'Yes' : 'No'}`);
-console.log(
-	`[EssentiaService] Environment variable VITE_ESSENTIA_API_URL:`,
-	import.meta.env.VITE_ESSENTIA_API_URL
-);
-console.log(`[EssentiaService] API Key configured:`, API_KEY ? 'Yes' : 'No');
+const API_URL = sanitizePublicHttpUrl(import.meta.env.VITE_ESSENTIA_API_URL);
+const API_KEY = clientToken(import.meta.env.VITE_ESSENTIA_API_KEY);
 
 /**
  * Build fetch options with optional API key header
@@ -50,22 +33,16 @@ export class EssentiaService {
 	}
 
 	async initialize() {
-		// Check if API is available
-		console.log(`[EssentiaService] Initializing with API URL: ${API_URL}`);
 		try {
 			// Keep health check simple/public (no auth header needed).
 			const response = await fetch(`${API_URL}/health`, buildFetchOptions({}, false));
 			if (response.ok) {
 				this.isReady = true;
-				console.log(`[EssentiaService] ✅ API connected successfully at ${API_URL}`);
 			} else {
-				console.warn(
-					`[EssentiaService] ⚠️ API health check failed: ${response.status} ${response.statusText}`
-				);
+				console.warn(`[EssentiaService] API health check failed: ${response.status}`);
 			}
-		} catch (e) {
-			console.warn(`[EssentiaService] ❌ API not available at ${API_URL}:`, e.message);
-			console.warn('Start the API with: cd api && uvicorn main:app --reload --port 8000');
+		} catch {
+			console.warn('[EssentiaService] API not available');
 		}
 	}
 
@@ -88,7 +65,6 @@ export class EssentiaService {
 			);
 		}
 
-		console.log(`[EssentiaService] 📤 Sending audio file to ${API_URL}/analyze/fast`);
 		console.log(
 			`[EssentiaService] File: ${audioFile.name}, Size: ${(audioFile.size / 1024).toFixed(2)} KB`
 		);

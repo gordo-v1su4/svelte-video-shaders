@@ -1,7 +1,9 @@
+import { clientToken } from '$lib/public-env.js';
 import { exportSRT } from './srt-utils.js';
 import {
 	buildDeepgramListenQuery,
 	DEEPGRAM_LISTEN_URL,
+	getClientDeepgramApiKey,
 	pickTranscribeTransport,
 	VERCEL_TRANSCRIBE_BODY_LIMIT
 } from './deepgram-listen.js';
@@ -10,8 +12,8 @@ export const DEEPGRAM_DEV_TRANSCRIBE_ENDPOINT = '/api/transcribe';
 
 function deepgramListenOptions(options = {}) {
 	return {
-		model: options.model || import.meta.env.VITE_DEEPGRAM_MODEL || 'nova-3',
-		language: options.language || import.meta.env.VITE_DEEPGRAM_LANGUAGE || 'en'
+		model: options.model || clientToken(import.meta.env.VITE_DEEPGRAM_MODEL) || 'nova-3',
+		language: options.language || clientToken(import.meta.env.VITE_DEEPGRAM_LANGUAGE) || 'en'
 	};
 }
 
@@ -38,12 +40,16 @@ function throwDeepgramHttpError(response, payload, text) {
 		);
 	}
 	throw new Error(
-		payload?.error || payload?.reason || payload?.err_msg || text || `Deepgram transcription failed (${response.status})`
+		payload?.error ||
+			payload?.reason ||
+			payload?.err_msg ||
+			text ||
+			`Deepgram transcription failed (${response.status})`
 	);
 }
 
 async function postAudioToDeepgramListen(file, options = {}) {
-	const apiKey = import.meta.env.VITE_DEEPGRAM_API_KEY;
+	const apiKey = getClientDeepgramApiKey();
 	if (!apiKey) {
 		throw new Error(
 			`Vocal stem exceeds the ${Math.round(VERCEL_TRANSCRIBE_BODY_LIMIT / (1024 * 1024))} MB server upload limit. Set DEEPGRAM_API_KEY in .env / Vercel (restart dev server after changes).`
