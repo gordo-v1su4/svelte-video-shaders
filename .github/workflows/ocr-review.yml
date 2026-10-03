@@ -1,0 +1,83 @@
+# Canonical template: docs/opencode-review-github-actions.md
+name: OpenCodeReview PR Review
+
+on:
+  pull_request_target:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Existing open pull request to review
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ocr-${{ github.repository }}-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Resolve manually selected PR
+        if: github.event_name == 'workflow_dispatch'
+        id: context
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        with:
+          script: |
+            const number = Number(process.env.PR_NUMBER);
+            if (!Number.isSafeInteger(number) || number < 1) {
+              throw new Error('pr_number must be a positive integer');
+            }
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: number,
+            });
+            if (pr.state !== 'open') throw new Error('The selected PR must be open');
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('head_sha', pr.head.sha);
+
+      - name: Review with Qwen 3.8 Flash
+        id: primary
+        continue-on-error: true
+        uses: alibaba/open-code-review@a758d9cbfb689937c7857ad64b2dd66adb58c0c2
+        with:
+          ocr_version: '1.12.11'
+          llm_url: https://hyper.charm.land/v1
+          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          llm_model: qwen3.8-flash
+          llm_use_anthropic: 'false'
+          llm_protocol: openai
+          llm_extra_body: '{"thinking":{"type":"enabled"}}'
+          llm_reasoning_effort: max
+          review_concurrency: '2'
+          sticky_summary: 'true'
+          base_ref: ${{ steps.context.outputs.base_ref }}
+          head_sha: ${{ steps.context.outputs.head_sha }}
+          pr_number: ${{ github.event.pull_request.number || inputs.pr_number }}
+
+      - name: Retry with GLM 5.3 Flash
+        if: ${{ !cancelled() && steps.primary.outcome == 'failure' }}
+        uses: alibaba/open-code-review@a758d9cbfb689937c7857ad64b2dd66adb58c0c2
+        with:
+          ocr_version: '1.12.11'
+          llm_url: https://hyper.charm.land/v1
+          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          llm_model: glm-5.3-flash
+          llm_use_anthropic: 'false'
+          llm_protocol: openai
+          llm_extra_body: '{"thinking":{"type":"enabled"}}'
+          llm_reasoning_effort: max
+          review_concurrency: '2'
+          sticky_summary: 'true'
+          # The primary attempt already uploaded this run's diagnostic artifacts.
+          upload_artifacts: 'false'
+          base_ref: ${{ steps.context.outputs.base_ref }}
+          head_sha: ${{ steps.context.outputs.head_sha }}
+          pr_number: ${{ github.event.pull_request.number || inputs.pr_number }}
